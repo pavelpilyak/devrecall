@@ -1,9 +1,45 @@
 package git
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/pavelpiliak/devrecall/pkg/models"
+)
+
+// commitMeta holds per-commit diff stats stored as JSON in Activity.Metadata.
+type commitMeta struct {
+	Repo         string `json:"repo"`
+	SHA          string `json:"sha"`
+	AuthorName   string `json:"author_name"`
+	AuthorEmail  string `json:"author_email"`
+	FilesChanged int    `json:"files_changed"`
+	Insertions   int    `json:"insertions"`
+	Deletions    int    `json:"deletions"`
+}
+
+// Separator used in git log format. Chosen to be unlikely in commit messages.
+const fieldSep = "‡"
+
+// recordSep delimits commits in git log output.
+const recordSep = "‡‡‡"
+
+// logFormat is the --format string passed to git log.
+// Fields: SHA, ISO date, subject, author name, author email.
+var logFormat = strings.Join([]string{"%H", "%aI", "%s", "%an", "%ae"}, fieldSep)
+
+// statRe matches the summary line of --shortstat output.
+var statRe = regexp.MustCompile(
+	`(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?`,
 )
 
 // Collector gathers commit activity from local git repositories.
@@ -21,7 +57,134 @@ func (c *Collector) Name() models.Source {
 	return models.SourceGit
 }
 
+// Collect scans each configured repo and returns commits authored by the
+// configured emails. Repos that fail (e.g. missing directory) are skipped
+// with no error — partial results are better than none.
 func (c *Collector) Collect(ctx context.Context) ([]models.Activity, error) {
-	// TODO: implement git log parsing
-	return nil, nil
+	var all []models.Activity
+	for _, repo := range c.repos {
+		activities, err := c.collectRepo(ctx, repo)
+		if err != nil {
+			continue // skip broken repos
+		}
+		all = append(all, activities...)
+	}
+	return all, nil
+}
+
+func (c *Collector) collectRepo(ctx context.Context, repoPath string) ([]models.Activity, error) {
+	args := []string{
+		"log",
+		"--format=" + recordSep + "%n" + logFormat,
+		"--shortstat",
+	}
+	for _, email := range c.emails {
+		args = append(args, "--author="+email)
+	}
+
+	out, err := runGit(ctx, repoPath, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	repoName := filepath.Base(repoPath)
+	return parseLog(repoName, repoPath, out)
+}
+
+// parseLog splits raw git log output into Activity records.
+func parseLog(repoName, repoPath string, raw []byte) ([]models.Activity, error) {
+	// Split on record separator. First element is empty (before first record).
+	parts := strings.Split(string(raw), recordSep)
+
+	var activities []models.Activity
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		act, err := parseCommit(repoName, repoPath, part)
+		if err != nil {
+			continue // skip malformed entries
+		}
+		activities = append(activities, act)
+	}
+	return activities, nil
+}
+
+// parseCommit parses a single commit block (header line + optional stat line).
+func parseCommit(repoName, repoPath, block string) (models.Activity, error) {
+	scanner := bufio.NewScanner(strings.NewReader(block))
+
+	// First non-empty line is the header.
+	var headerLine string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			headerLine = line
+			break
+		}
+	}
+	if headerLine == "" {
+		return models.Activity{}, fmt.Errorf("empty commit block")
+	}
+
+	fields := strings.SplitN(headerLine, fieldSep, 5)
+	if len(fields) < 5 {
+		return models.Activity{}, fmt.Errorf("expected 5 fields, got %d", len(fields))
+	}
+
+	sha := fields[0]
+	ts, err := time.Parse(time.RFC3339, fields[1])
+	if err != nil {
+		return models.Activity{}, fmt.Errorf("bad timestamp %q: %w", fields[1], err)
+	}
+	subject := fields[2]
+	authorName := fields[3]
+	authorEmail := fields[4]
+
+	// Parse optional shortstat line.
+	var filesChanged, insertions, deletions int
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if m := statRe.FindStringSubmatch(line); m != nil {
+			filesChanged, _ = strconv.Atoi(m[1])
+			insertions, _ = strconv.Atoi(m[2])
+			deletions, _ = strconv.Atoi(m[3])
+			break
+		}
+	}
+
+	meta := commitMeta{
+		Repo:         repoName,
+		SHA:          sha,
+		AuthorName:   authorName,
+		AuthorEmail:  authorEmail,
+		FilesChanged: filesChanged,
+		Insertions:   insertions,
+		Deletions:    deletions,
+	}
+	metaJSON, _ := json.Marshal(meta)
+
+	return models.Activity{
+		Source:    models.SourceGit,
+		SourceID: repoPath + ":" + sha,
+		Type:     models.TypeCommit,
+		Title:    subject,
+		Metadata: string(metaJSON),
+		Timestamp: ts,
+	}, nil
+}
+
+// runGit executes a git command in the given directory.
+var runGit = func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("git %s in %s: %s: %w", args[0], dir, stderr.String(), err)
+	}
+	return stdout.Bytes(), nil
 }
