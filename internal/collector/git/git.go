@@ -75,6 +75,7 @@ func (c *Collector) Collect(ctx context.Context) ([]models.Activity, error) {
 func (c *Collector) collectRepo(ctx context.Context, repoPath string) ([]models.Activity, error) {
 	args := []string{
 		"log",
+		"--all",
 		"--format=" + recordSep + "%n" + logFormat,
 		"--shortstat",
 	}

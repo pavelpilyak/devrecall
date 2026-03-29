@@ -82,9 +82,13 @@ func Init() (*Config, error) {
 		return nil, fmt.Errorf("cannot create config directory: %w", err)
 	}
 
+	home, _ := os.UserHomeDir()
 	cfg := &Config{
 		Git: GitConfig{
-			Enabled: true,
+			Enabled:   true,
+			ScanPaths: []string{filepath.Join(home, "Projects")},
+			Repos:     []string{},
+			Emails:    []string{},
 		},
 		LLM: LLMConfig{
 			Provider: "ollama",
