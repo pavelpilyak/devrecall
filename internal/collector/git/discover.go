@@ -1,8 +1,10 @@
 package git
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // maxScanDepth limits how deep we walk when looking for .git directories.
@@ -51,6 +53,26 @@ func walkForRepos(dir string, depth int, seen map[string]bool, repos *[]string) 
 		}
 		walkForRepos(filepath.Join(abs, e.Name()), depth+1, seen, repos)
 	}
+}
+
+// DetectEmails runs `git config user.email` in each repo and returns
+// the unique emails found. Repos that fail are silently skipped.
+func DetectEmails(repos []string) []string {
+	seen := make(map[string]bool)
+	var emails []string
+
+	for _, repo := range repos {
+		out, err := runGit(context.Background(), repo, "config", "user.email")
+		if err != nil {
+			continue
+		}
+		email := strings.ToLower(strings.TrimSpace(string(out)))
+		if email != "" && !seen[email] {
+			seen[email] = true
+			emails = append(emails, email)
+		}
+	}
+	return emails
 }
 
 func expandHome(path string) string {
