@@ -1,0 +1,137 @@
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+const (
+	appDir     = ".devrecall"
+	configFile = "config.json"
+	dbFile     = "devrecall.db"
+)
+
+type Config struct {
+	Git      GitConfig      `json:"git"`
+	Slack    SlackConfig    `json:"slack"`
+	Calendar CalendarConfig `json:"calendar"`
+	Jira     JiraConfig     `json:"jira"`
+	Linear   LinearConfig   `json:"linear"`
+	LLM      LLMConfig      `json:"llm"`
+	filePath string
+}
+
+type GitConfig struct {
+	Enabled bool     `json:"enabled"`
+	Repos   []string `json:"repos"`
+	Emails  []string `json:"emails"`
+}
+
+type SlackConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
+type CalendarConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
+type JiraConfig struct {
+	Enabled bool   `json:"enabled"`
+	BaseURL string `json:"base_url,omitempty"`
+}
+
+type LinearConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
+type LLMConfig struct {
+	Provider string `json:"provider"` // "ollama", "openai", "anthropic"
+	Model    string `json:"model"`
+	BaseURL  string `json:"base_url,omitempty"`
+}
+
+// Dir returns the DevRecall data directory (~/.devrecall).
+func Dir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot find home directory: %w", err)
+	}
+	return filepath.Join(home, appDir), nil
+}
+
+// DBPath returns the path to the SQLite database.
+func DBPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, dbFile), nil
+}
+
+// Init creates a default configuration file.
+func Init() (*Config, error) {
+	dir, err := Dir()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("cannot create config directory: %w", err)
+	}
+
+	cfg := &Config{
+		Git: GitConfig{
+			Enabled: true,
+		},
+		LLM: LLMConfig{
+			Provider: "ollama",
+			Model:    "llama3.2",
+		},
+		filePath: filepath.Join(dir, configFile),
+	}
+
+	return cfg, cfg.Save()
+}
+
+// Load reads the configuration from disk.
+func Load() (*Config, error) {
+	dir, err := Dir()
+	if err != nil {
+		return nil, err
+	}
+
+	path := filepath.Join(dir, configFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("config not found — run 'devrecall config init' first: %w", err)
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+	cfg.filePath = path
+	return &cfg, nil
+}
+
+// Save writes the configuration to disk.
+func (c *Config) Save() error {
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(c.filePath, data, 0o644)
+}
+
+// Path returns the config file path.
+func (c *Config) Path() string {
+	return c.filePath
+}
+
+// String returns a pretty-printed JSON representation.
+func (c *Config) String() string {
+	data, _ := json.MarshalIndent(c, "", "  ")
+	return string(data)
+}
