@@ -24,9 +24,10 @@ type Config struct {
 }
 
 type GitConfig struct {
-	Enabled bool     `json:"enabled"`
-	Repos   []string `json:"repos"`
-	Emails  []string `json:"emails"`
+	Enabled   bool     `json:"enabled"`
+	ScanPaths []string `json:"scan_paths,omitempty"` // directories to walk for .git repos
+	Repos     []string `json:"repos"`               // explicit repo paths
+	Emails    []string `json:"emails"`               // author emails to match as "self"
 }
 
 type SlackConfig struct {
