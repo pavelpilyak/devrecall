@@ -13,14 +13,24 @@ type DB struct {
 	*sql.DB
 }
 
-// Open connects to the SQLite database, creating it if needed.
+// Open connects to the SQLite database at the default path, creating it if needed.
 func Open() (*DB, error) {
 	path, err := config.DBPath()
 	if err != nil {
 		return nil, err
 	}
+	return OpenPath(path)
+}
 
-	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_foreign_keys=on")
+// OpenPath connects to the SQLite database at the given path, creating it if needed.
+// Use ":memory:" for in-memory databases in tests.
+func OpenPath(path string) (*DB, error) {
+	dsn := path + "?_journal_mode=WAL&_foreign_keys=on"
+	if path == ":memory:" {
+		dsn = ":memory:?_foreign_keys=on"
+	}
+
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open database: %w", err)
 	}
