@@ -1,4 +1,4 @@
-.PHONY: build run test lint clean
+.PHONY: build run test lint clean relay-deploy relay-test
 
 BINARY := devrecall
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -17,3 +17,9 @@ lint:
 
 clean:
 	rm -rf bin/
+
+relay-deploy:
+	cd relay && npx wrangler deploy
+
+relay-test:
+	cd relay && npx vitest run

@@ -31,7 +31,9 @@ type GitConfig struct {
 }
 
 type SlackConfig struct {
-	Enabled bool `json:"enabled"`
+	Enabled  bool   `json:"enabled"`
+	TeamID   string `json:"team_id,omitempty"`
+	TeamName string `json:"team_name,omitempty"`
 }
 
 type CalendarConfig struct {
