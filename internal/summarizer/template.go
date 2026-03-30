@@ -18,7 +18,13 @@ type commitMeta struct {
 	Deletions    int    `json:"deletions"`
 }
 
-// entry holds a formatted commit for grouping.
+// slackMeta mirrors the JSON metadata stored by the Slack collector.
+type slackMeta struct {
+	ChannelName string `json:"channel_name"`
+	ReplyCount  int    `json:"reply_count,omitempty"`
+}
+
+// entry holds a formatted activity for grouping.
 type entry struct {
 	title string
 	stats string
@@ -51,20 +57,32 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 			dateOrder = append(dateOrder, dateStr)
 		}
 
-		var meta commitMeta
-		json.Unmarshal([]byte(a.Metadata), &meta)
+		var group string
+		var e entry
 
-		repo := meta.Repo
-		if repo == "" {
-			repo = "unknown"
+		switch a.Source {
+		case models.SourceSlack:
+			var meta slackMeta
+			json.Unmarshal([]byte(a.Metadata), &meta)
+			group = "#" + meta.ChannelName
+			if group == "#" {
+				group = "#slack"
+			}
+			e = entry{title: a.Title}
+		default:
+			var meta commitMeta
+			json.Unmarshal([]byte(a.Metadata), &meta)
+			group = meta.Repo
+			if group == "" {
+				group = "unknown"
+			}
+			e = entry{title: a.Title, stats: formatStats(meta)}
 		}
-
-		e := entry{title: a.Title, stats: formatStats(meta)}
 
 		if grouped[dateStr] == nil {
 			grouped[dateStr] = make(map[string][]entry)
 		}
-		grouped[dateStr][repo] = append(grouped[dateStr][repo], e)
+		grouped[dateStr][group] = append(grouped[dateStr][group], e)
 	}
 
 	var b strings.Builder
@@ -78,11 +96,14 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 
 		repos := grouped[dateStr]
 		// Collect repo names and sort for deterministic output.
-		repoNames := sortedKeys(repos)
-		for _, repo := range repoNames {
-			for _, e := range repos[repo] {
-				shortSHA := extractShortSHA(activities, repo, e.title)
-				b.WriteString(formatBullet(repo, e.title, shortSHA, e.stats))
+		groupNames := sortedKeys(repos)
+		for _, group := range groupNames {
+			for _, e := range repos[group] {
+				var shortSHA string
+				if !strings.HasPrefix(group, "#") {
+					shortSHA = extractShortSHA(activities, group, e.title)
+				}
+				b.WriteString(formatBullet(group, e.title, shortSHA, e.stats))
 				b.WriteString("\n")
 			}
 		}
