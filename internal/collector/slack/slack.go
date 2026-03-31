@@ -18,15 +18,30 @@ const (
 	pageSize       = 100
 )
 
+// ThreadMsg holds a single message within a Slack thread for summarization.
+type ThreadMsg struct {
+	User string `json:"user"`
+	Text string `json:"text"`
+}
+
+// ThreadSummary holds the LLM-generated summary of a thread.
+type ThreadSummary struct {
+	Topic        string   `json:"topic"`
+	Participants []string `json:"participants,omitempty"`
+	Decisions    []string `json:"decisions,omitempty"`
+}
+
 // messageMeta is stored as JSON in Activity.Metadata.
 type messageMeta struct {
-	ChannelID     string   `json:"channel_id"`
-	ChannelName   string   `json:"channel_name"`
-	ThreadTS      string   `json:"thread_ts,omitempty"`
-	IsThreadReply bool     `json:"is_thread_reply,omitempty"`
-	ReplyCount    int      `json:"reply_count,omitempty"`
-	Permalink     string   `json:"permalink,omitempty"`
-	Participants  []string `json:"participants,omitempty"`
+	ChannelID     string        `json:"channel_id"`
+	ChannelName   string        `json:"channel_name"`
+	ThreadTS      string        `json:"thread_ts,omitempty"`
+	IsThreadReply bool          `json:"is_thread_reply,omitempty"`
+	ReplyCount    int           `json:"reply_count,omitempty"`
+	Permalink     string        `json:"permalink,omitempty"`
+	Participants  []string      `json:"participants,omitempty"`
+	ThreadMsgs    []ThreadMsg   `json:"thread_msgs,omitempty"`
+	Summary       *ThreadSummary `json:"summary,omitempty"`
 }
 
 // Collector gathers message activity from Slack.
@@ -104,6 +119,7 @@ func (c *Collector) CollectSince(ctx context.Context, since time.Time) ([]models
 			if err == nil && len(thread) > 0 {
 				meta.Participants = threadParticipants(thread)
 				meta.ReplyCount = len(thread) - 1 // exclude parent
+				meta.ThreadMsgs = toThreadMsgs(thread)
 				title = fmt.Sprintf("Thread in #%s (%d replies)", msg.Channel.Name, meta.ReplyCount)
 			}
 		}
@@ -223,6 +239,15 @@ func tsToTime(ts string) time.Time {
 		secs, _ = strconv.ParseInt(ts, 10, 64)
 	}
 	return time.Unix(secs, 0).UTC()
+}
+
+// toThreadMsgs converts raw thread messages to the summarization-friendly format.
+func toThreadMsgs(msgs []threadMessage) []ThreadMsg {
+	out := make([]ThreadMsg, len(msgs))
+	for i, m := range msgs {
+		out[i] = ThreadMsg{User: m.User, Text: m.Text}
+	}
+	return out
 }
 
 // threadParticipants extracts unique user IDs from a thread (excluding bots).

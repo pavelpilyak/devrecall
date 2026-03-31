@@ -20,14 +20,22 @@ type commitMeta struct {
 
 // slackMeta mirrors the JSON metadata stored by the Slack collector.
 type slackMeta struct {
-	ChannelName string `json:"channel_name"`
-	ReplyCount  int    `json:"reply_count,omitempty"`
+	ChannelName string             `json:"channel_name"`
+	ReplyCount  int                `json:"reply_count,omitempty"`
+	Summary     *slackThreadSummary `json:"summary,omitempty"`
+}
+
+// slackThreadSummary mirrors the ThreadSummary from the Slack collector.
+type slackThreadSummary struct {
+	Topic     string   `json:"topic"`
+	Decisions []string `json:"decisions,omitempty"`
 }
 
 // entry holds a formatted activity for grouping.
 type entry struct {
-	title string
-	stats string
+	title     string
+	stats     string
+	decisions []string
 }
 
 // TemplateSummarizer generates standups using plain-text templates (no LLM).
@@ -68,7 +76,14 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 			if group == "#" {
 				group = "#slack"
 			}
-			e = entry{title: a.Title}
+			if meta.Summary != nil && meta.Summary.Topic != "" {
+				e = entry{title: meta.Summary.Topic}
+				if len(meta.Summary.Decisions) > 0 {
+					e.decisions = meta.Summary.Decisions
+				}
+			} else {
+				e = entry{title: a.Title}
+			}
 		default:
 			var meta commitMeta
 			json.Unmarshal([]byte(a.Metadata), &meta)
@@ -105,6 +120,11 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 				}
 				b.WriteString(formatBullet(group, e.title, shortSHA, e.stats))
 				b.WriteString("\n")
+				for _, d := range e.decisions {
+					b.WriteString("  → ")
+					b.WriteString(d)
+					b.WriteString("\n")
+				}
 			}
 		}
 	}
