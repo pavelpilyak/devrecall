@@ -285,6 +285,56 @@ func TestTsToTime(t *testing.T) {
 	}
 }
 
+func TestGetUserProfile(t *testing.T) {
+	_, c := newTestServer(t, map[string]http.HandlerFunc{
+		"/users.info": func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("user") != "U04ABC" {
+				t.Errorf("wrong user param: %s", r.URL.Query().Get("user"))
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"user": map[string]any{
+					"id": "U04ABC",
+					"profile": map[string]any{
+						"email":     "pavel@company.com",
+						"real_name": "Pavel Piliak",
+					},
+				},
+			})
+		},
+	})
+
+	profile, err := c.GetUserProfile(context.Background(), "U04ABC")
+	if err != nil {
+		t.Fatalf("GetUserProfile: %v", err)
+	}
+	if profile.Email != "pavel@company.com" {
+		t.Errorf("Email = %q", profile.Email)
+	}
+	if profile.Name != "Pavel Piliak" {
+		t.Errorf("Name = %q", profile.Name)
+	}
+	if profile.UserID != "U04ABC" {
+		t.Errorf("UserID = %q", profile.UserID)
+	}
+}
+
+func TestGetUserProfile_APIError(t *testing.T) {
+	_, c := newTestServer(t, map[string]http.HandlerFunc{
+		"/users.info": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"ok":    false,
+				"error": "user_not_found",
+			})
+		},
+	})
+
+	_, err := c.GetUserProfile(context.Background(), "U99999")
+	if err == nil {
+		t.Fatal("expected error for user_not_found")
+	}
+}
+
 func TestName(t *testing.T) {
 	c := New("token")
 	if c.Name() != models.SourceSlack {

@@ -2,6 +2,9 @@ package storage
 
 import (
 	"testing"
+	"time"
+
+	"github.com/pavelpiliak/devrecall/pkg/models"
 )
 
 func TestInsertIdentity(t *testing.T) {
@@ -157,5 +160,129 @@ func TestGetIdentityBySourceUID_NotFound(t *testing.T) {
 	}
 	if identity != nil {
 		t.Errorf("expected nil, got %+v", identity)
+	}
+}
+
+func TestGetIdentityByID(t *testing.T) {
+	db := mustOpen(t)
+
+	id, _ := db.InsertIdentity("Pavel", "pavel@example.com", true)
+	identity, err := db.GetIdentityByID(id)
+	if err != nil {
+		t.Fatalf("GetIdentityByID: %v", err)
+	}
+	if identity == nil {
+		t.Fatal("expected identity")
+	}
+	if identity.Email != "pavel@example.com" {
+		t.Errorf("email = %q", identity.Email)
+	}
+
+	identity, err = db.GetIdentityByID(9999)
+	if err != nil {
+		t.Fatalf("GetIdentityByID: %v", err)
+	}
+	if identity != nil {
+		t.Errorf("expected nil for non-existent ID, got %+v", identity)
+	}
+}
+
+func TestListIdentityLinks(t *testing.T) {
+	db := mustOpen(t)
+
+	id, _ := db.InsertIdentity("Pavel", "pavel@example.com", true)
+	db.InsertIdentityLink(id, "git", "pavel@example.com")
+	db.InsertIdentityLink(id, "slack", "U04ABC")
+
+	links, err := db.ListIdentityLinks(id)
+	if err != nil {
+		t.Fatalf("ListIdentityLinks: %v", err)
+	}
+	if len(links) != 2 {
+		t.Fatalf("got %d links, want 2", len(links))
+	}
+	// Ordered by source, source_uid.
+	if links[0].Source != "git" {
+		t.Errorf("first link source = %q, want git", links[0].Source)
+	}
+	if links[1].Source != "slack" {
+		t.Errorf("second link source = %q, want slack", links[1].Source)
+	}
+}
+
+func TestMergeIdentities(t *testing.T) {
+	db := mustOpen(t)
+
+	primaryID, _ := db.InsertIdentity("Pavel", "pavel@example.com", true)
+	db.InsertIdentityLink(primaryID, "git", "pavel@example.com")
+
+	secID, _ := db.InsertIdentity("Pavel Work", "pavel@work.com", false)
+	db.InsertIdentityLink(secID, "slack", "U04ABC")
+
+	// Insert an activity linked to the secondary identity.
+	db.InsertActivity(models.Activity{
+		Source: models.SourceSlack, SourceID: "msg-1", IdentityID: secID,
+		Type: models.TypeMessage, Title: "test msg", Timestamp: time.Now(),
+	})
+
+	if err := db.MergeIdentities(primaryID, []int64{secID}); err != nil {
+		t.Fatalf("MergeIdentities: %v", err)
+	}
+
+	// Secondary identity should be gone.
+	sec, _ := db.GetIdentityByID(secID)
+	if sec != nil {
+		t.Error("secondary identity should be deleted")
+	}
+
+	// Slack link should now point to primary.
+	linked, _ := db.GetIdentityBySourceUID("slack", "U04ABC")
+	if linked == nil || linked.ID != primaryID {
+		t.Error("slack link should be reassigned to primary")
+	}
+
+	// Activity should be reassigned.
+	activities, _ := db.ListActivities(ActivityFilter{Source: models.SourceSlack})
+	if len(activities) != 1 {
+		t.Fatalf("got %d activities", len(activities))
+	}
+	if activities[0].IdentityID != primaryID {
+		t.Errorf("activity identity_id = %d, want %d", activities[0].IdentityID, primaryID)
+	}
+}
+
+func TestDeleteIdentity(t *testing.T) {
+	db := mustOpen(t)
+
+	id, _ := db.InsertIdentity("Bob", "bob@example.com", false)
+	db.InsertIdentityLink(id, "slack", "U001")
+	db.InsertActivity(models.Activity{
+		Source: models.SourceSlack, SourceID: "msg-1", IdentityID: id,
+		Type: models.TypeMessage, Title: "test", Timestamp: time.Now(),
+	})
+
+	if err := db.DeleteIdentity(id); err != nil {
+		t.Fatalf("DeleteIdentity: %v", err)
+	}
+
+	// Identity should be gone.
+	identity, _ := db.GetIdentityByID(id)
+	if identity != nil {
+		t.Error("identity should be deleted")
+	}
+
+	// Links should be gone.
+	links, _ := db.ListIdentityLinks(id)
+	if len(links) != 0 {
+		t.Errorf("got %d links, want 0", len(links))
+	}
+
+	// Activity should be unlinked (identity_id = 0).
+	activities, _ := db.ListActivities(ActivityFilter{Source: models.SourceSlack})
+	if len(activities) != 1 {
+		t.Fatalf("got %d activities", len(activities))
+	}
+	if activities[0].IdentityID != 0 {
+		t.Errorf("activity identity_id = %d, want 0 (unlinked)", activities[0].IdentityID)
 	}
 }

@@ -238,7 +238,46 @@ func threadParticipants(msgs []threadMessage) []string {
 	return users
 }
 
+// UserProfile holds the authenticated Slack user's profile info.
+type UserProfile struct {
+	UserID string
+	Email  string
+	Name   string
+}
+
+// GetUserProfile fetches the authenticated user's profile, including email.
+// Requires the users:read and users:read.email scopes.
+func (c *Collector) GetUserProfile(ctx context.Context, userID string) (*UserProfile, error) {
+	params := url.Values{"user": {userID}}
+
+	var resp userInfoResponse
+	if err := c.apiGet(ctx, "/users.info", params, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("slack API error: %s", resp.Error)
+	}
+
+	return &UserProfile{
+		UserID: resp.User.ID,
+		Email:  resp.User.Profile.Email,
+		Name:   resp.User.Profile.RealName,
+	}, nil
+}
+
 // Slack API response types.
+
+type userInfoResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+	User  struct {
+		ID      string `json:"id"`
+		Profile struct {
+			Email    string `json:"email"`
+			RealName string `json:"real_name"`
+		} `json:"profile"`
+	} `json:"user"`
+}
 
 type searchResponse struct {
 	OK       bool   `json:"ok"`

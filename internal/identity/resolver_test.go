@@ -114,3 +114,186 @@ func TestResolveByEmail(t *testing.T) {
 		t.Error("expected nil for unknown email")
 	}
 }
+
+func TestAutoLinkSlack_MatchesExistingGitIdentity(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	// Set up self with a git email.
+	self, _ := r.SetupSelf("Pavel", []string{"pavel@company.com"})
+
+	// Auto-link Slack with the same email — should merge into the existing identity.
+	linked, err := r.AutoLinkSlack("U04ABC", "pavel@company.com", "Pavel P")
+	if err != nil {
+		t.Fatalf("AutoLinkSlack: %v", err)
+	}
+	if linked.ID != self.ID {
+		t.Errorf("linked to identity %d, want %d (self)", linked.ID, self.ID)
+	}
+
+	// Slack source_uid should now resolve to self.
+	found, _ := r.ResolveBySourceUID("slack", "U04ABC")
+	if found == nil || found.ID != self.ID {
+		t.Error("slack link should resolve to self identity")
+	}
+}
+
+func TestAutoLinkSlack_MatchesViaGitSourceUID(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	// Set up self with primary email "primary@x.com" but also link a secondary git email.
+	self, _ := r.SetupSelf("Pavel", []string{"primary@x.com", "secondary@x.com"})
+
+	// Auto-link Slack with the secondary email (which is a git source_uid, not in identities.email).
+	linked, err := r.AutoLinkSlack("U04ABC", "secondary@x.com", "Pavel")
+	if err != nil {
+		t.Fatalf("AutoLinkSlack: %v", err)
+	}
+	if linked.ID != self.ID {
+		t.Errorf("should link to self via git source_uid, got identity %d", linked.ID)
+	}
+}
+
+func TestAutoLinkSlack_CreatesNewIdentity(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	r.SetupSelf("Pavel", []string{"pavel@x.com"})
+
+	// Different email — should create a new identity.
+	linked, err := r.AutoLinkSlack("U99999", "stranger@other.com", "Stranger")
+	if err != nil {
+		t.Fatalf("AutoLinkSlack: %v", err)
+	}
+	if linked.Email != "stranger@other.com" {
+		t.Errorf("email = %q", linked.Email)
+	}
+	if linked.IsSelf {
+		t.Error("new identity should not be self")
+	}
+}
+
+func TestAutoLinkSlack_Idempotent(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	first, _ := r.AutoLinkSlack("U001", "bob@x.com", "Bob")
+	second, _ := r.AutoLinkSlack("U001", "bob@x.com", "Bob")
+
+	if first.ID != second.ID {
+		t.Errorf("AutoLinkSlack should be idempotent: %d != %d", first.ID, second.ID)
+	}
+}
+
+func TestAutoLinkSlack_EmptyEmail(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	_, err := r.AutoLinkSlack("U001", "", "Bob")
+	if err == nil {
+		t.Error("expected error for empty email")
+	}
+}
+
+func TestListAll(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	r.SetupSelf("Pavel", []string{"pavel@x.com"})
+	r.AutoLinkSlack("U001", "bob@x.com", "Bob")
+
+	all, err := r.ListAll()
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("got %d identities, want 2", len(all))
+	}
+	// Self should come first (storage orders by is_self DESC).
+	if !all[0].Identity.IsSelf {
+		t.Error("self should be first")
+	}
+	if len(all[0].Links) == 0 {
+		t.Error("self should have links")
+	}
+}
+
+func TestMergeIdentities(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	self, _ := r.SetupSelf("Pavel", []string{"pavel@x.com"})
+	other, _ := r.AutoLinkSlack("U001", "other@x.com", "Other")
+
+	if err := r.MergeIdentities(self.ID, []int64{other.ID}); err != nil {
+		t.Fatalf("MergeIdentities: %v", err)
+	}
+
+	// Other should be gone.
+	found, _ := r.ResolveByEmail("other@x.com")
+	if found != nil {
+		t.Error("merged identity should be gone from identities table")
+	}
+
+	// Slack link should resolve to self now.
+	linked, _ := r.ResolveBySourceUID("slack", "U001")
+	if linked == nil || linked.ID != self.ID {
+		t.Error("slack link should be reassigned to primary")
+	}
+}
+
+func TestMergeIdentities_NotFound(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	if err := r.MergeIdentities(999, []int64{1}); err == nil {
+		t.Error("expected error for non-existent primary")
+	}
+}
+
+func TestMergeIdentities_SelfMerge(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	self, _ := r.SetupSelf("Pavel", []string{"p@x.com"})
+	if err := r.MergeIdentities(self.ID, []int64{self.ID}); err == nil {
+		t.Error("expected error when merging identity into itself")
+	}
+}
+
+func TestDeleteIdentity(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	linked, _ := r.AutoLinkSlack("U001", "bob@x.com", "Bob")
+
+	if err := r.DeleteIdentity(linked.ID); err != nil {
+		t.Fatalf("DeleteIdentity: %v", err)
+	}
+
+	found, _ := r.ResolveByEmail("bob@x.com")
+	if found != nil {
+		t.Error("deleted identity should not be found")
+	}
+}
+
+func TestDeleteIdentity_CannotDeleteSelf(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	self, _ := r.SetupSelf("Pavel", []string{"p@x.com"})
+
+	if err := r.DeleteIdentity(self.ID); err == nil {
+		t.Error("expected error when deleting self identity")
+	}
+}
+
+func TestDeleteIdentity_NotFound(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	if err := r.DeleteIdentity(999); err == nil {
+		t.Error("expected error for non-existent identity")
+	}
+}

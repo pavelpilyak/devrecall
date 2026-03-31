@@ -134,3 +134,115 @@ func (db *DB) GetIdentityBySourceUID(source, sourceUID string) (*models.Identity
 	i.IsSelf = isSelf == 1
 	return &i, nil
 }
+
+// IdentityLink represents a source-specific link to an identity.
+type IdentityLink struct {
+	ID         int64
+	IdentityID int64
+	Source     string
+	SourceUID  string
+}
+
+// ListIdentityLinks returns all links for the given identity.
+func (db *DB) ListIdentityLinks(identityID int64) ([]IdentityLink, error) {
+	rows, err := db.Query(
+		"SELECT id, identity_id, source, source_uid FROM identity_links WHERE identity_id = ? ORDER BY source, source_uid",
+		identityID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list identity links: %w", err)
+	}
+	defer rows.Close()
+
+	var result []IdentityLink
+	for rows.Next() {
+		var l IdentityLink
+		if err := rows.Scan(&l.ID, &l.IdentityID, &l.Source, &l.SourceUID); err != nil {
+			return nil, fmt.Errorf("scan identity link: %w", err)
+		}
+		result = append(result, l)
+	}
+	return result, rows.Err()
+}
+
+// GetIdentityByID returns the identity with the given ID, or nil if not found.
+func (db *DB) GetIdentityByID(id int64) (*models.Identity, error) {
+	var i models.Identity
+	var isSelf int
+	err := db.QueryRow(
+		"SELECT id, name, email, is_self FROM identities WHERE id = ?", id,
+	).Scan(&i.ID, &i.Name, &i.Email, &isSelf)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get identity by id: %w", err)
+	}
+	i.IsSelf = isSelf == 1
+	return &i, nil
+}
+
+// MergeIdentities merges secondary identities into the primary one.
+// All identity_links and activities from secondary identities are reassigned
+// to the primary, then the secondary identities are deleted.
+func (db *DB) MergeIdentities(primaryID int64, secondaryIDs []int64) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin merge tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, secID := range secondaryIDs {
+		// Reassign identity_links. Delete on conflict (same source+source_uid already linked to primary).
+		if _, err := tx.Exec(
+			`UPDATE OR IGNORE identity_links SET identity_id = ? WHERE identity_id = ?`,
+			primaryID, secID,
+		); err != nil {
+			return fmt.Errorf("reassign links from %d: %w", secID, err)
+		}
+		// Remove any leftover duplicates that couldn't be reassigned.
+		if _, err := tx.Exec(
+			`DELETE FROM identity_links WHERE identity_id = ?`, secID,
+		); err != nil {
+			return fmt.Errorf("cleanup links for %d: %w", secID, err)
+		}
+
+		// Reassign activities.
+		if _, err := tx.Exec(
+			`UPDATE activities SET identity_id = ? WHERE identity_id = ?`,
+			primaryID, secID,
+		); err != nil {
+			return fmt.Errorf("reassign activities from %d: %w", secID, err)
+		}
+
+		// Delete the secondary identity.
+		if _, err := tx.Exec(
+			`DELETE FROM identities WHERE id = ?`, secID,
+		); err != nil {
+			return fmt.Errorf("delete identity %d: %w", secID, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// DeleteIdentity removes an identity and its links. Activities are unlinked (identity_id set to NULL).
+func (db *DB) DeleteIdentity(id int64) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin delete tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`UPDATE activities SET identity_id = NULL WHERE identity_id = ?`, id); err != nil {
+		return fmt.Errorf("unlink activities: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM identity_links WHERE identity_id = ?`, id); err != nil {
+		return fmt.Errorf("delete links: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM identities WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("delete identity: %w", err)
+	}
+
+	return tx.Commit()
+}
