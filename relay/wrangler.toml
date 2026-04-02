@@ -13,3 +13,5 @@ id = "f59eb193690042a8a08f05acb9db5195"
 # Secrets (set via `wrangler secret put`):
 #   SLACK_CLIENT_ID
 #   SLACK_CLIENT_SECRET
+#   GOOGLE_CLIENT_ID
+#   GOOGLE_CLIENT_SECRET

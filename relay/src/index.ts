@@ -1,5 +1,6 @@
 import { Env } from "./types";
 import { handleOAuthCallback } from "./handlers/oauth-callback";
+import { handleGoogleOAuthCallback } from "./handlers/oauth-callback-google";
 import { handlePollToken } from "./handlers/poll-token";
 
 export default {
@@ -8,6 +9,10 @@ export default {
 
     if (url.pathname === "/oauth/slack/callback" && request.method === "GET") {
       return handleOAuthCallback(url, env);
+    }
+
+    if (url.pathname === "/oauth/google/callback" && request.method === "GET") {
+      return handleGoogleOAuthCallback(url, env);
     }
 
     if (url.pathname === "/oauth/poll" && request.method === "GET") {
