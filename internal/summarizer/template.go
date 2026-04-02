@@ -31,6 +31,20 @@ type slackThreadSummary struct {
 	Decisions []string `json:"decisions,omitempty"`
 }
 
+// calendarMeta mirrors the JSON metadata stored by the calendar collector.
+type calendarMeta struct {
+	DurationMin    int         `json:"duration_minutes"`
+	MeetingType    string      `json:"meeting_type"`
+	Attendees      []attendee  `json:"attendees,omitempty"`
+	ResponseStatus string      `json:"response_status"`
+}
+
+type attendee struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name,omitempty"`
+	Self        bool   `json:"self,omitempty"`
+}
+
 // entry holds a formatted activity for grouping.
 type entry struct {
 	title     string
@@ -57,6 +71,9 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 	grouped := make(map[string]map[string][]entry)
 	var dateOrder []string
 	datesSeen := make(map[string]bool)
+
+	// Track meeting minutes per date for the summary line.
+	meetingMinutes := make(map[string]int)
 
 	for _, a := range activities {
 		dateStr := a.Timestamp.Format("2006-01-02")
@@ -86,6 +103,26 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 			} else {
 				e = entry{title: a.Title}
 			}
+		case models.SourceCalendar:
+			var meta calendarMeta
+			json.Unmarshal([]byte(a.Metadata), &meta)
+
+			// Skip focus time blocks — not relevant for standup.
+			if meta.MeetingType == "focus" {
+				continue
+			}
+
+			// Skip declined meetings.
+			if meta.ResponseStatus == "declined" {
+				continue
+			}
+
+			group = "Meetings"
+			e = entry{
+				title: a.Title,
+				stats: formatMeetingStats(meta),
+			}
+			meetingMinutes[dateStr] += meta.DurationMin
 		default:
 			var meta commitMeta
 			json.Unmarshal([]byte(a.Metadata), &meta)
@@ -117,7 +154,7 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 		for _, group := range groupNames {
 			for _, e := range repos[group] {
 				var shortSHA string
-				if !strings.HasPrefix(group, "#") {
+				if !strings.HasPrefix(group, "#") && group != "Meetings" {
 					shortSHA = extractShortSHA(activities, group, e.title)
 				}
 				b.WriteString(formatBullet(group, e.title, shortSHA, e.stats))
@@ -128,6 +165,10 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 					b.WriteString("\n")
 				}
 			}
+		}
+
+		if mins := meetingMinutes[dateStr]; mins > 0 {
+			b.WriteString(fmt.Sprintf("⏱ %s in meetings\n", formatDuration(mins)))
 		}
 	}
 
@@ -184,6 +225,35 @@ func extractShortSHA(activities []models.Activity, repo, title string) string {
 		}
 	}
 	return ""
+}
+
+func formatMeetingStats(m calendarMeta) string {
+	parts := []string{formatDuration(m.DurationMin)}
+	if m.MeetingType != "" && m.MeetingType != "group" {
+		parts = append(parts, m.MeetingType)
+	}
+	nonSelfCount := 0
+	for _, a := range m.Attendees {
+		if !a.Self {
+			nonSelfCount++
+		}
+	}
+	if nonSelfCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d attendees", nonSelfCount))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatDuration(minutes int) string {
+	if minutes < 60 {
+		return fmt.Sprintf("%dmin", minutes)
+	}
+	h := minutes / 60
+	m := minutes % 60
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh%dmin", h, m)
 }
 
 func sortedKeys(m map[string][]entry) []string {

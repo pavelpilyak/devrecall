@@ -2,6 +2,7 @@ package summarizer
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -131,5 +132,164 @@ func TestStandup_ShortSHA(t *testing.T) {
 	})
 	if !strings.Contains(out, "(abc)") {
 		t.Errorf("short SHA should be used as-is:\n%s", out)
+	}
+}
+
+func calendarActivity(title string, durationMin int, meetingType, responseStatus string, attendeeCount int, ts time.Time) models.Activity {
+	var attendees []attendee
+	attendees = append(attendees, attendee{Email: "me@example.com", Self: true})
+	for i := 0; i < attendeeCount-1; i++ {
+		attendees = append(attendees, attendee{Email: fmt.Sprintf("person%d@example.com", i+1)})
+	}
+	metaJSON, _ := json.Marshal(calendarMeta{
+		DurationMin:    durationMin,
+		MeetingType:    meetingType,
+		ResponseStatus: responseStatus,
+		Attendees:      attendees,
+	})
+	return models.Activity{
+		Source:    models.SourceCalendar,
+		Type:      models.TypeMeeting,
+		Title:     title,
+		Metadata:  string(metaJSON),
+		Timestamp: ts,
+	}
+}
+
+func TestStandup_CalendarMeeting(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		calendarActivity("1:1 with Sarah", 30, "1:1", "accepted", 2, ts),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if !strings.Contains(out, "Meetings: 1:1 with Sarah") {
+		t.Errorf("expected meeting bullet, got:\n%s", out)
+	}
+	if !strings.Contains(out, "30min") {
+		t.Errorf("expected duration in output:\n%s", out)
+	}
+	if !strings.Contains(out, "1:1") {
+		t.Errorf("expected meeting type:\n%s", out)
+	}
+}
+
+func TestStandup_CalendarMeetingTimeSummary(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 9, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		calendarActivity("Standup", 15, "standup", "accepted", 5, ts),
+		calendarActivity("Sprint Planning", 60, "ceremony", "accepted", 8, ts.Add(time.Hour)),
+		calendarActivity("1:1 with Manager", 30, "1:1", "accepted", 2, ts.Add(3*time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	// Total: 15 + 60 + 30 = 105 minutes = 1h45min
+	if !strings.Contains(out, "1h45min in meetings") {
+		t.Errorf("expected meeting time summary, got:\n%s", out)
+	}
+}
+
+func TestStandup_CalendarSkipsFocusTime(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		calendarActivity("Focus Time", 120, "focus", "accepted", 1, ts),
+		calendarActivity("1:1 with Sarah", 30, "1:1", "accepted", 2, ts.Add(3*time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if strings.Contains(out, "Focus Time") {
+		t.Errorf("focus time should be skipped:\n%s", out)
+	}
+	if !strings.Contains(out, "1:1 with Sarah") {
+		t.Errorf("regular meeting should be present:\n%s", out)
+	}
+}
+
+func TestStandup_CalendarSkipsDeclined(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		calendarActivity("Declined Meeting", 60, "group", "declined", 5, ts),
+		calendarActivity("Attended Meeting", 30, "group", "accepted", 3, ts.Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if strings.Contains(out, "Declined Meeting") {
+		t.Errorf("declined meeting should be skipped:\n%s", out)
+	}
+	if !strings.Contains(out, "Attended Meeting") {
+		t.Errorf("attended meeting should be present:\n%s", out)
+	}
+}
+
+func TestStandup_CalendarMixedWithGitAndSlack(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		activity("Fix auth bug", "backend-api", "abc123def", 3, 47, 12, ts),
+		calendarActivity("Sprint Planning", 60, "ceremony", "accepted", 8, ts.Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if !strings.Contains(out, "backend-api: Fix auth bug") {
+		t.Errorf("missing git commit:\n%s", out)
+	}
+	if !strings.Contains(out, "Meetings: Sprint Planning") {
+		t.Errorf("missing meeting:\n%s", out)
+	}
+	if !strings.Contains(out, "1h in meetings") {
+		t.Errorf("missing meeting time summary:\n%s", out)
+	}
+}
+
+func TestStandup_CalendarHourDuration(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, _ := s.Standup([]models.Activity{
+		calendarActivity("Long Meeting", 120, "group", "accepted", 5, ts),
+	})
+
+	if !strings.Contains(out, "2h") {
+		t.Errorf("expected 2h format:\n%s", out)
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		mins int
+		want string
+	}{
+		{15, "15min"},
+		{30, "30min"},
+		{59, "59min"},
+		{60, "1h"},
+		{90, "1h30min"},
+		{120, "2h"},
+		{105, "1h45min"},
+	}
+	for _, tt := range tests {
+		got := formatDuration(tt.mins)
+		if got != tt.want {
+			t.Errorf("formatDuration(%d) = %q, want %q", tt.mins, got, tt.want)
+		}
 	}
 }

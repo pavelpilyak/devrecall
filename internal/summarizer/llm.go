@@ -12,7 +12,7 @@ import (
 	"github.com/pavelpiliak/devrecall/pkg/models"
 )
 
-const standupSystemPrompt = `You are a developer standup report generator. Given a list of work activities (commits, Slack messages, etc.), write a concise, natural-language standup summary.
+const standupSystemPrompt = `You are a developer standup report generator. Given a list of work activities (commits, Slack messages, meetings, etc.), write a concise, natural-language standup summary.
 
 Rules:
 - Group related work together (e.g., multiple commits on the same feature)
@@ -22,7 +22,11 @@ Rules:
 - Keep each bullet point to 1-2 sentences
 - Highlight key decisions from Slack threads, but attribute them correctly
 - Don't include commit SHAs or raw file counts — focus on what was accomplished
+- For meetings: include the meeting name, duration, and type (1:1, standup, ceremony, etc.) when useful
+- Skip focus time blocks — they're not relevant for standup
+- Skip declined meetings — they weren't attended
 - If there are multiple days, separate them with date headers
+- At the end of each day, include total time spent in meetings if there were any
 - Be concise and professional — this is for a team standup
 
 Respond ONLY with the standup text, no preamble or explanation.`
@@ -133,6 +137,27 @@ func buildActivitiesPrompt(activities []models.Activity, selfUIDs map[string]boo
 					fmt.Fprintf(&b, " (%d files, +%d/-%d)", meta.FilesChanged, meta.Insertions, meta.Deletions)
 				}
 				b.WriteString("\n")
+
+			case models.SourceCalendar:
+				var meta calendarMeta
+				json.Unmarshal([]byte(a.Metadata), &meta)
+				details := formatDuration(meta.DurationMin)
+				if meta.MeetingType != "" {
+					details += ", " + meta.MeetingType
+				}
+				nonSelfCount := 0
+				for _, att := range meta.Attendees {
+					if !att.Self {
+						nonSelfCount++
+					}
+				}
+				if nonSelfCount > 0 {
+					details += fmt.Sprintf(", %d attendees", nonSelfCount)
+				}
+				if meta.ResponseStatus == "declined" {
+					details += ", declined"
+				}
+				fmt.Fprintf(&b, "- [Calendar meeting] %s (%s)\n", a.Title, details)
 
 			case models.SourceSlack:
 				var meta slackFullMeta

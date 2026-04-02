@@ -223,6 +223,44 @@ func TestLLMSummarizer_PromptIncludesSystemAndUser(t *testing.T) {
 	}
 }
 
+func TestBuildActivitiesPrompt_CalendarMeeting(t *testing.T) {
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	metaJSON, _ := json.Marshal(calendarMeta{
+		DurationMin:    60,
+		MeetingType:    "ceremony",
+		ResponseStatus: "accepted",
+		Attendees: []attendee{
+			{Email: "me@example.com", Self: true},
+			{Email: "alice@example.com"},
+			{Email: "bob@example.com"},
+		},
+	})
+
+	activities := []models.Activity{{
+		Source:    models.SourceCalendar,
+		Type:      models.TypeMeeting,
+		Title:     "Sprint Planning",
+		Metadata:  string(metaJSON),
+		Timestamp: ts,
+	}}
+
+	prompt := buildActivitiesPrompt(activities, nil)
+
+	if !strings.Contains(prompt, "[Calendar meeting] Sprint Planning") {
+		t.Errorf("expected calendar meeting in prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "1h") {
+		t.Errorf("expected duration in prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "ceremony") {
+		t.Errorf("expected meeting type in prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "2 attendees") {
+		t.Errorf("expected attendee count in prompt:\n%s", prompt)
+	}
+}
+
 func TestBuildActivitiesPrompt_MixedSources(t *testing.T) {
 	ts := time.Date(2026, 3, 27, 14, 0, 0, 0, time.UTC)
 
