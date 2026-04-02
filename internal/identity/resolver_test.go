@@ -1,9 +1,12 @@
 package identity
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/pavelpiliak/devrecall/internal/storage"
+	"github.com/pavelpiliak/devrecall/pkg/models"
 )
 
 func mustOpen(t *testing.T) *storage.DB {
@@ -295,5 +298,207 @@ func TestDeleteIdentity_NotFound(t *testing.T) {
 
 	if err := r.DeleteIdentity(999); err == nil {
 		t.Error("expected error for non-existent identity")
+	}
+}
+
+func makeCalendarActivity(title string, attendees []calendarAttendee) models.Activity {
+	meta, _ := json.Marshal(calendarMeta{Attendees: attendees})
+	return models.Activity{
+		Source:   models.SourceCalendar,
+		SourceID: "calendar:primary:" + title,
+		Type:     models.TypeMeeting,
+		Title:    title,
+		Metadata: string(meta),
+		Timestamp: time.Now(),
+	}
+}
+
+func TestEnrichFromCalendar_CreatesNewIdentities(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+	r.SetupSelf("Pavel", []string{"pavel@company.com"})
+
+	activities := []models.Activity{
+		makeCalendarActivity("1:1 with Sarah", []calendarAttendee{
+			{Email: "pavel@company.com", Self: true},
+			{Email: "sarah@company.com", DisplayName: "Sarah Chen"},
+		}),
+	}
+
+	created, err := r.EnrichFromCalendar(activities)
+	if err != nil {
+		t.Fatalf("EnrichFromCalendar: %v", err)
+	}
+
+	if created != 1 {
+		t.Errorf("created = %d, want 1", created)
+	}
+
+	// Self identity should be set on the activity.
+	self, _ := db.GetSelfIdentity()
+	if activities[0].IdentityID != self.ID {
+		t.Errorf("IdentityID = %d, want %d (self)", activities[0].IdentityID, self.ID)
+	}
+
+	// Sarah should exist as a new identity.
+	sarah, err := r.ResolveByEmail("sarah@company.com")
+	if err != nil {
+		t.Fatalf("ResolveByEmail: %v", err)
+	}
+	if sarah == nil {
+		t.Fatal("expected sarah identity to be created")
+	}
+	if sarah.Name != "Sarah Chen" {
+		t.Errorf("sarah.Name = %q", sarah.Name)
+	}
+
+	// Calendar link should exist.
+	linked, _ := r.ResolveBySourceUID("calendar", "sarah@company.com")
+	if linked == nil || linked.ID != sarah.ID {
+		t.Error("sarah should have a calendar identity link")
+	}
+}
+
+func TestEnrichFromCalendar_MatchesExistingIdentity(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+	r.SetupSelf("Pavel", []string{"pavel@company.com"})
+
+	// Sarah already exists from Slack.
+	r.AutoLinkSlack("U001", "sarah@company.com", "Sarah")
+
+	activities := []models.Activity{
+		makeCalendarActivity("Design Review", []calendarAttendee{
+			{Email: "pavel@company.com", Self: true},
+			{Email: "sarah@company.com", DisplayName: "Sarah Chen"},
+		}),
+	}
+
+	created, err := r.EnrichFromCalendar(activities)
+	if err != nil {
+		t.Fatalf("EnrichFromCalendar: %v", err)
+	}
+
+	// No new identities — Sarah already existed.
+	if created != 0 {
+		t.Errorf("created = %d, want 0 (Sarah already existed)", created)
+	}
+
+	// Sarah should now also have a calendar link.
+	linked, _ := r.ResolveBySourceUID("calendar", "sarah@company.com")
+	if linked == nil {
+		t.Error("sarah should have a calendar identity link")
+	}
+}
+
+func TestEnrichFromCalendar_MultipleAttendees(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+	r.SetupSelf("Pavel", []string{"pavel@company.com"})
+
+	activities := []models.Activity{
+		makeCalendarActivity("Team Meeting", []calendarAttendee{
+			{Email: "pavel@company.com", Self: true},
+			{Email: "alice@company.com", DisplayName: "Alice"},
+			{Email: "bob@company.com", DisplayName: "Bob"},
+			{Email: "carol@company.com", DisplayName: "Carol"},
+		}),
+	}
+
+	created, err := r.EnrichFromCalendar(activities)
+	if err != nil {
+		t.Fatalf("EnrichFromCalendar: %v", err)
+	}
+
+	if created != 3 {
+		t.Errorf("created = %d, want 3", created)
+	}
+
+	identities, _ := db.ListIdentities()
+	// 1 self + 3 new = 4
+	if len(identities) != 4 {
+		t.Errorf("total identities = %d, want 4", len(identities))
+	}
+}
+
+func TestEnrichFromCalendar_SkipsNonCalendarActivities(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	activities := []models.Activity{
+		{Source: models.SourceSlack, Metadata: `{"channel_id": "C1"}`},
+		{Source: models.SourceGit, Metadata: ""},
+	}
+
+	created, err := r.EnrichFromCalendar(activities)
+	if err != nil {
+		t.Fatalf("EnrichFromCalendar: %v", err)
+	}
+	if created != 0 {
+		t.Errorf("created = %d, want 0", created)
+	}
+}
+
+func TestEnrichFromCalendar_SkipsEmptyEmails(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	activities := []models.Activity{
+		makeCalendarActivity("Test", []calendarAttendee{
+			{Email: "", DisplayName: "No Email"},
+		}),
+	}
+
+	created, err := r.EnrichFromCalendar(activities)
+	if err != nil {
+		t.Fatalf("EnrichFromCalendar: %v", err)
+	}
+	if created != 0 {
+		t.Errorf("created = %d, want 0", created)
+	}
+}
+
+func TestEnrichFromCalendar_Idempotent(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+	r.SetupSelf("Pavel", []string{"pavel@company.com"})
+
+	activities := []models.Activity{
+		makeCalendarActivity("Meeting", []calendarAttendee{
+			{Email: "pavel@company.com", Self: true},
+			{Email: "bob@company.com", DisplayName: "Bob"},
+		}),
+	}
+
+	created1, _ := r.EnrichFromCalendar(activities)
+	created2, _ := r.EnrichFromCalendar(activities)
+
+	if created1 != 1 {
+		t.Errorf("first run: created = %d, want 1", created1)
+	}
+	if created2 != 0 {
+		t.Errorf("second run: created = %d, want 0 (idempotent)", created2)
+	}
+}
+
+func TestEnrichFromCalendar_UsesEmailAsNameFallback(t *testing.T) {
+	db := mustOpen(t)
+	r := NewResolver(db)
+
+	activities := []models.Activity{
+		makeCalendarActivity("Meeting", []calendarAttendee{
+			{Email: "noname@company.com"},
+		}),
+	}
+
+	r.EnrichFromCalendar(activities)
+
+	identity, _ := r.ResolveByEmail("noname@company.com")
+	if identity == nil {
+		t.Fatal("expected identity")
+	}
+	// When no display name, email should be used as name.
+	if identity.Name != "noname@company.com" {
+		t.Errorf("Name = %q, want email as fallback", identity.Name)
 	}
 }

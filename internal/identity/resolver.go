@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -113,6 +114,83 @@ func (r *Resolver) LinkSource(source, sourceUID, email, name string) (*models.Id
 // identity resolution.
 func (r *Resolver) AutoLinkSlack(slackUserID, email, name string) (*models.Identity, error) {
 	return r.LinkSource("slack", slackUserID, email, name)
+}
+
+// calendarMeta mirrors the calendar package's eventMeta for JSON decoding.
+type calendarMeta struct {
+	Attendees []calendarAttendee `json:"attendees,omitempty"`
+}
+
+type calendarAttendee struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name,omitempty"`
+	Self        bool   `json:"self,omitempty"`
+}
+
+// EnrichFromCalendar processes calendar activities and creates/links identities
+// from attendee emails. For each activity:
+// - The self-attendee's identity is set as the activity's IdentityID.
+// - All other attendees get identities created/linked via email.
+// Returns the number of new identities created.
+func (r *Resolver) EnrichFromCalendar(activities []models.Activity) (int, error) {
+	created := 0
+
+	for i := range activities {
+		a := &activities[i]
+		if a.Source != models.SourceCalendar || a.Metadata == "" {
+			continue
+		}
+
+		var meta calendarMeta
+		if err := json.Unmarshal([]byte(a.Metadata), &meta); err != nil {
+			continue
+		}
+
+		for _, att := range meta.Attendees {
+			if att.Email == "" {
+				continue
+			}
+
+			if att.Self {
+				// Link self identity to this activity.
+				selfIdent, err := r.db.GetIdentityByEmail(att.Email)
+				if err != nil {
+					return created, fmt.Errorf("lookup self email %s: %w", att.Email, err)
+				}
+				if selfIdent != nil {
+					a.IdentityID = selfIdent.ID
+				}
+				continue
+			}
+
+			// For other attendees, create/link identity.
+			existing, err := r.db.GetIdentityByEmail(att.Email)
+			if err != nil {
+				return created, fmt.Errorf("lookup email %s: %w", att.Email, err)
+			}
+			if existing != nil {
+				// Already known — just ensure calendar link exists.
+				_ = r.db.InsertIdentityLink(existing.ID, "calendar", att.Email)
+				continue
+			}
+
+			// New identity — create it.
+			name := att.DisplayName
+			if name == "" {
+				name = att.Email
+			}
+			id, err := r.db.InsertIdentity(name, att.Email, false)
+			if err != nil {
+				return created, fmt.Errorf("create identity for %s: %w", att.Email, err)
+			}
+			if err := r.db.InsertIdentityLink(id, "calendar", att.Email); err != nil {
+				return created, fmt.Errorf("link calendar %s: %w", att.Email, err)
+			}
+			created++
+		}
+	}
+
+	return created, nil
 }
 
 // ListAll returns all identities with their source links.
