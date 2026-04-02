@@ -296,3 +296,61 @@ func TestBuildActivitiesPrompt_MixedSources(t *testing.T) {
 	}
 }
 
+func TestLLMWeeklySummary_UsesLLMResponse(t *testing.T) {
+	llmOutput := "## Weekly Summary\n- Focused on auth system improvements\n\nMeetings: 3h total"
+	provider := &capturingProvider{response: llmOutput}
+	s := NewLLMSummarizer(provider)
+
+	ts := time.Date(2026, 3, 27, 14, 0, 0, 0, time.UTC)
+	activities := []models.Activity{
+		activity("Fix auth", "backend-api", "abc123", 3, 47, 12, ts),
+	}
+
+	out, err := s.WeeklySummary(activities)
+	if err != nil {
+		t.Fatalf("WeeklySummary: %v", err)
+	}
+	if out != llmOutput {
+		t.Errorf("expected LLM output, got %q", out)
+	}
+
+	// Should use weekly system prompt.
+	if len(provider.messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(provider.messages))
+	}
+	if !strings.Contains(provider.messages[0].Content, "weekly summary") {
+		t.Error("system prompt should mention weekly summary")
+	}
+}
+
+func TestLLMWeeklySummary_FallsBackOnError(t *testing.T) {
+	provider := &capturingProvider{err: fmt.Errorf("LLM unavailable")}
+	s := NewLLMSummarizer(provider)
+
+	ts := time.Date(2026, 3, 27, 14, 0, 0, 0, time.UTC)
+	activities := []models.Activity{
+		activity("Fix auth", "backend-api", "abc123", 3, 47, 12, ts),
+	}
+
+	out, err := s.WeeklySummary(activities)
+	if err != nil {
+		t.Fatalf("WeeklySummary: %v", err)
+	}
+	if !strings.Contains(out, "Weekly Summary") {
+		t.Errorf("expected template fallback, got %q", out)
+	}
+}
+
+func TestLLMWeeklySummary_Empty(t *testing.T) {
+	provider := &capturingProvider{response: "should not be called"}
+	s := NewLLMSummarizer(provider)
+
+	out, err := s.WeeklySummary(nil)
+	if err != nil {
+		t.Fatalf("WeeklySummary: %v", err)
+	}
+	if !strings.Contains(out, "No activity") {
+		t.Errorf("expected no-activity message, got %q", out)
+	}
+}
+

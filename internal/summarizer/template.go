@@ -307,6 +307,163 @@ func formatDuration(minutes int) string {
 	return fmt.Sprintf("%dh%dmin", h, m)
 }
 
+// meetingTypeBreakdown holds per-type meeting time.
+type meetingTypeBreakdown struct {
+	meetingType string
+	minutes     int
+}
+
+// WeeklySummary generates a weekly summary with per-day breakdown and meeting time stats.
+func (s *TemplateSummarizer) WeeklySummary(activities []models.Activity) (string, error) {
+	if len(activities) == 0 {
+		return "No activity found for the given period.", nil
+	}
+
+	// Group activities by date.
+	type dayData struct {
+		commits  int
+		messages int
+		meetings int
+		meetingMinutes int
+		meetingByType  map[string]int
+		repos          map[string]bool
+	}
+
+	days := make(map[string]*dayData)
+	var dateOrder []string
+	datesSeen := make(map[string]bool)
+
+	totalCommits := 0
+	totalMessages := 0
+	totalMeetings := 0
+	totalMeetingMinutes := 0
+	totalMeetingByType := make(map[string]int)
+	allRepos := make(map[string]bool)
+
+	for _, a := range activities {
+		dateStr := a.Timestamp.Format("2006-01-02")
+		if !datesSeen[dateStr] {
+			datesSeen[dateStr] = true
+			dateOrder = append(dateOrder, dateStr)
+			days[dateStr] = &dayData{
+				meetingByType: make(map[string]int),
+				repos:         make(map[string]bool),
+			}
+		}
+		d := days[dateStr]
+
+		switch a.Source {
+		case models.SourceGit:
+			d.commits++
+			totalCommits++
+			var meta commitMeta
+			json.Unmarshal([]byte(a.Metadata), &meta)
+			if meta.Repo != "" {
+				d.repos[meta.Repo] = true
+				allRepos[meta.Repo] = true
+			}
+		case models.SourceSlack:
+			d.messages++
+			totalMessages++
+		case models.SourceCalendar:
+			var meta calendarMeta
+			json.Unmarshal([]byte(a.Metadata), &meta)
+			if meta.MeetingType == "focus" || meta.ResponseStatus == "declined" {
+				continue
+			}
+			d.meetings++
+			totalMeetings++
+			d.meetingMinutes += meta.DurationMin
+			totalMeetingMinutes += meta.DurationMin
+			mtype := meta.MeetingType
+			if mtype == "" {
+				mtype = "group"
+			}
+			d.meetingByType[mtype] += meta.DurationMin
+			totalMeetingByType[mtype] += meta.DurationMin
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString("Weekly Summary\n")
+	b.WriteString("==============\n\n")
+
+	// Per-day breakdown.
+	for _, dateStr := range dateOrder {
+		d := days[dateStr]
+		t, _ := time.Parse("2006-01-02", dateStr)
+		b.WriteString(fmt.Sprintf("%s (%s):", t.Weekday(), dateStr))
+
+		var parts []string
+		if d.commits > 0 {
+			repoNames := sortedMapKeys(d.repos)
+			parts = append(parts, fmt.Sprintf("%d commits in %s", d.commits, strings.Join(repoNames, ", ")))
+		}
+		if d.messages > 0 {
+			parts = append(parts, fmt.Sprintf("%d Slack messages", d.messages))
+		}
+		if d.meetings > 0 {
+			parts = append(parts, fmt.Sprintf("%d meetings (%s)", d.meetings, formatDuration(d.meetingMinutes)))
+		}
+
+		if len(parts) > 0 {
+			b.WriteString(" ")
+			b.WriteString(strings.Join(parts, ", "))
+		} else {
+			b.WriteString(" no activity")
+		}
+		b.WriteString("\n")
+	}
+
+	// Totals.
+	b.WriteString("\nTotals\n------\n")
+	b.WriteString(fmt.Sprintf("Commits:  %d", totalCommits))
+	if len(allRepos) > 0 {
+		b.WriteString(fmt.Sprintf(" across %d repo(s)", len(allRepos)))
+	}
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("Messages: %d\n", totalMessages))
+	b.WriteString(fmt.Sprintf("Meetings: %d (%s)\n", totalMeetings, formatDuration(totalMeetingMinutes)))
+
+	// Meeting time breakdown by type.
+	if len(totalMeetingByType) > 0 {
+		b.WriteString("\nMeeting breakdown\n-----------------\n")
+		typeNames := sortedMapKeys2(totalMeetingByType)
+		for _, mtype := range typeNames {
+			mins := totalMeetingByType[mtype]
+			b.WriteString(fmt.Sprintf("  %s: %s\n", mtype, formatDuration(mins)))
+		}
+	}
+
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+func sortedMapKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
+			keys[j], keys[j-1] = keys[j-1], keys[j]
+		}
+	}
+	return keys
+}
+
+func sortedMapKeys2(m map[string]int) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
+			keys[j], keys[j-1] = keys[j-1], keys[j]
+		}
+	}
+	return keys
+}
+
 func sortedKeys(m map[string][]entry) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

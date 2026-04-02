@@ -422,6 +422,155 @@ func TestStandup_TodayOnlyMeetings(t *testing.T) {
 	}
 }
 
+func TestWeeklySummary_Empty(t *testing.T) {
+	s := NewTemplateSummarizer()
+	out, err := s.WeeklySummary(nil)
+	if err != nil {
+		t.Fatalf("WeeklySummary: %v", err)
+	}
+	if !strings.Contains(out, "No activity") {
+		t.Errorf("expected no-activity message, got %q", out)
+	}
+}
+
+func TestWeeklySummary_CommitsOnly(t *testing.T) {
+	s := NewTemplateSummarizer()
+	mon := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC) // Monday
+	tue := time.Date(2026, 3, 31, 14, 0, 0, 0, time.UTC) // Tuesday
+
+	activities := []models.Activity{
+		activity("Fix auth", "backend-api", "abc123", 3, 47, 12, mon),
+		activity("Add tests", "backend-api", "def456", 1, 10, 0, mon.Add(time.Hour)),
+		activity("Update UI", "frontend", "ghi789", 2, 20, 5, tue),
+	}
+
+	out, err := s.WeeklySummary(activities)
+	if err != nil {
+		t.Fatalf("WeeklySummary: %v", err)
+	}
+
+	if !strings.Contains(out, "Weekly Summary") {
+		t.Errorf("missing header:\n%s", out)
+	}
+	if !strings.Contains(out, "Monday (2026-03-30):") {
+		t.Errorf("missing Monday:\n%s", out)
+	}
+	if !strings.Contains(out, "2 commits in backend-api") {
+		t.Errorf("missing Monday commits:\n%s", out)
+	}
+	if !strings.Contains(out, "Tuesday (2026-03-31):") {
+		t.Errorf("missing Tuesday:\n%s", out)
+	}
+	if !strings.Contains(out, "1 commits in frontend") {
+		t.Errorf("missing Tuesday commits:\n%s", out)
+	}
+	if !strings.Contains(out, "Commits:  3 across 2 repo(s)") {
+		t.Errorf("missing totals:\n%s", out)
+	}
+}
+
+func TestWeeklySummary_MeetingBreakdown(t *testing.T) {
+	s := NewTemplateSummarizer()
+	mon := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
+	tue := time.Date(2026, 3, 31, 10, 0, 0, 0, time.UTC)
+
+	standupMeta, _ := json.Marshal(calendarMeta{
+		DurationMin: 15, MeetingType: "standup", ResponseStatus: "accepted",
+	})
+	oneOnOneMeta, _ := json.Marshal(calendarMeta{
+		DurationMin: 30, MeetingType: "1:1", ResponseStatus: "accepted",
+	})
+	ceremonyMeta, _ := json.Marshal(calendarMeta{
+		DurationMin: 60, MeetingType: "ceremony", ResponseStatus: "accepted",
+	})
+	focusMeta, _ := json.Marshal(calendarMeta{
+		DurationMin: 120, MeetingType: "focus", ResponseStatus: "accepted",
+	})
+	declinedMeta, _ := json.Marshal(calendarMeta{
+		DurationMin: 60, MeetingType: "group", ResponseStatus: "declined",
+	})
+
+	activities := []models.Activity{
+		{Source: models.SourceCalendar, Type: models.TypeMeeting, Title: "Daily Standup", Metadata: string(standupMeta), Timestamp: mon},
+		{Source: models.SourceCalendar, Type: models.TypeMeeting, Title: "1:1 with Sarah", Metadata: string(oneOnOneMeta), Timestamp: mon.Add(2 * time.Hour)},
+		{Source: models.SourceCalendar, Type: models.TypeMeeting, Title: "Sprint Planning", Metadata: string(ceremonyMeta), Timestamp: tue},
+		{Source: models.SourceCalendar, Type: models.TypeMeeting, Title: "Focus Time", Metadata: string(focusMeta), Timestamp: tue.Add(2 * time.Hour)},
+		{Source: models.SourceCalendar, Type: models.TypeMeeting, Title: "Declined Meeting", Metadata: string(declinedMeta), Timestamp: tue.Add(4 * time.Hour)},
+	}
+
+	out, err := s.WeeklySummary(activities)
+	if err != nil {
+		t.Fatalf("WeeklySummary: %v", err)
+	}
+
+	// Monday: 2 meetings (standup 15min + 1:1 30min = 45min).
+	if !strings.Contains(out, "Monday (2026-03-30): 2 meetings (45min)") {
+		t.Errorf("missing Monday meetings:\n%s", out)
+	}
+	// Tuesday: 1 meeting (ceremony 60min — focus and declined skipped).
+	if !strings.Contains(out, "Tuesday (2026-03-31): 1 meetings (1h)") {
+		t.Errorf("missing Tuesday meetings:\n%s", out)
+	}
+	// Totals: 3 meetings, 1h45min.
+	if !strings.Contains(out, "Meetings: 3 (1h45min)") {
+		t.Errorf("missing meeting totals:\n%s", out)
+	}
+	// Breakdown by type.
+	if !strings.Contains(out, "Meeting breakdown") {
+		t.Errorf("missing meeting breakdown section:\n%s", out)
+	}
+	if !strings.Contains(out, "1:1: 30min") {
+		t.Errorf("missing 1:1 breakdown:\n%s", out)
+	}
+	if !strings.Contains(out, "ceremony: 1h") {
+		t.Errorf("missing ceremony breakdown:\n%s", out)
+	}
+	if !strings.Contains(out, "standup: 15min") {
+		t.Errorf("missing standup breakdown:\n%s", out)
+	}
+	// Focus and declined should NOT appear.
+	if strings.Contains(out, "focus") {
+		t.Errorf("focus time should be excluded:\n%s", out)
+	}
+}
+
+func TestWeeklySummary_MixedSources(t *testing.T) {
+	s := NewTemplateSummarizer()
+	mon := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
+
+	slackMeta, _ := json.Marshal(slackMeta{ChannelName: "backend"})
+	meetingMeta, _ := json.Marshal(calendarMeta{
+		DurationMin: 60, MeetingType: "ceremony", ResponseStatus: "accepted",
+	})
+
+	activities := []models.Activity{
+		activity("Fix bug", "backend-api", "abc123", 1, 5, 2, mon),
+		{Source: models.SourceSlack, Type: models.TypeMessage, Title: "Discussion", Metadata: string(slackMeta), Timestamp: mon.Add(time.Hour)},
+		{Source: models.SourceCalendar, Type: models.TypeMeeting, Title: "Planning", Metadata: string(meetingMeta), Timestamp: mon.Add(2 * time.Hour)},
+	}
+
+	out, err := s.WeeklySummary(activities)
+	if err != nil {
+		t.Fatalf("WeeklySummary: %v", err)
+	}
+
+	if !strings.Contains(out, "1 commits in backend-api") {
+		t.Errorf("missing commits:\n%s", out)
+	}
+	if !strings.Contains(out, "1 Slack messages") {
+		t.Errorf("missing messages:\n%s", out)
+	}
+	if !strings.Contains(out, "1 meetings (1h)") {
+		t.Errorf("missing meetings:\n%s", out)
+	}
+	if !strings.Contains(out, "Commits:  1 across 1 repo(s)") {
+		t.Errorf("missing commit totals:\n%s", out)
+	}
+	if !strings.Contains(out, "Messages: 1") {
+		t.Errorf("missing message totals:\n%s", out)
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		mins int

@@ -32,6 +32,20 @@ Rules:
 
 Respond ONLY with the standup text, no preamble or explanation.`
 
+const weeklySystemPrompt = `You are a developer weekly summary generator. Given a list of work activities (commits, Slack messages, meetings, etc.), write a concise weekly summary.
+
+Rules:
+- Start with a brief 2-3 sentence overview of the week
+- Group work by themes/projects, not by day
+- Include key accomplishments and decisions made
+- Include a meeting time breakdown at the end: total hours in meetings, broken down by meeting type (1:1, standup, ceremony, etc.)
+- Skip focus time blocks and declined meetings
+- Mention collaboration highlights (who you worked with most)
+- Be concise and professional
+- Format meeting stats clearly at the end
+
+Respond ONLY with the weekly summary text, no preamble or explanation.`
+
 // LLMSummarizer generates standups using an LLM provider.
 type LLMSummarizer struct {
 	provider llm.Provider
@@ -84,6 +98,42 @@ func (s *LLMSummarizer) Standup(activities []models.Activity) (string, error) {
 	resp = strings.TrimSpace(resp)
 	if resp == "" {
 		return s.fallback.Standup(activities)
+	}
+
+	return resp, nil
+}
+
+// WeeklySummary generates a weekly summary using the LLM.
+// Falls back to template-based generation on LLM failure.
+func (s *LLMSummarizer) WeeklySummary(activities []models.Activity) (string, error) {
+	if len(activities) == 0 {
+		return "No activity found for the given period.", nil
+	}
+
+	selfSet := make(map[string]bool, len(s.selfUIDs))
+	for _, uid := range s.selfUIDs {
+		selfSet[uid] = true
+	}
+	prompt := buildActivitiesPrompt(activities, selfSet)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	resp, err := s.provider.Chat(ctx, []llm.Message{
+		{Role: "system", Content: weeklySystemPrompt},
+		{Role: "user", Content: prompt},
+	}, llm.ChatOpts{
+		Temperature: 0.3,
+		MaxTokens:   2048,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "LLM weekly summary failed: %v (falling back to template)\n", err)
+		return s.fallback.WeeklySummary(activities)
+	}
+
+	resp = strings.TrimSpace(resp)
+	if resp == "" {
+		return s.fallback.WeeklySummary(activities)
 	}
 
 	return resp, nil
