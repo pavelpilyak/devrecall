@@ -13,6 +13,49 @@ const (
 	dbFile     = "devrecall.db"
 )
 
+// PrivacyMode controls how much activity detail is retained for a source.
+type PrivacyMode string
+
+const (
+	// PrivacyFull keeps all data: title, content, and full metadata.
+	PrivacyFull PrivacyMode = "full"
+	// PrivacySummary keeps title and summaries but strips raw content
+	// (e.g., Slack message text, commit diffs).
+	PrivacySummary PrivacyMode = "summary"
+	// PrivacyMetadata keeps only source, type, timestamp, and basic counts.
+	PrivacyMetadata PrivacyMode = "metadata"
+)
+
+// PrivacyConfig holds per-source privacy modes.
+type PrivacyConfig struct {
+	Git      PrivacyMode `json:"git,omitempty"`
+	Slack    PrivacyMode `json:"slack,omitempty"`
+	Calendar PrivacyMode `json:"calendar,omitempty"`
+	Jira     PrivacyMode `json:"jira,omitempty"`
+	Linear   PrivacyMode `json:"linear,omitempty"`
+}
+
+// ModeFor returns the privacy mode for a given source, defaulting to "full".
+func (p PrivacyConfig) ModeFor(source string) PrivacyMode {
+	var mode PrivacyMode
+	switch source {
+	case "git":
+		mode = p.Git
+	case "slack":
+		mode = p.Slack
+	case "calendar":
+		mode = p.Calendar
+	case "jira":
+		mode = p.Jira
+	case "linear":
+		mode = p.Linear
+	}
+	if mode == "" {
+		return PrivacyFull
+	}
+	return mode
+}
+
 type Config struct {
 	Git      GitConfig      `json:"git"`
 	Slack    SlackConfig    `json:"slack"`
@@ -20,6 +63,7 @@ type Config struct {
 	Jira     JiraConfig     `json:"jira"`
 	Linear   LinearConfig   `json:"linear"`
 	LLM      LLMConfig      `json:"llm"`
+	Privacy  PrivacyConfig  `json:"privacy,omitempty"`
 	filePath string
 }
 
