@@ -27,7 +27,7 @@ func NewOpenAI(apiKey, model, baseURL string) *OpenAI {
 		baseURL = defaultOpenAIURL
 	}
 	if model == "" {
-		model = "gpt-4o-mini"
+		model = "gpt-5.4-mini"
 	}
 	return &OpenAI{
 		baseURL: baseURL,
@@ -62,7 +62,7 @@ func (o *OpenAI) Chat(ctx context.Context, messages []Message, opts ChatOpts) (s
 		reqBody["temperature"] = opts.Temperature
 	}
 	if opts.MaxTokens > 0 {
-		reqBody["max_tokens"] = opts.MaxTokens
+		reqBody["max_completion_tokens"] = opts.MaxTokens
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

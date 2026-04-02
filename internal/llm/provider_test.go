@@ -278,7 +278,7 @@ func TestOllama_Defaults(t *testing.T) {
 	if p.baseURL != defaultOllamaURL {
 		t.Errorf("baseURL = %q, want %q", p.baseURL, defaultOllamaURL)
 	}
-	if p.model != "llama3.2" {
+	if p.model != "llama4" {
 		t.Errorf("model = %q", p.model)
 	}
 }
@@ -288,7 +288,7 @@ func TestOpenAI_Defaults(t *testing.T) {
 	if p.baseURL != defaultOpenAIURL {
 		t.Errorf("baseURL = %q", p.baseURL)
 	}
-	if p.model != "gpt-4o-mini" {
+	if p.model != "gpt-5.4-mini" {
 		t.Errorf("model = %q", p.model)
 	}
 }
@@ -298,7 +298,7 @@ func TestAnthropic_Defaults(t *testing.T) {
 	if p.baseURL != defaultAnthropicURL {
 		t.Errorf("baseURL = %q", p.baseURL)
 	}
-	if p.model != "claude-sonnet-4-20250514" {
+	if p.model != "claude-sonnet-4-6" {
 		t.Errorf("model = %q", p.model)
 	}
 }

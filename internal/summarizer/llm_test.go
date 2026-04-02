@@ -102,7 +102,7 @@ func TestBuildActivitiesPrompt_GitCommits(t *testing.T) {
 		activity("Add retry tests", "backend-api", "def456abc", 1, 10, 0, ts.Add(time.Hour)),
 	}
 
-	prompt := buildActivitiesPrompt(activities)
+	prompt := buildActivitiesPrompt(activities, nil)
 
 	if !strings.Contains(prompt, "Friday (2026-03-27)") {
 		t.Errorf("expected date header in prompt:\n%s", prompt)
@@ -115,14 +115,17 @@ func TestBuildActivitiesPrompt_GitCommits(t *testing.T) {
 	}
 }
 
-func TestBuildActivitiesPrompt_SlackWithSummary(t *testing.T) {
+func TestBuildActivitiesPrompt_SlackThread(t *testing.T) {
 	ts := time.Date(2026, 3, 27, 14, 0, 0, 0, time.UTC)
 
-	metaJSON, _ := json.Marshal(slackMeta{
+	metaJSON, _ := json.Marshal(slackFullMeta{
 		ChannelName: "backend",
-		Summary: &slackThreadSummary{
-			Topic:     "Deployment strategy discussion",
-			Decisions: []string{"Switch to blue-green"},
+		ThreadMsgs: []struct {
+			User string `json:"user"`
+			Text string `json:"text"`
+		}{
+			{User: "U001", Text: "Should we use blue-green?"},
+			{User: "U002", Text: "Yes, let's do it"},
 		},
 	})
 
@@ -134,13 +137,23 @@ func TestBuildActivitiesPrompt_SlackWithSummary(t *testing.T) {
 		Timestamp: ts,
 	}}
 
-	prompt := buildActivitiesPrompt(activities)
-
-	if !strings.Contains(prompt, "[Slack thread] #backend: Deployment strategy discussion") {
-		t.Errorf("expected thread summary in prompt:\n%s", prompt)
+	// Without self UIDs — raw user IDs shown.
+	prompt := buildActivitiesPrompt(activities, nil)
+	if !strings.Contains(prompt, "[Slack thread] #backend (2 messages)") {
+		t.Errorf("expected thread header in prompt:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "Decisions: Switch to blue-green") {
-		t.Errorf("expected decisions in prompt:\n%s", prompt)
+	if !strings.Contains(prompt, "U001: Should we use blue-green?") {
+		t.Errorf("expected first message with raw UID in prompt:\n%s", prompt)
+	}
+
+	// With self UIDs — "You" label applied.
+	selfUIDs := map[string]bool{"U001": true}
+	prompt = buildActivitiesPrompt(activities, selfUIDs)
+	if !strings.Contains(prompt, "You: Should we use blue-green?") {
+		t.Errorf("expected 'You' label for self message:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "U002: Yes, let's do it") {
+		t.Errorf("expected raw UID for other user:\n%s", prompt)
 	}
 }
 
@@ -156,7 +169,7 @@ func TestBuildActivitiesPrompt_SlackWithoutSummary(t *testing.T) {
 		Timestamp: ts,
 	}}
 
-	prompt := buildActivitiesPrompt(activities)
+	prompt := buildActivitiesPrompt(activities, nil)
 
 	if !strings.Contains(prompt, "[Slack message] #general: Message in #general") {
 		t.Errorf("expected raw message in prompt:\n%s", prompt)
@@ -172,7 +185,7 @@ func TestBuildActivitiesPrompt_MultipleDays(t *testing.T) {
 		activity("Day 2 work", "repo", "bbb", 2, 10, 3, day2),
 	}
 
-	prompt := buildActivitiesPrompt(activities)
+	prompt := buildActivitiesPrompt(activities, nil)
 
 	if !strings.Contains(prompt, "Friday (2026-03-27)") {
 		t.Errorf("expected day 1 header:\n%s", prompt)
@@ -213,11 +226,14 @@ func TestLLMSummarizer_PromptIncludesSystemAndUser(t *testing.T) {
 func TestBuildActivitiesPrompt_MixedSources(t *testing.T) {
 	ts := time.Date(2026, 3, 27, 14, 0, 0, 0, time.UTC)
 
-	threadMeta, _ := json.Marshal(slackMeta{
+	threadMeta, _ := json.Marshal(slackFullMeta{
 		ChannelName: "backend",
-		Summary: &slackThreadSummary{
-			Topic:     "Deploy discussion",
-			Decisions: []string{"Use blue-green"},
+		ThreadMsgs: []struct {
+			User string `json:"user"`
+			Text string `json:"text"`
+		}{
+			{User: "U001", Text: "Deploy discussion"},
+			{User: "U002", Text: "Use blue-green"},
 		},
 	})
 
@@ -232,7 +248,7 @@ func TestBuildActivitiesPrompt_MixedSources(t *testing.T) {
 		},
 	}
 
-	prompt := buildActivitiesPrompt(activities)
+	prompt := buildActivitiesPrompt(activities, nil)
 
 	if !strings.Contains(prompt, "[Git commit]") {
 		t.Error("should contain git commit")

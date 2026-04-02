@@ -29,7 +29,7 @@ func NewAnthropic(apiKey, model, baseURL string) *Anthropic {
 		baseURL = defaultAnthropicURL
 	}
 	if model == "" {
-		model = "claude-sonnet-4-20250514"
+		model = "claude-sonnet-4-6"
 	}
 	return &Anthropic{
 		baseURL: baseURL,

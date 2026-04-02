@@ -27,7 +27,7 @@ func NewOllama(baseURL, model string) *Ollama {
 		baseURL = defaultOllamaURL
 	}
 	if model == "" {
-		model = "llama3.2"
+		model = "llama4"
 	}
 	return &Ollama{
 		baseURL: baseURL,

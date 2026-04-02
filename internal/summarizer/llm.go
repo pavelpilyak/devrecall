@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -15,9 +16,11 @@ const standupSystemPrompt = `You are a developer standup report generator. Given
 
 Rules:
 - Group related work together (e.g., multiple commits on the same feature)
-- Use past tense for completed work
+- This is a FIRST-PERSON standup: only report what "You" did, asked, or decided — not what others said
+- In Slack threads, messages from "You" are the standup author; other participants are teammates
+- Accurately reflect the tense: if something was planned or will be done, use future tense; if completed, use past tense
 - Keep each bullet point to 1-2 sentences
-- Highlight key decisions from Slack threads
+- Highlight key decisions from Slack threads, but attribute them correctly
 - Don't include commit SHAs or raw file counts — focus on what was accomplished
 - If there are multiple days, separate them with date headers
 - Be concise and professional — this is for a team standup
@@ -28,6 +31,7 @@ Respond ONLY with the standup text, no preamble or explanation.`
 type LLMSummarizer struct {
 	provider llm.Provider
 	fallback *TemplateSummarizer
+	selfUIDs []string // user IDs across sources (e.g., Slack UID) to label "You" in prompts
 }
 
 // NewLLMSummarizer creates an LLM-powered summarizer with template fallback.
@@ -38,6 +42,12 @@ func NewLLMSummarizer(provider llm.Provider) *LLMSummarizer {
 	}
 }
 
+// WithSelfUIDs sets user IDs that identify the standup author across sources.
+func (s *LLMSummarizer) WithSelfUIDs(uids ...string) *LLMSummarizer {
+	s.selfUIDs = uids
+	return s
+}
+
 // Standup generates a standup report using the LLM.
 // Falls back to template-based generation on LLM failure.
 func (s *LLMSummarizer) Standup(activities []models.Activity) (string, error) {
@@ -45,7 +55,11 @@ func (s *LLMSummarizer) Standup(activities []models.Activity) (string, error) {
 		return "No activity found for the given period.", nil
 	}
 
-	prompt := buildActivitiesPrompt(activities)
+	selfSet := make(map[string]bool, len(s.selfUIDs))
+	for _, uid := range s.selfUIDs {
+		selfSet[uid] = true
+	}
+	prompt := buildActivitiesPrompt(activities, selfSet)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -58,6 +72,7 @@ func (s *LLMSummarizer) Standup(activities []models.Activity) (string, error) {
 		MaxTokens:   1024,
 	})
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "LLM standup generation failed: %v (falling back to template)\n", err)
 		return s.fallback.Standup(activities)
 	}
 
@@ -69,8 +84,20 @@ func (s *LLMSummarizer) Standup(activities []models.Activity) (string, error) {
 	return resp, nil
 }
 
+// slackFullMeta extends slackMeta with thread messages for the LLM prompt.
+type slackFullMeta struct {
+	ChannelName string             `json:"channel_name"`
+	ReplyCount  int                `json:"reply_count,omitempty"`
+	Summary     *slackThreadSummary `json:"summary,omitempty"`
+	ThreadMsgs  []struct {
+		User string `json:"user"`
+		Text string `json:"text"`
+	} `json:"thread_msgs,omitempty"`
+}
+
 // buildActivitiesPrompt formats activities into a structured prompt for the LLM.
-func buildActivitiesPrompt(activities []models.Activity) string {
+// selfUIDs maps user IDs that belong to the standup author (labeled "You" in output).
+func buildActivitiesPrompt(activities []models.Activity, selfUIDs map[string]bool) string {
 	var b strings.Builder
 	b.WriteString("Here are my work activities:\n\n")
 
@@ -108,17 +135,23 @@ func buildActivitiesPrompt(activities []models.Activity) string {
 				b.WriteString("\n")
 
 			case models.SourceSlack:
-				var meta slackMeta
+				var meta slackFullMeta
 				json.Unmarshal([]byte(a.Metadata), &meta)
-				if meta.Summary != nil && meta.Summary.Topic != "" {
-					fmt.Fprintf(&b, "- [Slack thread] #%s: %s", meta.ChannelName, meta.Summary.Topic)
-					if len(meta.Summary.Decisions) > 0 {
-						fmt.Fprintf(&b, " | Decisions: %s", strings.Join(meta.Summary.Decisions, "; "))
+				if len(meta.ThreadMsgs) > 1 {
+					// Thread with messages — give the LLM the full conversation.
+					fmt.Fprintf(&b, "- [Slack thread] #%s (%d messages):\n", meta.ChannelName, len(meta.ThreadMsgs))
+					for _, m := range meta.ThreadMsgs {
+						label := m.User
+						if selfUIDs[m.User] {
+							label = "You"
+						}
+						fmt.Fprintf(&b, "    %s: %s\n", label, m.Text)
 					}
+				} else if a.Content != "" {
+					fmt.Fprintf(&b, "- [Slack message] #%s: %s\n", meta.ChannelName, a.Content)
 				} else {
-					fmt.Fprintf(&b, "- [Slack message] #%s: %s", meta.ChannelName, a.Title)
+					fmt.Fprintf(&b, "- [Slack message] #%s: %s\n", meta.ChannelName, a.Title)
 				}
-				b.WriteString("\n")
 
 			default:
 				fmt.Fprintf(&b, "- [%s] %s\n", a.Source, a.Title)

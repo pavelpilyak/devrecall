@@ -81,6 +81,8 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 				if len(meta.Summary.Decisions) > 0 {
 					e.decisions = meta.Summary.Decisions
 				}
+			} else if a.Content != "" {
+				e = entry{title: a.Content}
 			} else {
 				e = entry{title: a.Title}
 			}

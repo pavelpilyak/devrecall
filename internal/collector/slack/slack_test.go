@@ -138,12 +138,25 @@ func TestCollect_ThreadParent(t *testing.T) {
 	}
 }
 
-func TestCollect_ThreadReply(t *testing.T) {
+func TestCollect_ThreadReplyGrouped(t *testing.T) {
+	// When search returns both a parent and a reply from the same thread,
+	// they should be grouped into a single thread activity.
 	_, c := newTestServer(t, map[string]http.HandlerFunc{
 		"/search.messages": func(w http.ResponseWriter, r *http.Request) {
-			m := makeMatch("1711584010.000200", "I agree, let's do it", "C1234", "backend")
-			m.ThreadTS = "1711584000.000100" // different from TS = reply
-			json.NewEncoder(w).Encode(makeSearchResp(1, []searchMatch{m}))
+			parent := makeMatch("1711584000.000100", "Should we use blue-green?", "C1234", "backend")
+			parent.ThreadTS = "1711584000.000100"
+			reply := makeMatch("1711584010.000200", "I agree, let's do it", "C1234", "backend")
+			reply.ThreadTS = "1711584000.000100"
+			json.NewEncoder(w).Encode(makeSearchResp(2, []searchMatch{parent, reply}))
+		},
+		"/conversations.replies": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(threadResponse{
+				OK: true,
+				Messages: []threadMessage{
+					{User: "U001", Text: "Should we use blue-green?", TS: "1711584000.000100"},
+					{User: "U002", Text: "I agree, let's do it", TS: "1711584010.000200"},
+				},
+			})
 		},
 	})
 
@@ -153,17 +166,27 @@ func TestCollect_ThreadReply(t *testing.T) {
 	}
 
 	if len(activities) != 1 {
-		t.Fatalf("got %d activities, want 1", len(activities))
+		t.Fatalf("got %d activities, want 1 (thread grouped)", len(activities))
 	}
 
-	if activities[0].Title != "Thread reply in #backend" {
-		t.Errorf("Title = %q", activities[0].Title)
+	a := activities[0]
+	if a.SourceID != "slack:C1234:1711584000.000100" {
+		t.Errorf("SourceID = %q, want thread parent TS", a.SourceID)
+	}
+	if a.Title != "Thread in #backend (1 replies)" {
+		t.Errorf("Title = %q", a.Title)
+	}
+	if a.Content != "Should we use blue-green?" {
+		t.Errorf("Content = %q, want parent text", a.Content)
 	}
 
 	var meta messageMeta
-	json.Unmarshal([]byte(activities[0].Metadata), &meta)
-	if !meta.IsThreadReply {
-		t.Error("expected IsThreadReply = true")
+	json.Unmarshal([]byte(a.Metadata), &meta)
+	if meta.ReplyCount != 1 {
+		t.Errorf("ReplyCount = %d, want 1", meta.ReplyCount)
+	}
+	if len(meta.ThreadMsgs) != 2 {
+		t.Errorf("ThreadMsgs = %d, want 2", len(meta.ThreadMsgs))
 	}
 }
 

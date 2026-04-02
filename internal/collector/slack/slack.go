@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pavelpiliak/devrecall/pkg/models"
@@ -86,44 +87,105 @@ func (c *Collector) CollectSince(ctx context.Context, since time.Time) ([]models
 		return nil, fmt.Errorf("searching messages: %w", err)
 	}
 
-	var activities []models.Activity
-	seen := make(map[string]bool)
+	// Group messages by thread. Messages with a thread_ts are part of a thread;
+	// standalone messages (no thread_ts) are their own group.
+	type threadGroup struct {
+		channelID   string
+		channelName string
+		threadTS    string
+		parent      *searchMatch
+		replies     []searchMatch
+		permalink   string
+	}
 
-	for _, msg := range messages {
-		sourceID := fmt.Sprintf("slack:%s:%s", msg.Channel.ID, msg.TS)
-		if seen[sourceID] {
+	threads := make(map[string]*threadGroup) // key: "channel:thread_ts"
+	var standaloneMessages []searchMatch
+	var threadOrder []string
+	seen := make(map[string]bool) // dedup standalone messages
+
+	// Slack's search.messages API doesn't always return thread_ts.
+	// Fall back to extracting it from the permalink query string.
+	for i := range messages {
+		if messages[i].ThreadTS == "" {
+			messages[i].ThreadTS = extractThreadTS(messages[i].Permalink)
+		}
+	}
+
+	for i := range messages {
+		msg := &messages[i]
+		if msg.ThreadTS == "" {
+			// Standalone message, not part of any thread.
+			key := msg.Channel.ID + ":" + msg.TS
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			standaloneMessages = append(standaloneMessages, *msg)
 			continue
 		}
-		seen[sourceID] = true
 
-		meta := messageMeta{
-			ChannelID:   msg.Channel.ID,
-			ChannelName: msg.Channel.Name,
-			Permalink:   msg.Permalink,
+		key := msg.Channel.ID + ":" + msg.ThreadTS
+		if _, ok := threads[key]; !ok {
+			threads[key] = &threadGroup{
+				channelID:   msg.Channel.ID,
+				channelName: msg.Channel.Name,
+				threadTS:    msg.ThreadTS,
+			}
+			threadOrder = append(threadOrder, key)
+		}
+		g := threads[key]
+		if msg.TS == msg.ThreadTS {
+			g.parent = msg
+			g.permalink = msg.Permalink
+		} else {
+			g.replies = append(g.replies, *msg)
+			if g.permalink == "" {
+				g.permalink = msg.Permalink
+			}
+		}
+	}
+
+	var activities []models.Activity
+
+	// Process threads — one activity per thread.
+	for _, key := range threadOrder {
+		g := threads[key]
+
+		// Fetch the full thread from the API to get all messages (including from others).
+		thread, err := c.fetchThread(ctx, g.channelID, g.threadTS)
+
+		var parentText string
+		if g.parent != nil {
+			parentText = g.parent.Text
 		}
 
-		title := fmt.Sprintf("Message in #%s", msg.Channel.Name)
-		content := msg.Text
+		meta := messageMeta{
+			ChannelID:   g.channelID,
+			ChannelName: g.channelName,
+			ThreadTS:    g.threadTS,
+			Permalink:   g.permalink,
+		}
 
-		// If this message is part of a thread, fetch thread context.
-		if msg.ThreadTS != "" && msg.ThreadTS != msg.TS {
-			meta.IsThreadReply = true
-			meta.ThreadTS = msg.ThreadTS
-			title = fmt.Sprintf("Thread reply in #%s", msg.Channel.Name)
-		} else if msg.ThreadTS == msg.TS && msg.ReplyCount > 0 {
-			// This is a thread parent with replies — fetch the thread.
-			meta.ThreadTS = msg.ThreadTS
-			meta.ReplyCount = msg.ReplyCount
-
-			thread, err := c.fetchThread(ctx, msg.Channel.ID, msg.ThreadTS)
-			if err == nil && len(thread) > 0 {
-				meta.Participants = threadParticipants(thread)
-				meta.ReplyCount = len(thread) - 1 // exclude parent
-				meta.ThreadMsgs = toThreadMsgs(thread)
-				title = fmt.Sprintf("Thread in #%s (%d replies)", msg.Channel.Name, meta.ReplyCount)
+		if err == nil && len(thread) > 1 {
+			meta.Participants = threadParticipants(thread)
+			meta.ReplyCount = len(thread) - 1
+			meta.ThreadMsgs = toThreadMsgs(thread)
+			if parentText == "" {
+				parentText = thread[0].Text
+			}
+		} else if err == nil && len(thread) == 1 {
+			// Thread with no replies — treat as a single message.
+			if parentText == "" {
+				parentText = thread[0].Text
 			}
 		}
 
+		title := fmt.Sprintf("Thread in #%s (%d replies)", g.channelName, meta.ReplyCount)
+		if meta.ReplyCount == 0 {
+			title = fmt.Sprintf("Message in #%s", g.channelName)
+		}
+
+		sourceID := fmt.Sprintf("slack:%s:%s", g.channelID, g.threadTS)
 		metaJSON, _ := json.Marshal(meta)
 
 		activities = append(activities, models.Activity{
@@ -131,7 +193,28 @@ func (c *Collector) CollectSince(ctx context.Context, since time.Time) ([]models
 			SourceID:  sourceID,
 			Type:      models.TypeMessage,
 			Title:     title,
-			Content:   content,
+			Content:   parentText,
+			Metadata:  string(metaJSON),
+			Timestamp: tsToTime(g.threadTS),
+		})
+	}
+
+	// Process standalone messages (not in any thread).
+	for _, msg := range standaloneMessages {
+		sourceID := fmt.Sprintf("slack:%s:%s", msg.Channel.ID, msg.TS)
+		meta := messageMeta{
+			ChannelID:   msg.Channel.ID,
+			ChannelName: msg.Channel.Name,
+			Permalink:   msg.Permalink,
+		}
+		metaJSON, _ := json.Marshal(meta)
+
+		activities = append(activities, models.Activity{
+			Source:    models.SourceSlack,
+			SourceID:  sourceID,
+			Type:      models.TypeMessage,
+			Title:     fmt.Sprintf("Message in #%s", msg.Channel.Name),
+			Content:   msg.Text,
 			Metadata:  string(metaJSON),
 			Timestamp: tsToTime(msg.TS),
 		})
@@ -142,7 +225,9 @@ func (c *Collector) CollectSince(ctx context.Context, since time.Time) ([]models
 
 // searchMessages uses Slack's search.messages API to find the user's own messages.
 func (c *Collector) searchMessages(ctx context.Context, since time.Time) ([]searchMatch, error) {
-	query := fmt.Sprintf("from:me after:%s", since.Format("2006-01-02"))
+	// Slack's "after:" filter excludes the given date, so subtract one day
+	// to ensure messages on the target date are included.
+	query := fmt.Sprintf("from:me after:%s", since.AddDate(0, 0, -1).Format("2006-01-02"))
 	var allMatches []searchMatch
 	page := 1
 
@@ -239,6 +324,19 @@ func tsToTime(ts string) time.Time {
 		secs, _ = strconv.ParseInt(ts, 10, 64)
 	}
 	return time.Unix(secs, 0).UTC()
+}
+
+// extractThreadTS pulls thread_ts from a Slack permalink query string.
+// e.g. "https://team.slack.com/archives/C1234/p1234?thread_ts=5678.000" → "5678.000"
+func extractThreadTS(permalink string) string {
+	if i := strings.Index(permalink, "thread_ts="); i >= 0 {
+		val := permalink[i+len("thread_ts="):]
+		if j := strings.IndexByte(val, '&'); j >= 0 {
+			val = val[:j]
+		}
+		return val
+	}
+	return ""
 }
 
 // toThreadMsgs converts raw thread messages to the summarization-friendly format.
