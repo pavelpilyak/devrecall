@@ -19,8 +19,18 @@ type TokenStore interface {
 	Delete(vendor, key string) error
 }
 
+// NewTokenStore creates the appropriate token store based on the backend setting.
+// Valid backends: "keychain" (OS keychain), "file" (default, JSON files).
+func NewTokenStore(backend, baseDir string) (TokenStore, error) {
+	switch backend {
+	case "keychain":
+		return NewKeychainTokenStore(), nil
+	default:
+		return NewFileTokenStore(baseDir)
+	}
+}
+
 // FileTokenStore stores tokens as JSON files in ~/.devrecall/tokens/.
-// This is the default store; a keychain-backed store can replace it later.
 type FileTokenStore struct {
 	baseDir string
 }

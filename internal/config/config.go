@@ -57,14 +57,15 @@ func (p PrivacyConfig) ModeFor(source string) PrivacyMode {
 }
 
 type Config struct {
-	Git      GitConfig      `json:"git"`
-	Slack    SlackConfig    `json:"slack"`
-	Calendar CalendarConfig `json:"calendar"`
-	Jira     JiraConfig     `json:"jira"`
-	Linear   LinearConfig   `json:"linear"`
-	LLM      LLMConfig      `json:"llm"`
-	Privacy  PrivacyConfig  `json:"privacy,omitempty"`
-	filePath string
+	Git          GitConfig      `json:"git"`
+	Slack        SlackConfig    `json:"slack"`
+	Calendar     CalendarConfig `json:"calendar"`
+	Jira         JiraConfig     `json:"jira"`
+	Linear       LinearConfig   `json:"linear"`
+	LLM          LLMConfig      `json:"llm"`
+	Privacy      PrivacyConfig  `json:"privacy,omitempty"`
+	TokenStorage string         `json:"token_storage,omitempty"` // "keychain" or "file" (default: "file")
+	filePath     string
 }
 
 type GitConfig struct {
