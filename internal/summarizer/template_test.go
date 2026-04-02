@@ -273,6 +273,155 @@ func TestStandup_CalendarHourDuration(t *testing.T) {
 	}
 }
 
+func TestStandup_TodaySectionUpcomingMeetings(t *testing.T) {
+	s := NewTemplateSummarizer()
+	// Yesterday's activity.
+	yesterday := time.Now().AddDate(0, 0, -1)
+	yesterday = time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 14, 0, 0, 0, time.UTC)
+
+	// Today's meetings.
+	today := time.Now()
+	meeting1 := time.Date(today.Year(), today.Month(), today.Day(), 10, 0, 0, 0, time.UTC)
+	meeting2 := time.Date(today.Year(), today.Month(), today.Day(), 14, 0, 0, 0, time.UTC)
+
+	todayMeta1, _ := json.Marshal(calendarMeta{
+		Start:          meeting1.Format(time.RFC3339),
+		DurationMin:    60,
+		MeetingType:    "ceremony",
+		ResponseStatus: "accepted",
+	})
+	todayMeta2, _ := json.Marshal(calendarMeta{
+		Start:          meeting2.Format(time.RFC3339),
+		DurationMin:    30,
+		MeetingType:    "1:1",
+		ResponseStatus: "accepted",
+	})
+
+	activities := []models.Activity{
+		activity("Fix auth bug", "backend-api", "abc123def", 3, 47, 12, yesterday),
+		{
+			Source:    models.SourceCalendar,
+			Type:      models.TypeMeeting,
+			Title:     "Design review",
+			Metadata:  string(todayMeta1),
+			Timestamp: meeting1,
+		},
+		{
+			Source:    models.SourceCalendar,
+			Type:      models.TypeMeeting,
+			Title:     "1:1 with manager",
+			Metadata:  string(todayMeta2),
+			Timestamp: meeting2,
+		},
+	}
+
+	out, err := s.Standup(activities)
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	// Should have yesterday's activity.
+	if !strings.Contains(out, "backend-api: Fix auth bug") {
+		t.Errorf("missing yesterday's activity:\n%s", out)
+	}
+
+	// Should have "Today" header.
+	todayDate := today.Format("2006-01-02")
+	if !strings.Contains(out, "Today ("+todayDate+"):") {
+		t.Errorf("missing Today header:\n%s", out)
+	}
+
+	// Should show meeting times.
+	if !strings.Contains(out, "Design review") {
+		t.Errorf("missing today's meeting:\n%s", out)
+	}
+	if !strings.Contains(out, "1:1 with manager") {
+		t.Errorf("missing today's 1:1:\n%s", out)
+	}
+	// Duration should be shown.
+	if !strings.Contains(out, "1h") {
+		t.Errorf("missing duration:\n%s", out)
+	}
+	if !strings.Contains(out, "30min") {
+		t.Errorf("missing 30min duration:\n%s", out)
+	}
+}
+
+func TestStandup_TodaySkipsFocusAndDeclined(t *testing.T) {
+	s := NewTemplateSummarizer()
+	today := time.Now()
+	meeting := time.Date(today.Year(), today.Month(), today.Day(), 10, 0, 0, 0, time.UTC)
+
+	focusMeta, _ := json.Marshal(calendarMeta{
+		Start:          meeting.Format(time.RFC3339),
+		DurationMin:    120,
+		MeetingType:    "focus",
+		ResponseStatus: "accepted",
+	})
+	declinedMeta, _ := json.Marshal(calendarMeta{
+		Start:          meeting.Add(3 * time.Hour).Format(time.RFC3339),
+		DurationMin:    60,
+		MeetingType:    "group",
+		ResponseStatus: "declined",
+	})
+	acceptedMeta, _ := json.Marshal(calendarMeta{
+		Start:          meeting.Add(5 * time.Hour).Format(time.RFC3339),
+		DurationMin:    30,
+		MeetingType:    "1:1",
+		ResponseStatus: "accepted",
+	})
+
+	activities := []models.Activity{
+		{Source: models.SourceCalendar, Type: models.TypeMeeting, Title: "Focus Time", Metadata: string(focusMeta), Timestamp: meeting},
+		{Source: models.SourceCalendar, Type: models.TypeMeeting, Title: "Skipped Meeting", Metadata: string(declinedMeta), Timestamp: meeting.Add(3 * time.Hour)},
+		{Source: models.SourceCalendar, Type: models.TypeMeeting, Title: "Real Meeting", Metadata: string(acceptedMeta), Timestamp: meeting.Add(5 * time.Hour)},
+	}
+
+	out, err := s.Standup(activities)
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if strings.Contains(out, "Focus Time") {
+		t.Errorf("focus time should be skipped:\n%s", out)
+	}
+	if strings.Contains(out, "Skipped Meeting") {
+		t.Errorf("declined meeting should be skipped:\n%s", out)
+	}
+	if !strings.Contains(out, "Real Meeting") {
+		t.Errorf("accepted meeting should be present:\n%s", out)
+	}
+}
+
+func TestStandup_TodayOnlyMeetings(t *testing.T) {
+	s := NewTemplateSummarizer()
+	today := time.Now()
+	meeting := time.Date(today.Year(), today.Month(), today.Day(), 9, 0, 0, 0, time.UTC)
+
+	meetingMeta, _ := json.Marshal(calendarMeta{
+		Start:          meeting.Format(time.RFC3339),
+		DurationMin:    15,
+		MeetingType:    "standup",
+		ResponseStatus: "accepted",
+	})
+
+	activities := []models.Activity{
+		{Source: models.SourceCalendar, Type: models.TypeMeeting, Title: "Daily Standup", Metadata: string(meetingMeta), Timestamp: meeting},
+	}
+
+	out, err := s.Standup(activities)
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if !strings.Contains(out, "Today") {
+		t.Errorf("expected Today section:\n%s", out)
+	}
+	if !strings.Contains(out, "Daily Standup") {
+		t.Errorf("expected meeting:\n%s", out)
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		mins int

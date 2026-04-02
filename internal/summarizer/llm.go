@@ -27,6 +27,7 @@ Rules:
 - Skip declined meetings — they weren't attended
 - If there are multiple days, separate them with date headers
 - At the end of each day, include total time spent in meetings if there were any
+- If there's a "Today" section with upcoming meetings, format them as a schedule with times
 - Be concise and professional — this is for a team standup
 
 Respond ONLY with the standup text, no preamble or explanation.`
@@ -123,9 +124,15 @@ func buildActivitiesPrompt(activities []models.Activity, selfUIDs map[string]boo
 		}
 	}
 
+	todayStr := time.Now().UTC().Format("2006-01-02")
+
 	for _, d := range dates {
 		t, _ := time.Parse("2006-01-02", d.date)
-		fmt.Fprintf(&b, "## %s (%s)\n", t.Weekday(), d.date)
+		if d.date == todayStr {
+			fmt.Fprintf(&b, "## Today (%s)\n", d.date)
+		} else {
+			fmt.Fprintf(&b, "## %s (%s)\n", t.Weekday(), d.date)
+		}
 
 		for _, a := range d.activities {
 			switch a.Source {
@@ -156,6 +163,13 @@ func buildActivitiesPrompt(activities []models.Activity, selfUIDs map[string]boo
 				}
 				if meta.ResponseStatus == "declined" {
 					details += ", declined"
+				}
+				// Show scheduled time for today's meetings.
+				if d.date == todayStr && meta.Start != "" && !meta.IsAllDay {
+					if st, err := time.Parse(time.RFC3339, meta.Start); err == nil {
+						fmt.Fprintf(&b, "- [Calendar meeting] %s — %s (%s)\n", st.Local().Format("15:04"), a.Title, details)
+						break
+					}
 				}
 				fmt.Fprintf(&b, "- [Calendar meeting] %s (%s)\n", a.Title, details)
 

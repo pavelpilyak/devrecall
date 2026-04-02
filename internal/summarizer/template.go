@@ -33,10 +33,12 @@ type slackThreadSummary struct {
 
 // calendarMeta mirrors the JSON metadata stored by the calendar collector.
 type calendarMeta struct {
+	Start          string      `json:"start"`
 	DurationMin    int         `json:"duration_minutes"`
 	MeetingType    string      `json:"meeting_type"`
 	Attendees      []attendee  `json:"attendees,omitempty"`
 	ResponseStatus string      `json:"response_status"`
+	IsAllDay       bool        `json:"is_all_day,omitempty"`
 }
 
 type attendee struct {
@@ -50,6 +52,13 @@ type entry struct {
 	title     string
 	stats     string
 	decisions []string
+}
+
+// todayMeeting holds an upcoming meeting for the "Today" section.
+type todayMeeting struct {
+	time     string // "10:00" or "All day"
+	title    string
+	duration string // "1h", "30min"
 }
 
 // TemplateSummarizer generates standups using plain-text templates (no LLM).
@@ -75,8 +84,38 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 	// Track meeting minutes per date for the summary line.
 	meetingMinutes := make(map[string]int)
 
+	// Separate today's calendar events for the "Today" schedule section.
+	todayStr := time.Now().Format("2006-01-02")
+	var todayMeetings []todayMeeting
+
 	for _, a := range activities {
 		dateStr := a.Timestamp.Format("2006-01-02")
+
+		// Today's calendar events go into the schedule section, not the activity list.
+		localDateStr := a.Timestamp.Local().Format("2006-01-02")
+		if a.Source == models.SourceCalendar && localDateStr == todayStr {
+			var meta calendarMeta
+			json.Unmarshal([]byte(a.Metadata), &meta)
+
+			if meta.MeetingType == "focus" || meta.ResponseStatus == "declined" {
+				continue
+			}
+
+			timeStr := "All day"
+			if !meta.IsAllDay && meta.Start != "" {
+				if t, err := time.Parse(time.RFC3339, meta.Start); err == nil {
+					timeStr = t.Local().Format("15:04")
+				}
+			}
+
+			todayMeetings = append(todayMeetings, todayMeeting{
+				time:     timeStr,
+				title:    a.Title,
+				duration: formatDuration(meta.DurationMin),
+			})
+			continue
+		}
+
 		if !datesSeen[dateStr] {
 			datesSeen[dateStr] = true
 			dateOrder = append(dateOrder, dateStr)
@@ -169,6 +208,18 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 
 		if mins := meetingMinutes[dateStr]; mins > 0 {
 			b.WriteString(fmt.Sprintf("⏱ %s in meetings\n", formatDuration(mins)))
+		}
+	}
+
+	// Render "Today" section with upcoming meetings.
+	if len(todayMeetings) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		today, _ := time.Parse("2006-01-02", todayStr)
+		b.WriteString(fmt.Sprintf("Today (%s):\n", today.Format("2006-01-02")))
+		for _, m := range todayMeetings {
+			fmt.Fprintf(&b, "- %s — %s (%s)\n", m.time, m.title, m.duration)
 		}
 	}
 
