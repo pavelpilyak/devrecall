@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/pavelpiliak/devrecall/pkg/models"
@@ -26,21 +27,75 @@ type Attendee struct {
 	Self           bool   `json:"self,omitempty"`
 }
 
+// MeetingType classifies a calendar event for standup context.
+type MeetingType string
+
+const (
+	MeetingOneOnOne MeetingType = "1:1"
+	MeetingStandup  MeetingType = "standup"
+	MeetingCeremony MeetingType = "ceremony"
+	MeetingInterview MeetingType = "interview"
+	MeetingFocus    MeetingType = "focus"
+	MeetingGroup    MeetingType = "group"
+)
+
 // eventMeta is stored as JSON in Activity.Metadata.
 type eventMeta struct {
-	CalendarID     string     `json:"calendar_id"`
-	EventID        string     `json:"event_id"`
-	Start          string     `json:"start"`
-	End            string     `json:"end"`
-	DurationMin    int        `json:"duration_minutes"`
-	Attendees      []Attendee `json:"attendees,omitempty"`
-	Organizer      string     `json:"organizer,omitempty"`
-	IsRecurring    bool       `json:"is_recurring,omitempty"`
-	Location       string     `json:"location,omitempty"`
-	ConferenceLink string     `json:"conference_link,omitempty"`
-	Status         string     `json:"status"`
-	ResponseStatus string     `json:"response_status"`
-	IsAllDay       bool       `json:"is_all_day,omitempty"`
+	CalendarID     string      `json:"calendar_id"`
+	EventID        string      `json:"event_id"`
+	Start          string      `json:"start"`
+	End            string      `json:"end"`
+	DurationMin    int         `json:"duration_minutes"`
+	Attendees      []Attendee  `json:"attendees,omitempty"`
+	Organizer      string      `json:"organizer,omitempty"`
+	IsRecurring    bool        `json:"is_recurring,omitempty"`
+	Location       string      `json:"location,omitempty"`
+	ConferenceLink string      `json:"conference_link,omitempty"`
+	Status         string      `json:"status"`
+	ResponseStatus string      `json:"response_status"`
+	IsAllDay       bool        `json:"is_all_day,omitempty"`
+	MeetingType    MeetingType `json:"meeting_type"`
+}
+
+// ClassifyMeeting determines the meeting type based on title and attendee count.
+func ClassifyMeeting(title string, attendeeCount int) MeetingType {
+	lower := strings.ToLower(title)
+
+	// Title-based patterns take priority over attendee count.
+	focusPatterns := []string{"focus", "no meetings", "do not book", "blocked", "focus time"}
+	for _, p := range focusPatterns {
+		if strings.Contains(lower, p) {
+			return MeetingFocus
+		}
+	}
+
+	interviewPatterns := []string{"interview"}
+	for _, p := range interviewPatterns {
+		if strings.Contains(lower, p) {
+			return MeetingInterview
+		}
+	}
+
+	standupPatterns := []string{"standup", "stand-up", "daily", "sync", "check-in", "checkin"}
+	for _, p := range standupPatterns {
+		if strings.Contains(lower, p) {
+			return MeetingStandup
+		}
+	}
+
+	ceremonyPatterns := []string{"sprint", "retro", "retrospective", "planning", "refinement", "grooming", "demo", "showcase"}
+	for _, p := range ceremonyPatterns {
+		if strings.Contains(lower, p) {
+			return MeetingCeremony
+		}
+	}
+
+	// Attendee-based: 0 attendees means no data (treat as group), 1-2 is a 1:1.
+	if attendeeCount >= 1 && attendeeCount <= 2 {
+		return MeetingOneOnOne
+	}
+
+	return MeetingGroup
 }
 
 // Collector gathers meeting activity from Google Calendar.
@@ -348,6 +403,7 @@ func (c *Collector) eventsToActivities(events []calendarEvent, calendarID string
 			Status:         ev.Status,
 			ResponseStatus: selfResponse,
 			IsAllDay:       isAllDay,
+			MeetingType:    ClassifyMeeting(ev.Summary, len(ev.Attendees)),
 		}
 
 		metaJSON, _ := json.Marshal(meta)

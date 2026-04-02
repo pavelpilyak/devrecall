@@ -438,6 +438,92 @@ func TestParseEventTimes_AllDay(t *testing.T) {
 	}
 }
 
+func TestClassifyMeeting(t *testing.T) {
+	tests := []struct {
+		title     string
+		attendees int
+		want      MeetingType
+	}{
+		// Title-based classification
+		{"Daily Standup", 5, MeetingStandup},
+		{"Morning stand-up", 3, MeetingStandup},
+		{"Team sync", 4, MeetingStandup},
+		{"Daily check-in", 3, MeetingStandup},
+		{"Sprint Planning", 8, MeetingCeremony},
+		{"Retro Q1", 6, MeetingCeremony},
+		{"Sprint Retrospective", 5, MeetingCeremony},
+		{"Backlog Refinement", 4, MeetingCeremony},
+		{"Sprint Demo", 10, MeetingCeremony},
+		{"Product Showcase", 10, MeetingCeremony},
+		{"Interview: Senior Engineer", 3, MeetingInterview},
+		{"Focus Time", 0, MeetingFocus},
+		{"No meetings block", 0, MeetingFocus},
+		{"Do not book", 0, MeetingFocus},
+		{"Blocked - deep work", 0, MeetingFocus},
+
+		// Attendee-based classification (no title match)
+		{"1:1 with Sarah", 2, MeetingOneOnOne},
+		{"Coffee chat", 1, MeetingOneOnOne},
+		{"Quick chat", 2, MeetingOneOnOne},
+		{"Design review", 5, MeetingGroup},
+		{"Architecture discussion", 0, MeetingGroup},
+
+		// Title takes priority over attendee count
+		{"Daily standup", 2, MeetingStandup},   // standup, not 1:1
+		{"Interview prep", 2, MeetingInterview}, // interview, not 1:1
+		{"Focus time", 1, MeetingFocus},         // focus, not 1:1
+
+		// Case insensitive
+		{"SPRINT PLANNING", 5, MeetingCeremony},
+		{"DAILY STANDUP", 3, MeetingStandup},
+	}
+
+	for _, tt := range tests {
+		got := ClassifyMeeting(tt.title, tt.attendees)
+		if got != tt.want {
+			t.Errorf("ClassifyMeeting(%q, %d) = %q, want %q", tt.title, tt.attendees, got, tt.want)
+		}
+	}
+}
+
+func TestCollect_MeetingTypeInMetadata(t *testing.T) {
+	start := time.Date(2026, 3, 27, 9, 0, 0, 0, time.UTC)
+	events := []calendarEvent{
+		makeEvent("evt1", "Daily Standup", start, start.Add(15*time.Minute), []apiAttendee{
+			{Email: "me@example.com", Self: true},
+			{Email: "a@example.com"},
+			{Email: "b@example.com"},
+		}),
+		makeEvent("evt2", "1:1 with Sarah", start.Add(time.Hour), start.Add(time.Hour+30*time.Minute), []apiAttendee{
+			{Email: "me@example.com", Self: true},
+			{Email: "sarah@example.com"},
+		}),
+		makeEvent("evt3", "Focus Time", start.Add(2*time.Hour), start.Add(4*time.Hour), nil),
+	}
+
+	_, c := newTestServer(t, map[string]http.HandlerFunc{
+		"/calendar/v3/calendars/primary/events": eventsHandler(events, ""),
+	})
+
+	activities, err := c.CollectRange(ctx(), start.Add(-time.Hour), start.Add(5*time.Hour))
+	if err != nil {
+		t.Fatalf("CollectRange: %v", err)
+	}
+
+	if len(activities) != 3 {
+		t.Fatalf("got %d activities, want 3", len(activities))
+	}
+
+	expectations := []MeetingType{MeetingStandup, MeetingOneOnOne, MeetingFocus}
+	for i, a := range activities {
+		var meta eventMeta
+		json.Unmarshal([]byte(a.Metadata), &meta)
+		if meta.MeetingType != expectations[i] {
+			t.Errorf("activity[%d] %q: MeetingType = %q, want %q", i, a.Title, meta.MeetingType, expectations[i])
+		}
+	}
+}
+
 func ctx() context.Context {
 	return context.Background()
 }
