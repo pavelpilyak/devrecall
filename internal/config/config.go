@@ -82,7 +82,8 @@ type SlackConfig struct {
 }
 
 type CalendarConfig struct {
-	Enabled bool `json:"enabled"`
+	Enabled bool   `json:"enabled"`
+	Email   string `json:"email,omitempty"`
 }
 
 type JiraConfig struct {
