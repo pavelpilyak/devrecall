@@ -2,7 +2,9 @@ import { Env } from "./types";
 import { handleOAuthCallback } from "./handlers/oauth-callback";
 import { handleGoogleOAuthCallback } from "./handlers/oauth-callback-google";
 import { handleGitHubOAuthCallback } from "./handlers/oauth-callback-github";
+import { handleAtlassianOAuthCallback } from "./handlers/oauth-callback-atlassian";
 import { handleGoogleRefresh } from "./handlers/refresh-google";
+import { handleAtlassianRefresh } from "./handlers/refresh-atlassian";
 import { handlePollToken } from "./handlers/poll-token";
 
 export default {
@@ -21,8 +23,16 @@ export default {
       return handleGitHubOAuthCallback(url, env);
     }
 
+    if (url.pathname === "/oauth/atlassian/callback" && request.method === "GET") {
+      return handleAtlassianOAuthCallback(url, env);
+    }
+
     if (url.pathname === "/oauth/google/refresh" && request.method === "POST") {
       return handleGoogleRefresh(request, env);
+    }
+
+    if (url.pathname === "/oauth/atlassian/refresh" && request.method === "POST") {
+      return handleAtlassianRefresh(request, env);
     }
 
     if (url.pathname === "/oauth/poll" && request.method === "GET") {

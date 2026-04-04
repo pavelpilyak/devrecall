@@ -6,6 +6,8 @@ export interface Env {
   GOOGLE_CLIENT_SECRET: string;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
+  ATLASSIAN_CLIENT_ID: string;
+  ATLASSIAN_CLIENT_SECRET: string;
 }
 
 export interface SlackOAuthResponse {
@@ -77,4 +79,28 @@ export interface StoredGitHubToken {
   token_type: string;
   scope: string;
   username: string;
+}
+
+export interface AtlassianTokenResponse {
+  access_token: string;
+  refresh_token?: string;
+  expires_in: number;
+  scope: string;
+  error?: string;
+  error_description?: string;
+}
+
+export interface AtlassianCloudSite {
+  id: string;
+  name: string;
+  url: string;
+}
+
+export interface StoredAtlassianToken {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  scope: string;
+  email: string;
+  cloud_sites: AtlassianCloudSite[];
 }

@@ -117,8 +117,10 @@ type BitbucketConfig struct {
 }
 
 type JiraConfig struct {
-	Enabled bool   `json:"enabled"`
-	BaseURL string `json:"base_url,omitempty"`
+	Enabled  bool   `json:"enabled"`
+	BaseURL  string `json:"base_url,omitempty"`  // Jira instance URL (e.g., "https://mycompany.atlassian.net")
+	AuthMode string `json:"auth_mode,omitempty"` // "oauth" or "api-token"
+	Email    string `json:"email,omitempty"`      // required for api-token auth
 }
 
 type LinearConfig struct {
