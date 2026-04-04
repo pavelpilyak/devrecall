@@ -571,6 +571,132 @@ func TestWeeklySummary_MixedSources(t *testing.T) {
 	}
 }
 
+func prActivity(title, repo string, prNum int, shas []string, ts time.Time) models.Activity {
+	type prMeta struct {
+		Repo       string   `json:"repo"`
+		PRNumber   int      `json:"pr_number"`
+		State      string   `json:"state"`
+		CommitSHAs []string `json:"commit_shas,omitempty"`
+		URL        string   `json:"url"`
+	}
+	m := prMeta{Repo: repo, PRNumber: prNum, State: "merged", CommitSHAs: shas, URL: fmt.Sprintf("https://github.com/%s/pull/%d", repo, prNum)}
+	b, _ := json.Marshal(m)
+	return models.Activity{
+		Source:    models.SourceGitHub,
+		SourceID:  fmt.Sprintf("github:%s:pr:%d", repo, prNum),
+		Type:      models.TypePullRequest,
+		Title:     title,
+		Metadata:  string(b),
+		Timestamp: ts,
+	}
+}
+
+func TestDeduplicateActivities_RemovesLinkedCommits(t *testing.T) {
+	ts := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+
+	activities := []models.Activity{
+		activity("Fix auth bug", "backend-api", "abc123", 3, 47, 12, ts),
+		activity("Add tests", "backend-api", "def456", 1, 10, 0, ts.Add(time.Hour)),
+		activity("Unrelated commit", "frontend", "xyz789", 2, 20, 5, ts.Add(2*time.Hour)),
+		prActivity("Fix auth bug PR", "octocat/backend-api", 42, []string{"abc123", "def456"}, ts.Add(3*time.Hour)),
+	}
+
+	result := DeduplicateActivities(activities)
+
+	if len(result) != 2 {
+		t.Fatalf("got %d activities, want 2 (2 commits should be deduped)", len(result))
+	}
+
+	// The unrelated commit and the PR should remain.
+	if result[0].Title != "Unrelated commit" {
+		t.Errorf("result[0].Title = %q, want %q", result[0].Title, "Unrelated commit")
+	}
+	if result[1].Type != models.TypePullRequest {
+		t.Errorf("result[1].Type = %q, want %q", result[1].Type, models.TypePullRequest)
+	}
+}
+
+func TestDeduplicateActivities_NoPRs(t *testing.T) {
+	ts := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+
+	activities := []models.Activity{
+		activity("Fix auth bug", "backend-api", "abc123", 3, 47, 12, ts),
+		activity("Add tests", "backend-api", "def456", 1, 10, 0, ts.Add(time.Hour)),
+	}
+
+	result := DeduplicateActivities(activities)
+	if len(result) != 2 {
+		t.Fatalf("got %d activities, want 2 (no dedup without PRs)", len(result))
+	}
+}
+
+func TestDeduplicateActivities_PRWithoutCommitSHAs(t *testing.T) {
+	ts := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+
+	// PR with no commit_shas in metadata.
+	prNoSHAs := models.Activity{
+		Source:    models.SourceGitHub,
+		SourceID:  "github:octocat/repo:pr:1",
+		Type:      models.TypePullRequest,
+		Title:     "Some PR",
+		Metadata:  `{"repo":"octocat/repo","pr_number":1,"state":"open"}`,
+		Timestamp: ts,
+	}
+
+	activities := []models.Activity{
+		activity("Fix bug", "backend-api", "abc123", 1, 5, 2, ts),
+		prNoSHAs,
+	}
+
+	result := DeduplicateActivities(activities)
+	if len(result) != 2 {
+		t.Fatalf("got %d activities, want 2 (PR has no commit SHAs)", len(result))
+	}
+}
+
+func TestDeduplicateActivities_Empty(t *testing.T) {
+	result := DeduplicateActivities(nil)
+	if result != nil {
+		t.Errorf("got %v, want nil", result)
+	}
+}
+
+func TestDeduplicateActivities_PreservesNonCommitActivities(t *testing.T) {
+	ts := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+
+	slackMeta, _ := json.Marshal(slackMeta{ChannelName: "backend"})
+	meetingMeta, _ := json.Marshal(calendarMeta{
+		DurationMin: 60, MeetingType: "ceremony", ResponseStatus: "accepted",
+	})
+
+	activities := []models.Activity{
+		activity("Fix auth bug", "backend-api", "abc123", 3, 47, 12, ts),
+		{Source: models.SourceSlack, Type: models.TypeMessage, Title: "Discussion", Metadata: string(slackMeta), Timestamp: ts.Add(time.Hour)},
+		{Source: models.SourceCalendar, Type: models.TypeMeeting, Title: "Planning", Metadata: string(meetingMeta), Timestamp: ts.Add(2 * time.Hour)},
+		prActivity("Auth fix PR", "octocat/backend-api", 42, []string{"abc123"}, ts.Add(3*time.Hour)),
+	}
+
+	result := DeduplicateActivities(activities)
+	if len(result) != 3 {
+		t.Fatalf("got %d activities, want 3 (only the linked commit removed)", len(result))
+	}
+
+	// Verify Slack, Calendar, and PR remain.
+	types := map[models.ActivityType]bool{}
+	for _, a := range result {
+		types[a.Type] = true
+	}
+	if !types[models.TypeMessage] {
+		t.Error("Slack message should not be removed")
+	}
+	if !types[models.TypeMeeting] {
+		t.Error("Calendar meeting should not be removed")
+	}
+	if !types[models.TypePullRequest] {
+		t.Error("PR should not be removed")
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		mins int

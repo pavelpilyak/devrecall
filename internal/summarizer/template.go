@@ -47,6 +47,48 @@ type attendee struct {
 	Self        bool   `json:"self,omitempty"`
 }
 
+// prCommitSHAs is a minimal struct to extract commit SHAs from PR/MR metadata.
+type prCommitSHAs struct {
+	CommitSHAs []string `json:"commit_shas"`
+}
+
+// DeduplicateActivities removes git commits that are already represented by a
+// PR or MR activity. When both a local commit and a remote PR reference the
+// same SHA, the commit is redundant — the PR provides richer context.
+func DeduplicateActivities(activities []models.Activity) []models.Activity {
+	// Collect all commit SHAs referenced by PR/MR activities.
+	linkedSHAs := make(map[string]bool)
+	for _, a := range activities {
+		if a.Type != models.TypePullRequest && a.Type != models.TypeMergeRequest {
+			continue
+		}
+		var meta prCommitSHAs
+		if err := json.Unmarshal([]byte(a.Metadata), &meta); err != nil {
+			continue
+		}
+		for _, sha := range meta.CommitSHAs {
+			linkedSHAs[sha] = true
+		}
+	}
+
+	if len(linkedSHAs) == 0 {
+		return activities
+	}
+
+	// Filter out git commits whose SHA matches a linked PR commit.
+	result := make([]models.Activity, 0, len(activities))
+	for _, a := range activities {
+		if a.Type == models.TypeCommit {
+			var meta commitMeta
+			if err := json.Unmarshal([]byte(a.Metadata), &meta); err == nil && linkedSHAs[meta.SHA] {
+				continue // skip — this commit is covered by a PR/MR
+			}
+		}
+		result = append(result, a)
+	}
+	return result
+}
+
 // entry holds a formatted activity for grouping.
 type entry struct {
 	title     string
