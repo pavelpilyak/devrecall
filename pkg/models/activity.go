@@ -10,6 +10,7 @@ const (
 	SourceSlack    Source = "slack"
 	SourceCalendar Source = "calendar"
 	SourceGitHub   Source = "github"
+	SourceGitLab   Source = "gitlab"
 	SourceJira     Source = "jira"
 	SourceLinear   Source = "linear"
 )
@@ -24,6 +25,7 @@ const (
 	TypeTicket       ActivityType = "ticket"
 	TypeReview       ActivityType = "review"
 	TypePullRequest  ActivityType = "pull_request"
+	TypeMergeRequest ActivityType = "merge_request"
 	TypeIssue        ActivityType = "issue"
 )
 
