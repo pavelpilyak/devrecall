@@ -124,7 +124,8 @@ type JiraConfig struct {
 }
 
 type LinearConfig struct {
-	Enabled bool `json:"enabled"`
+	Enabled  bool   `json:"enabled"`
+	AuthMode string `json:"auth_mode,omitempty"` // "oauth" or "api-key"
 }
 
 type LLMConfig struct {

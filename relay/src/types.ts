@@ -8,6 +8,8 @@ export interface Env {
   GITHUB_CLIENT_SECRET: string;
   ATLASSIAN_CLIENT_ID: string;
   ATLASSIAN_CLIENT_SECRET: string;
+  LINEAR_CLIENT_ID: string;
+  LINEAR_CLIENT_SECRET: string;
 }
 
 export interface SlackOAuthResponse {
@@ -103,4 +105,21 @@ export interface StoredAtlassianToken {
   scope: string;
   email: string;
   cloud_sites: AtlassianCloudSite[];
+}
+
+export interface LinearTokenResponse {
+  access_token: string;
+  token_type?: string;
+  scope?: string;
+  error?: string;
+  error_description?: string;
+}
+
+export interface StoredLinearToken {
+  access_token: string;
+  token_type: string;
+  scope: string;
+  user_id: string;
+  user_name: string;
+  email: string;
 }
