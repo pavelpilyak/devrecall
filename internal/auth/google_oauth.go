@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,11 +19,27 @@ const (
 
 // GoogleToken represents the token returned by the relay after a successful Google OAuth flow.
 type GoogleToken struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"`
-	Email        string `json:"email"`
-	Scope        string `json:"scope"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	ExpiresIn    int       `json:"expires_in"`
+	ExpiresAt    time.Time `json:"expires_at,omitempty"`
+	Email        string    `json:"email"`
+	Scope        string    `json:"scope"`
+}
+
+// IsExpired returns true if the access token has expired (with a 5-minute buffer).
+func (t *GoogleToken) IsExpired() bool {
+	if t.ExpiresAt.IsZero() {
+		return true // no expiry info → assume expired
+	}
+	return time.Now().After(t.ExpiresAt.Add(-5 * time.Minute))
+}
+
+// SetExpiresAt sets ExpiresAt from ExpiresIn (seconds from now).
+func (t *GoogleToken) SetExpiresAt() {
+	if t.ExpiresIn > 0 {
+		t.ExpiresAt = time.Now().Add(time.Duration(t.ExpiresIn) * time.Second)
+	}
 }
 
 // GoogleOAuthConfig holds parameters for the Google OAuth flow.
@@ -115,6 +132,56 @@ func pollForGoogleToken(ctx context.Context, cfg GoogleOAuthConfig, sessionID st
 		if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
 			return nil, fmt.Errorf("decoding token: %w", err)
 		}
+		token.SetExpiresAt()
 		return &token, nil
 	}
+}
+
+// RefreshGoogleToken uses the relay to exchange a refresh token for a new access token.
+func RefreshGoogleToken(ctx context.Context, relayBaseURL string, refreshToken string) (*GoogleToken, error) {
+	body, _ := json.Marshal(map[string]string{
+		"refresh_token": refreshToken,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		relayBaseURL+"/oauth/google/refresh",
+		bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("refresh request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp struct {
+			Error       string `json:"error"`
+			Description string `json:"error_description"`
+		}
+		json.NewDecoder(resp.Body).Decode(&errResp)
+		return nil, fmt.Errorf("refresh failed: %s (%s)", errResp.Error, errResp.Description)
+	}
+
+	var result struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+		Scope       string `json:"scope"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding refresh response: %w", err)
+	}
+
+	token := &GoogleToken{
+		AccessToken:  result.AccessToken,
+		RefreshToken: refreshToken, // refresh token doesn't change
+		ExpiresIn:    result.ExpiresIn,
+		Scope:        result.Scope,
+	}
+	token.SetExpiresAt()
+	return token, nil
 }
