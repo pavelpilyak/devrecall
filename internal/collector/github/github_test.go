@@ -75,6 +75,12 @@ func TestCollectPRsAuthored(t *testing.T) {
 				Reviewers: []ghUser{{Login: "reviewer1"}},
 			})
 		},
+		"/repos/octocat/backend/pulls/42/commits": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]ghCommit{
+				{SHA: "abc123def456"},
+				{SHA: "789012fedcba"},
+			})
+		},
 	})
 
 	activities, err := c.collectPRsAuthored(context.Background(), time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC))
@@ -112,6 +118,9 @@ func TestCollectPRsAuthored(t *testing.T) {
 	}
 	if len(meta.Reviewers) != 1 || meta.Reviewers[0] != "reviewer1" {
 		t.Errorf("meta.Reviewers = %v, want [reviewer1]", meta.Reviewers)
+	}
+	if len(meta.CommitSHAs) != 2 || meta.CommitSHAs[0] != "abc123def456" || meta.CommitSHAs[1] != "789012fedcba" {
+		t.Errorf("meta.CommitSHAs = %v, want [abc123def456 789012fedcba]", meta.CommitSHAs)
 	}
 }
 

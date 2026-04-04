@@ -83,6 +83,12 @@ func TestCollectMRsAuthored(t *testing.T) {
 				json.NewEncoder(w).Encode([]glMergeRequest{})
 			}
 		},
+		"/api/v4/projects/1/merge_requests/10/commits": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]glCommit{
+				{ID: "aaa111bbb222"},
+				{ID: "ccc333ddd444"},
+			})
+		},
 	})
 
 	activities, err := c.collectMRsAuthored(context.Background(), proj, time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC))
@@ -120,6 +126,9 @@ func TestCollectMRsAuthored(t *testing.T) {
 	}
 	if len(meta.Reviewers) != 1 || meta.Reviewers[0] != "reviewer1" {
 		t.Errorf("meta.Reviewers = %v", meta.Reviewers)
+	}
+	if len(meta.CommitSHAs) != 2 || meta.CommitSHAs[0] != "aaa111bbb222" || meta.CommitSHAs[1] != "ccc333ddd444" {
+		t.Errorf("meta.CommitSHAs = %v, want [aaa111bbb222 ccc333ddd444]", meta.CommitSHAs)
 	}
 }
 

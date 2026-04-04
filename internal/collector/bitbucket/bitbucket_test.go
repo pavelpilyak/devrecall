@@ -63,6 +63,14 @@ func TestCollectPRsAuthored(t *testing.T) {
 				},
 			})
 		},
+		"/2.0/repositories/myworkspace/backend/pullrequests/42/commits": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(bbPaginated[bbCommit]{
+				Values: []bbCommit{
+					{Hash: "ff1122aa"},
+					{Hash: "bb3344cc"},
+				},
+			})
+		},
 	})
 
 	activities, err := c.CollectSince(context.Background(), time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC))
@@ -98,6 +106,9 @@ func TestCollectPRsAuthored(t *testing.T) {
 	}
 	if len(meta.Reviewers) != 1 || meta.Reviewers[0] != "Reviewer One" {
 		t.Errorf("meta.Reviewers = %v", meta.Reviewers)
+	}
+	if len(meta.CommitSHAs) != 2 || meta.CommitSHAs[0] != "ff1122aa" || meta.CommitSHAs[1] != "bb3344cc" {
+		t.Errorf("meta.CommitSHAs = %v, want [ff1122aa bb3344cc]", meta.CommitSHAs)
 	}
 }
 

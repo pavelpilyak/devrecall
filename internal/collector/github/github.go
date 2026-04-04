@@ -127,7 +127,12 @@ type prMeta struct {
 	CommitsCount  int      `json:"commits_count"`
 	Additions     int      `json:"additions"`
 	Deletions     int      `json:"deletions"`
+	CommitSHAs    []string `json:"commit_shas,omitempty"`
 	URL           string   `json:"url"`
+}
+
+type ghCommit struct {
+	SHA string `json:"sha"`
 }
 
 func (c *Collector) collectPRsAuthored(ctx context.Context, since time.Time) ([]models.Activity, error) {
@@ -163,6 +168,14 @@ func (c *Collector) collectPRsAuthored(ctx context.Context, since time.Time) ([]
 			reviewerNames = append(reviewerNames, r.Login)
 		}
 
+		// Fetch commit SHAs for PR↔commit linking.
+		var commitSHAs []string
+		if commits, err := c.getPRCommits(ctx, repo, pr.Number); err == nil {
+			for _, commit := range commits {
+				commitSHAs = append(commitSHAs, commit.SHA)
+			}
+		}
+
 		meta := prMeta{
 			Repo:          repo,
 			PRNumber:      pr.Number,
@@ -172,6 +185,7 @@ func (c *Collector) collectPRsAuthored(ctx context.Context, since time.Time) ([]
 			CommitsCount:  pr.Commits,
 			Additions:     pr.Additions,
 			Deletions:     pr.Deletions,
+			CommitSHAs:    commitSHAs,
 			URL:           pr.HTMLURL,
 		}
 		metaJSON, _ := json.Marshal(meta)
@@ -428,6 +442,16 @@ func (c *Collector) getPR(ctx context.Context, repo string, number int) (*pullRe
 		return nil, err
 	}
 	return &pr, nil
+}
+
+func (c *Collector) getPRCommits(ctx context.Context, repo string, prNumber int) ([]ghCommit, error) {
+	path := fmt.Sprintf("/repos/%s/pulls/%d/commits", repo, prNumber)
+	params := url.Values{"per_page": {strconv.Itoa(perPage)}}
+	var commits []ghCommit
+	if err := c.apiGet(ctx, path, params, &commits); err != nil {
+		return nil, err
+	}
+	return commits, nil
 }
 
 func (c *Collector) getReviews(ctx context.Context, repo string, prNumber int) ([]ghReview, error) {

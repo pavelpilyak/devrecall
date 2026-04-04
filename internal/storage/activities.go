@@ -118,6 +118,52 @@ func (db *DB) ListActivities(f ActivityFilter) ([]models.Activity, error) {
 	return scanActivities(rows)
 }
 
+// FindCommitsBySHAs returns git commit activities whose source_id ends with one of the given SHAs.
+// This enables PR↔commit linking: PRs store commit SHAs in metadata, and this function
+// resolves them to actual stored commit activities.
+func (db *DB) FindCommitsBySHAs(shas []string) (map[string]models.Activity, error) {
+	if len(shas) == 0 {
+		return nil, nil
+	}
+
+	// Build query with OR conditions for each SHA suffix.
+	query := `SELECT id, source, source_id, COALESCE(identity_id, 0), type, title, COALESCE(content, ''), COALESCE(metadata, ''), timestamp
+		FROM activities WHERE type = 'commit' AND (`
+	var args []any
+	for i, sha := range shas {
+		if i > 0 {
+			query += " OR "
+		}
+		query += "source_id LIKE ?"
+		args = append(args, "%:"+sha)
+	}
+	query += ")"
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query commits by SHA: %w", err)
+	}
+	defer rows.Close()
+
+	activities, err := scanActivities(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	// Index by SHA (last part of source_id after the final colon).
+	result := make(map[string]models.Activity, len(activities))
+	for _, a := range activities {
+		for i := len(a.SourceID) - 1; i >= 0; i-- {
+			if a.SourceID[i] == ':' {
+				sha := a.SourceID[i+1:]
+				result[sha] = a
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
 func scanActivities(rows *sql.Rows) ([]models.Activity, error) {
 	var result []models.Activity
 	for rows.Next() {

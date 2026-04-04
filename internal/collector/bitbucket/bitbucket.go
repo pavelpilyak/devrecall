@@ -123,12 +123,17 @@ type bbParticipant struct {
 
 // --- Metadata types ---
 
+type bbCommit struct {
+	Hash string `json:"hash"`
+}
+
 type prMeta struct {
 	Repo          string   `json:"repo"`
 	PRNumber      int      `json:"pr_number"`
 	State         string   `json:"state"`
 	Reviewers     []string `json:"reviewers,omitempty"`
 	CommentsCount int      `json:"comments_count"`
+	CommitSHAs    []string `json:"commit_shas,omitempty"`
 	URL           string   `json:"url"`
 }
 
@@ -202,7 +207,7 @@ func (c *Collector) collectPRs(ctx context.Context, repo bbRepo, since time.Time
 		for _, pr := range page.Values {
 			if pr.UpdatedOn.Before(since) {
 				// PRs are sorted by updated_on desc; stop when we pass the since threshold.
-				return c.prsToActivities(allPRs, repo), nil
+				return c.prsToActivities(ctx, allPRs, repo), nil
 			}
 			allPRs = append(allPRs, pr)
 		}
@@ -213,10 +218,10 @@ func (c *Collector) collectPRs(ctx context.Context, repo bbRepo, since time.Time
 		nextURL = page.Next
 	}
 
-	return c.prsToActivities(allPRs, repo), nil
+	return c.prsToActivities(ctx, allPRs, repo), nil
 }
 
-func (c *Collector) prsToActivities(prs []bbPullRequest, repo bbRepo) []models.Activity {
+func (c *Collector) prsToActivities(ctx context.Context, prs []bbPullRequest, repo bbRepo) []models.Activity {
 	var activities []models.Activity
 
 	for _, pr := range prs {
@@ -235,12 +240,21 @@ func (c *Collector) prsToActivities(prs []bbPullRequest, repo bbRepo) []models.A
 				reviewerNames = append(reviewerNames, r.DisplayName)
 			}
 
+			// Fetch commit SHAs for PR↔commit linking.
+			var commitSHAs []string
+			if commits, err := c.getPRCommits(ctx, repo.FullName, pr.ID); err == nil {
+				for _, commit := range commits {
+					commitSHAs = append(commitSHAs, commit.Hash)
+				}
+			}
+
 			meta := prMeta{
 				Repo:          repo.FullName,
 				PRNumber:      pr.ID,
 				State:         pr.State,
 				Reviewers:     reviewerNames,
 				CommentsCount: pr.CommentCount,
+				CommitSHAs:    commitSHAs,
 				URL:           pr.Links.HTML.Href,
 			}
 			metaJSON, _ := json.Marshal(meta)
@@ -279,6 +293,15 @@ func (c *Collector) prsToActivities(prs []bbPullRequest, repo bbRepo) []models.A
 	}
 
 	return activities
+}
+
+func (c *Collector) getPRCommits(ctx context.Context, repoFullName string, prID int) ([]bbCommit, error) {
+	path := fmt.Sprintf("/2.0/repositories/%s/pullrequests/%d/commits", repoFullName, prID)
+	var page bbPaginated[bbCommit]
+	if err := c.apiGet(ctx, path, nil, &page); err != nil {
+		return nil, err
+	}
+	return page.Values, nil
 }
 
 // --- API helpers ---

@@ -153,6 +153,61 @@ func TestListActivities_Limit(t *testing.T) {
 	}
 }
 
+func TestFindCommitsBySHAs(t *testing.T) {
+	db := mustOpen(t)
+
+	// Insert commit activities with source_id format "/path/to/repo:SHA".
+	commits := []models.Activity{
+		{Source: models.SourceGit, SourceID: "/home/user/backend:abc123", Type: models.TypeCommit, Title: "Fix auth", Timestamp: time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)},
+		{Source: models.SourceGit, SourceID: "/home/user/backend:def456", Type: models.TypeCommit, Title: "Add tests", Timestamp: time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC)},
+		{Source: models.SourceGit, SourceID: "/home/user/frontend:789aaa", Type: models.TypeCommit, Title: "Update UI", Timestamp: time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)},
+	}
+	for _, c := range commits {
+		if _, err := db.InsertActivity(c); err != nil {
+			t.Fatalf("InsertActivity: %v", err)
+		}
+	}
+
+	// Also insert a non-commit activity to verify type filter works.
+	db.InsertActivity(models.Activity{Source: models.SourceSlack, SourceID: "slack:abc123", Type: models.TypeMessage, Title: "Chat", Timestamp: time.Date(2026, 4, 1, 13, 0, 0, 0, time.UTC)})
+
+	t.Run("finds matching commits", func(t *testing.T) {
+		result, err := db.FindCommitsBySHAs([]string{"abc123", "789aaa"})
+		if err != nil {
+			t.Fatalf("FindCommitsBySHAs: %v", err)
+		}
+		if len(result) != 2 {
+			t.Fatalf("got %d results, want 2", len(result))
+		}
+		if result["abc123"].Title != "Fix auth" {
+			t.Errorf("abc123 title = %q, want %q", result["abc123"].Title, "Fix auth")
+		}
+		if result["789aaa"].Title != "Update UI" {
+			t.Errorf("789aaa title = %q, want %q", result["789aaa"].Title, "Update UI")
+		}
+	})
+
+	t.Run("returns empty for no matches", func(t *testing.T) {
+		result, err := db.FindCommitsBySHAs([]string{"nonexistent"})
+		if err != nil {
+			t.Fatalf("FindCommitsBySHAs: %v", err)
+		}
+		if len(result) != 0 {
+			t.Errorf("got %d results, want 0", len(result))
+		}
+	})
+
+	t.Run("returns nil for empty input", func(t *testing.T) {
+		result, err := db.FindCommitsBySHAs(nil)
+		if err != nil {
+			t.Fatalf("FindCommitsBySHAs: %v", err)
+		}
+		if result != nil {
+			t.Errorf("got %v, want nil", result)
+		}
+	})
+}
+
 func TestListActivities_FilterByType(t *testing.T) {
 	db := mustOpen(t)
 

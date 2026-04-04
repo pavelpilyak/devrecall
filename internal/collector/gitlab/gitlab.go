@@ -152,12 +152,17 @@ type glIssue struct {
 
 // --- Metadata types ---
 
+type glCommit struct {
+	ID string `json:"id"` // GitLab uses "id" for SHA
+}
+
 type mrMeta struct {
 	Project       string   `json:"project"`
 	MRNumber      int      `json:"mr_number"`
 	State         string   `json:"state"`
 	Reviewers     []string `json:"reviewers,omitempty"`
 	CommentsCount int      `json:"comments_count"`
+	CommitSHAs    []string `json:"commit_shas,omitempty"`
 	URL           string   `json:"url"`
 }
 
@@ -240,12 +245,21 @@ func (c *Collector) collectMRsAuthored(ctx context.Context, proj glProject, sinc
 			reviewerNames = append(reviewerNames, r.Username)
 		}
 
+		// Fetch commit SHAs for PR↔commit linking.
+		var commitSHAs []string
+		if commits, err := c.getMRCommits(ctx, proj.ID, mr.IID); err == nil {
+			for _, commit := range commits {
+				commitSHAs = append(commitSHAs, commit.ID)
+			}
+		}
+
 		meta := mrMeta{
 			Project:       proj.PathWithNamespace,
 			MRNumber:      mr.IID,
 			State:         mr.State,
 			Reviewers:     reviewerNames,
 			CommentsCount: mr.UserNotesCount,
+			CommitSHAs:    commitSHAs,
 			URL:           mr.WebURL,
 		}
 		metaJSON, _ := json.Marshal(meta)
@@ -323,6 +337,15 @@ func (c *Collector) collectMRsReviewed(ctx context.Context, proj glProject, sinc
 	}
 
 	return activities, nil
+}
+
+func (c *Collector) getMRCommits(ctx context.Context, projectID, mrIID int) ([]glCommit, error) {
+	path := fmt.Sprintf("/api/v4/projects/%d/merge_requests/%d/commits", projectID, mrIID)
+	var commits []glCommit
+	if err := c.apiGet(ctx, path, nil, &commits); err != nil {
+		return nil, err
+	}
+	return commits, nil
 }
 
 func (c *Collector) collectIssues(ctx context.Context, proj glProject, since time.Time) ([]models.Activity, error) {
