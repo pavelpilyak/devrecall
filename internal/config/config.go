@@ -32,8 +32,9 @@ type PrivacyConfig struct {
 	Slack    PrivacyMode `json:"slack,omitempty"`
 	Calendar PrivacyMode `json:"calendar,omitempty"`
 	GitHub   PrivacyMode `json:"github,omitempty"`
-	GitLab   PrivacyMode `json:"gitlab,omitempty"`
-	Jira     PrivacyMode `json:"jira,omitempty"`
+	GitLab    PrivacyMode `json:"gitlab,omitempty"`
+	Bitbucket PrivacyMode `json:"bitbucket,omitempty"`
+	Jira      PrivacyMode `json:"jira,omitempty"`
 	Linear   PrivacyMode `json:"linear,omitempty"`
 }
 
@@ -51,6 +52,8 @@ func (p PrivacyConfig) ModeFor(source string) PrivacyMode {
 		mode = p.GitHub
 	case "gitlab":
 		mode = p.GitLab
+	case "bitbucket":
+		mode = p.Bitbucket
 	case "jira":
 		mode = p.Jira
 	case "linear":
@@ -67,8 +70,9 @@ type Config struct {
 	Slack        SlackConfig    `json:"slack"`
 	Calendar     CalendarConfig `json:"calendar"`
 	GitHub       GitHubConfig   `json:"github"`
-	GitLab       GitLabConfig   `json:"gitlab"`
-	Jira         JiraConfig     `json:"jira"`
+	GitLab       GitLabConfig      `json:"gitlab"`
+	Bitbucket    BitbucketConfig   `json:"bitbucket"`
+	Jira         JiraConfig        `json:"jira"`
 	Linear       LinearConfig   `json:"linear"`
 	LLM          LLMConfig      `json:"llm"`
 	Privacy      PrivacyConfig  `json:"privacy,omitempty"`
@@ -104,6 +108,12 @@ type GitLabConfig struct {
 	Enabled  bool   `json:"enabled"`
 	BaseURL  string `json:"base_url,omitempty"` // defaults to https://gitlab.com; set for self-hosted
 	Username string `json:"username,omitempty"` // GitLab username
+}
+
+type BitbucketConfig struct {
+	Enabled   bool   `json:"enabled"`
+	Username  string `json:"username,omitempty"`  // Bitbucket username
+	Workspace string `json:"workspace,omitempty"` // default workspace to query
 }
 
 type JiraConfig struct {

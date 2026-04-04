@@ -10,8 +10,9 @@ const (
 	SourceSlack    Source = "slack"
 	SourceCalendar Source = "calendar"
 	SourceGitHub   Source = "github"
-	SourceGitLab   Source = "gitlab"
-	SourceJira     Source = "jira"
+	SourceGitLab    Source = "gitlab"
+	SourceBitbucket Source = "bitbucket"
+	SourceJira      Source = "jira"
 	SourceLinear   Source = "linear"
 )
 
