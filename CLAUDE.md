@@ -70,4 +70,4 @@ make relay-test         # Run relay tests (vitest)
 
 ## Roadmap
 
-See `docs/roadmap.md`. Current phase: **v0.2 — Slack + Identity Resolution**.
+See `docs/roadmap.md`. Current phase: **v0.4 — GitHub/GitLab/Bitbucket + Jira/Linear**.

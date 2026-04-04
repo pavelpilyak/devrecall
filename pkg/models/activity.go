@@ -9,6 +9,7 @@ const (
 	SourceGit      Source = "git"
 	SourceSlack    Source = "slack"
 	SourceCalendar Source = "calendar"
+	SourceGitHub   Source = "github"
 	SourceJira     Source = "jira"
 	SourceLinear   Source = "linear"
 )
@@ -17,11 +18,13 @@ const (
 type ActivityType string
 
 const (
-	TypeCommit  ActivityType = "commit"
-	TypeMessage ActivityType = "message"
-	TypeMeeting ActivityType = "meeting"
-	TypeTicket  ActivityType = "ticket"
-	TypeReview  ActivityType = "review"
+	TypeCommit       ActivityType = "commit"
+	TypeMessage      ActivityType = "message"
+	TypeMeeting      ActivityType = "meeting"
+	TypeTicket       ActivityType = "ticket"
+	TypeReview       ActivityType = "review"
+	TypePullRequest  ActivityType = "pull_request"
+	TypeIssue        ActivityType = "issue"
 )
 
 // Activity is a single work event collected from any source.

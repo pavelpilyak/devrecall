@@ -31,6 +31,7 @@ type PrivacyConfig struct {
 	Git      PrivacyMode `json:"git,omitempty"`
 	Slack    PrivacyMode `json:"slack,omitempty"`
 	Calendar PrivacyMode `json:"calendar,omitempty"`
+	GitHub   PrivacyMode `json:"github,omitempty"`
 	Jira     PrivacyMode `json:"jira,omitempty"`
 	Linear   PrivacyMode `json:"linear,omitempty"`
 }
@@ -45,6 +46,8 @@ func (p PrivacyConfig) ModeFor(source string) PrivacyMode {
 		mode = p.Slack
 	case "calendar":
 		mode = p.Calendar
+	case "github":
+		mode = p.GitHub
 	case "jira":
 		mode = p.Jira
 	case "linear":
@@ -60,6 +63,7 @@ type Config struct {
 	Git          GitConfig      `json:"git"`
 	Slack        SlackConfig    `json:"slack"`
 	Calendar     CalendarConfig `json:"calendar"`
+	GitHub       GitHubConfig   `json:"github"`
 	Jira         JiraConfig     `json:"jira"`
 	Linear       LinearConfig   `json:"linear"`
 	LLM          LLMConfig      `json:"llm"`
@@ -84,6 +88,12 @@ type SlackConfig struct {
 type CalendarConfig struct {
 	Enabled bool   `json:"enabled"`
 	Email   string `json:"email,omitempty"`
+}
+
+type GitHubConfig struct {
+	Enabled  bool   `json:"enabled"`
+	Username string `json:"username,omitempty"` // GitHub username for API queries
+	AuthMode string `json:"auth_mode,omitempty"` // "oauth", "pat", or "gh-cli"
 }
 
 type JiraConfig struct {

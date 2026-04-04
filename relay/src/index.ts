@@ -1,6 +1,7 @@
 import { Env } from "./types";
 import { handleOAuthCallback } from "./handlers/oauth-callback";
 import { handleGoogleOAuthCallback } from "./handlers/oauth-callback-google";
+import { handleGitHubOAuthCallback } from "./handlers/oauth-callback-github";
 import { handlePollToken } from "./handlers/poll-token";
 
 export default {
@@ -13,6 +14,10 @@ export default {
 
     if (url.pathname === "/oauth/google/callback" && request.method === "GET") {
       return handleGoogleOAuthCallback(url, env);
+    }
+
+    if (url.pathname === "/oauth/github/callback" && request.method === "GET") {
+      return handleGitHubOAuthCallback(url, env);
     }
 
     if (url.pathname === "/oauth/poll" && request.method === "GET") {
