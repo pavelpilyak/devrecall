@@ -697,6 +697,195 @@ func TestDeduplicateActivities_PreservesNonCommitActivities(t *testing.T) {
 	}
 }
 
+func reviewActivity(title, repo string, prNum int, state string, ts time.Time) models.Activity {
+	type revMeta struct {
+		Repo     string `json:"repo"`
+		PRNumber int    `json:"pr_number"`
+		PRTitle  string `json:"pr_title"`
+		State    string `json:"state"`
+		URL      string `json:"url"`
+	}
+	m := revMeta{Repo: repo, PRNumber: prNum, PRTitle: title, State: state, URL: fmt.Sprintf("https://github.com/%s/pull/%d", repo, prNum)}
+	b, _ := json.Marshal(m)
+	return models.Activity{
+		Source:    models.SourceGitHub,
+		SourceID:  fmt.Sprintf("github:%s:review:%d", repo, prNum),
+		Type:      models.TypeReview,
+		Title:     title,
+		Metadata:  string(b),
+		Timestamp: ts,
+	}
+}
+
+func issueActivity(title, repo string, num int, state string, ts time.Time) models.Activity {
+	type issMeta struct {
+		Repo   string `json:"repo"`
+		Number int    `json:"number"`
+		State  string `json:"state"`
+		URL    string `json:"url"`
+	}
+	m := issMeta{Repo: repo, Number: num, State: state, URL: fmt.Sprintf("https://github.com/%s/issues/%d", repo, num)}
+	b, _ := json.Marshal(m)
+	return models.Activity{
+		Source:    models.SourceGitHub,
+		SourceID:  fmt.Sprintf("github:%s:issue:%d", repo, num),
+		Type:      models.TypeIssue,
+		Title:     title,
+		Metadata:  string(b),
+		Timestamp: ts,
+	}
+}
+
+func TestStandup_ReviewsGroupedUnderCodeReviews(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		reviewActivity("Approved PR #99: Add notifications", "octocat/backend", 99, "APPROVED", ts),
+		reviewActivity("Reviewed PR #100: Fix login", "octocat/frontend", 100, "COMMENTED", ts.Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if !strings.Contains(out, "Code Reviews:") {
+		t.Errorf("expected Code Reviews group:\n%s", out)
+	}
+	if !strings.Contains(out, "Approved PR #99: Add notifications (octocat/backend)") {
+		t.Errorf("expected review with repo:\n%s", out)
+	}
+	if !strings.Contains(out, "Reviewed PR #100: Fix login (octocat/frontend)") {
+		t.Errorf("expected second review:\n%s", out)
+	}
+}
+
+func TestStandup_PRsGroupedByRepo(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+
+	pr := prActivity("Fix auth bug", "octocat/backend", 42, nil, ts)
+	// Override metadata to include stats.
+	type fullPRMeta struct {
+		Repo          string `json:"repo"`
+		PRNumber      int    `json:"pr_number"`
+		State         string `json:"state"`
+		CommentsCount int    `json:"comments_count"`
+		Additions     int    `json:"additions"`
+		Deletions     int    `json:"deletions"`
+	}
+	m, _ := json.Marshal(fullPRMeta{
+		Repo: "octocat/backend", PRNumber: 42, State: "merged",
+		CommentsCount: 5, Additions: 47, Deletions: 12,
+	})
+	pr.Metadata = string(m)
+
+	out, err := s.Standup([]models.Activity{pr})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if !strings.Contains(out, "octocat/backend: Fix auth bug") {
+		t.Errorf("expected PR under repo group:\n%s", out)
+	}
+	if !strings.Contains(out, "merged") {
+		t.Errorf("expected state in stats:\n%s", out)
+	}
+	if !strings.Contains(out, "+47/-12") {
+		t.Errorf("expected additions/deletions:\n%s", out)
+	}
+	if !strings.Contains(out, "5 comments") {
+		t.Errorf("expected comments:\n%s", out)
+	}
+}
+
+func TestStandup_IssuesGroupedByRepo(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		issueActivity("Login page broken", "octocat/frontend", 10, "open", ts),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if !strings.Contains(out, "octocat/frontend: Login page broken") {
+		t.Errorf("expected issue under repo group:\n%s", out)
+	}
+	if !strings.Contains(out, "open") {
+		t.Errorf("expected state:\n%s", out)
+	}
+}
+
+func TestStandup_MixedGitPlatformActivities(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		activity("Fix auth bug", "backend-api", "abc123", 3, 47, 12, ts),
+		prActivity("Fix auth PR", "octocat/backend-api", 42, []string{"abc123"}, ts.Add(time.Hour)),
+		reviewActivity("Approved PR #99: Notifications", "octocat/backend-api", 99, "APPROVED", ts.Add(2*time.Hour)),
+		issueActivity("Login broken", "octocat/frontend", 10, "open", ts.Add(3*time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	// All types should be present.
+	if !strings.Contains(out, "backend-api: Fix auth bug") {
+		t.Errorf("missing commit:\n%s", out)
+	}
+	if !strings.Contains(out, "octocat/backend-api: Fix auth PR") {
+		t.Errorf("missing PR:\n%s", out)
+	}
+	if !strings.Contains(out, "Code Reviews:") {
+		t.Errorf("missing Code Reviews section:\n%s", out)
+	}
+	if !strings.Contains(out, "octocat/frontend: Login broken") {
+		t.Errorf("missing issue:\n%s", out)
+	}
+}
+
+func TestWeeklySummary_WithReviewsAndPRs(t *testing.T) {
+	s := NewTemplateSummarizer()
+	mon := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
+
+	activities := []models.Activity{
+		activity("Fix bug", "backend-api", "abc123", 1, 5, 2, mon),
+		prActivity("Fix bug PR", "octocat/backend-api", 42, nil, mon.Add(time.Hour)),
+		reviewActivity("Approved PR #99", "octocat/backend-api", 99, "APPROVED", mon.Add(2*time.Hour)),
+		reviewActivity("Reviewed PR #100", "octocat/frontend", 100, "COMMENTED", mon.Add(3*time.Hour)),
+		issueActivity("Login broken", "octocat/frontend", 10, "open", mon.Add(4*time.Hour)),
+	}
+
+	out, err := s.WeeklySummary(activities)
+	if err != nil {
+		t.Fatalf("WeeklySummary: %v", err)
+	}
+
+	// Day should show counts.
+	if !strings.Contains(out, "1 PRs") {
+		t.Errorf("missing PR count:\n%s", out)
+	}
+	if !strings.Contains(out, "2 reviews") {
+		t.Errorf("missing review count:\n%s", out)
+	}
+	if !strings.Contains(out, "1 issues") {
+		t.Errorf("missing issue count:\n%s", out)
+	}
+
+	// Totals.
+	if !strings.Contains(out, "PRs:      1") {
+		t.Errorf("missing PR total:\n%s", out)
+	}
+	if !strings.Contains(out, "Reviews:  2") {
+		t.Errorf("missing review total:\n%s", out)
+	}
+	if !strings.Contains(out, "Issues:   1") {
+		t.Errorf("missing issue total:\n%s", out)
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		mins int

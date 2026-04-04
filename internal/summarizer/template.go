@@ -47,6 +47,70 @@ type attendee struct {
 	Self        bool   `json:"self,omitempty"`
 }
 
+// reviewActivityMeta is a unified struct for parsing review metadata across platforms.
+type reviewActivityMeta struct {
+	Repo     string `json:"repo"`    // GitHub, Bitbucket
+	Project  string `json:"project"` // GitLab
+	PRNumber int    `json:"pr_number"`
+	MRNumber int    `json:"mr_number"`
+	PRTitle  string `json:"pr_title"`
+	MRTitle  string `json:"mr_title"`
+	State    string `json:"state"` // APPROVED, CHANGES_REQUESTED, COMMENTED
+	Approved bool   `json:"approved"`
+	URL      string `json:"url"`
+}
+
+func (m reviewActivityMeta) repoName() string {
+	if m.Repo != "" {
+		return m.Repo
+	}
+	return m.Project
+}
+
+// prActivityMeta is a unified struct for parsing PR/MR metadata across platforms.
+type prActivityMeta struct {
+	Repo          string   `json:"repo"`    // GitHub, Bitbucket
+	Project       string   `json:"project"` // GitLab
+	PRNumber      int      `json:"pr_number"`
+	MRNumber      int      `json:"mr_number"`
+	State         string   `json:"state"`
+	CommentsCount int      `json:"comments_count"`
+	Additions     int      `json:"additions"`
+	Deletions     int      `json:"deletions"`
+	URL           string   `json:"url"`
+}
+
+func (m prActivityMeta) repoName() string {
+	if m.Repo != "" {
+		return m.Repo
+	}
+	return m.Project
+}
+
+func (m prActivityMeta) number() int {
+	if m.PRNumber != 0 {
+		return m.PRNumber
+	}
+	return m.MRNumber
+}
+
+// issueActivityMeta is a unified struct for parsing issue metadata across platforms.
+type issueActivityMeta struct {
+	Repo    string   `json:"repo"`    // GitHub
+	Project string   `json:"project"` // GitLab
+	Number  int      `json:"number"`
+	State   string   `json:"state"`
+	Labels  []string `json:"labels,omitempty"`
+	URL     string   `json:"url"`
+}
+
+func (m issueActivityMeta) repoName() string {
+	if m.Repo != "" {
+		return m.Repo
+	}
+	return m.Project
+}
+
 // prCommitSHAs is a minimal struct to extract commit SHAs from PR/MR metadata.
 type prCommitSHAs struct {
 	CommitSHAs []string `json:"commit_shas"`
@@ -205,13 +269,42 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 			}
 			meetingMinutes[dateStr] += meta.DurationMin
 		default:
-			var meta commitMeta
-			json.Unmarshal([]byte(a.Metadata), &meta)
-			group = meta.Repo
-			if group == "" {
-				group = "unknown"
+			switch a.Type {
+			case models.TypeReview:
+				var meta reviewActivityMeta
+				json.Unmarshal([]byte(a.Metadata), &meta)
+				group = "Code Reviews"
+				repo := meta.repoName()
+				if repo != "" {
+					e = entry{title: fmt.Sprintf("%s (%s)", a.Title, repo)}
+				} else {
+					e = entry{title: a.Title}
+				}
+			case models.TypePullRequest, models.TypeMergeRequest:
+				var meta prActivityMeta
+				json.Unmarshal([]byte(a.Metadata), &meta)
+				group = meta.repoName()
+				if group == "" {
+					group = "unknown"
+				}
+				e = entry{title: a.Title, stats: formatPRStats(meta)}
+			case models.TypeIssue:
+				var meta issueActivityMeta
+				json.Unmarshal([]byte(a.Metadata), &meta)
+				group = meta.repoName()
+				if group == "" {
+					group = "unknown"
+				}
+				e = entry{title: a.Title, stats: meta.State}
+			default:
+				var meta commitMeta
+				json.Unmarshal([]byte(a.Metadata), &meta)
+				group = meta.Repo
+				if group == "" {
+					group = "unknown"
+				}
+				e = entry{title: a.Title, stats: formatStats(meta)}
 			}
-			e = entry{title: a.Title, stats: formatStats(meta)}
 		}
 
 		if grouped[dateStr] == nil {
@@ -320,6 +413,20 @@ func extractShortSHA(activities []models.Activity, repo, title string) string {
 	return ""
 }
 
+func formatPRStats(m prActivityMeta) string {
+	var parts []string
+	if m.State != "" {
+		parts = append(parts, m.State)
+	}
+	if m.Additions > 0 || m.Deletions > 0 {
+		parts = append(parts, fmt.Sprintf("+%d/-%d", m.Additions, m.Deletions))
+	}
+	if m.CommentsCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d comments", m.CommentsCount))
+	}
+	return strings.Join(parts, ", ")
+}
+
 func formatMeetingStats(m calendarMeta) string {
 	parts := []string{formatDuration(m.DurationMin)}
 	if m.MeetingType != "" && m.MeetingType != "group" {
@@ -363,9 +470,12 @@ func (s *TemplateSummarizer) WeeklySummary(activities []models.Activity) (string
 
 	// Group activities by date.
 	type dayData struct {
-		commits  int
-		messages int
-		meetings int
+		commits        int
+		messages       int
+		meetings       int
+		reviews        int
+		prs            int
+		issues         int
 		meetingMinutes int
 		meetingByType  map[string]int
 		repos          map[string]bool
@@ -378,6 +488,9 @@ func (s *TemplateSummarizer) WeeklySummary(activities []models.Activity) (string
 	totalCommits := 0
 	totalMessages := 0
 	totalMeetings := 0
+	totalReviews := 0
+	totalPRs := 0
+	totalIssues := 0
 	totalMeetingMinutes := 0
 	totalMeetingByType := make(map[string]int)
 	allRepos := make(map[string]bool)
@@ -423,6 +536,18 @@ func (s *TemplateSummarizer) WeeklySummary(activities []models.Activity) (string
 			}
 			d.meetingByType[mtype] += meta.DurationMin
 			totalMeetingByType[mtype] += meta.DurationMin
+		default:
+			switch a.Type {
+			case models.TypeReview:
+				d.reviews++
+				totalReviews++
+			case models.TypePullRequest, models.TypeMergeRequest:
+				d.prs++
+				totalPRs++
+			case models.TypeIssue:
+				d.issues++
+				totalIssues++
+			}
 		}
 	}
 
@@ -440,6 +565,15 @@ func (s *TemplateSummarizer) WeeklySummary(activities []models.Activity) (string
 		if d.commits > 0 {
 			repoNames := sortedMapKeys(d.repos)
 			parts = append(parts, fmt.Sprintf("%d commits in %s", d.commits, strings.Join(repoNames, ", ")))
+		}
+		if d.prs > 0 {
+			parts = append(parts, fmt.Sprintf("%d PRs", d.prs))
+		}
+		if d.reviews > 0 {
+			parts = append(parts, fmt.Sprintf("%d reviews", d.reviews))
+		}
+		if d.issues > 0 {
+			parts = append(parts, fmt.Sprintf("%d issues", d.issues))
 		}
 		if d.messages > 0 {
 			parts = append(parts, fmt.Sprintf("%d Slack messages", d.messages))
@@ -464,6 +598,15 @@ func (s *TemplateSummarizer) WeeklySummary(activities []models.Activity) (string
 		b.WriteString(fmt.Sprintf(" across %d repo(s)", len(allRepos)))
 	}
 	b.WriteString("\n")
+	if totalPRs > 0 {
+		b.WriteString(fmt.Sprintf("PRs:      %d\n", totalPRs))
+	}
+	if totalReviews > 0 {
+		b.WriteString(fmt.Sprintf("Reviews:  %d\n", totalReviews))
+	}
+	if totalIssues > 0 {
+		b.WriteString(fmt.Sprintf("Issues:   %d\n", totalIssues))
+	}
 	b.WriteString(fmt.Sprintf("Messages: %d\n", totalMessages))
 	b.WriteString(fmt.Sprintf("Meetings: %d (%s)\n", totalMeetings, formatDuration(totalMeetingMinutes)))
 
