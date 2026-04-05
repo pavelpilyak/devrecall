@@ -23,6 +23,10 @@ func (m *mockSummarizer) WeeklySummary(_ []models.Activity) (string, error) {
 	return m.weeklyText, nil
 }
 
+func (m *mockSummarizer) BragDoc(_ []models.Activity, _ []models.Summary) (string, error) {
+	return "Brag doc content", nil
+}
+
 type mockLLMProvider struct {
 	response string
 }

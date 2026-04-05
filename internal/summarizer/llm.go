@@ -139,6 +139,87 @@ func (s *LLMSummarizer) WeeklySummary(activities []models.Activity) (string, err
 	return resp, nil
 }
 
+const bragDocSystemPrompt = `You are a developer brag document generator. Given work activities and/or period summaries, write a comprehensive brag document highlighting key accomplishments.
+
+Format the document in Markdown with these sections:
+## Key Deliverables
+- List major features, projects, or initiatives completed. Include ticket IDs and repo names when available.
+- Emphasize outcomes and impact, not just tasks completed.
+
+## Collaboration & Mentorship
+- PRs reviewed for teammates
+- Design reviews led or participated in
+- Cross-team discussions and decisions driven
+
+## Metrics
+- Commits, PRs merged, PRs reviewed
+- Meetings attended (with time breakdown)
+- Channels/threads participated in
+
+## Notable Decisions & Technical Leadership
+- Key technical decisions made or influenced
+- Architecture changes proposed or implemented
+
+Rules:
+- Be specific: cite dates, repo names, ticket IDs, and people when available.
+- Focus on impact and outcomes, not just activity volume.
+- Use professional language suitable for sharing with management.
+- If data is limited, work with what's available — don't pad or fabricate.
+
+Respond ONLY with the brag document text in Markdown, no preamble or explanation.`
+
+// BragDoc generates a brag document from activities and child summaries.
+// Falls back to template-based generation on LLM failure.
+func (s *LLMSummarizer) BragDoc(activities []models.Activity, childSummaries []models.Summary) (string, error) {
+	prompt := buildBragPrompt(activities, childSummaries)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	resp, err := s.provider.Chat(ctx, []llm.Message{
+		{Role: "system", Content: bragDocSystemPrompt},
+		{Role: "user", Content: prompt},
+	}, llm.ChatOpts{
+		Temperature: 0.3,
+		MaxTokens:   4096,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "LLM brag doc generation failed: %v (falling back to template)\n", err)
+		return s.fallback.BragDoc(activities, childSummaries)
+	}
+
+	resp = strings.TrimSpace(resp)
+	if resp == "" {
+		return s.fallback.BragDoc(activities, childSummaries)
+	}
+
+	return resp, nil
+}
+
+func buildBragPrompt(activities []models.Activity, childSummaries []models.Summary) string {
+	var b strings.Builder
+
+	if len(childSummaries) > 0 {
+		b.WriteString("Period summaries:\n\n")
+		for _, s := range childSummaries {
+			fmt.Fprintf(&b, "=== %s (%s to %s) ===\n%s\n\n",
+				s.PeriodType, s.PeriodStart, s.PeriodEnd, s.SummaryText)
+		}
+	}
+
+	if len(activities) > 0 {
+		b.WriteString("Raw activities:\n\n")
+		selfSet := make(map[string]bool)
+		b.WriteString(buildActivitiesPrompt(activities, selfSet))
+	}
+
+	if b.Len() == 0 {
+		return "No activities or summaries available for this period."
+	}
+
+	return b.String()
+}
+
 // slackFullMeta extends slackMeta with thread messages for the LLM prompt.
 type slackFullMeta struct {
 	ChannelName string             `json:"channel_name"`

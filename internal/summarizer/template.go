@@ -698,6 +698,55 @@ func sortedMapKeys2(m map[string]int) []string {
 	return keys
 }
 
+// BragDoc generates a template-based brag document (fallback when LLM unavailable).
+func (t *TemplateSummarizer) BragDoc(activities []models.Activity, childSummaries []models.Summary) (string, error) {
+	var b strings.Builder
+
+	// If we have child summaries, use them.
+	if len(childSummaries) > 0 {
+		b.WriteString("## Period Summaries\n\n")
+		for _, s := range childSummaries {
+			fmt.Fprintf(&b, "### %s (%s to %s)\n%s\n\n", s.PeriodType, s.PeriodStart, s.PeriodEnd, s.SummaryText)
+		}
+	}
+
+	// Count activity stats.
+	if len(activities) > 0 {
+		bySource := make(map[models.Source]int)
+		byType := make(map[models.ActivityType]int)
+		for _, a := range activities {
+			bySource[a.Source]++
+			byType[a.Type]++
+		}
+
+		b.WriteString("## Metrics\n\n")
+		for source, count := range bySource {
+			fmt.Fprintf(&b, "- %s: %d activities\n", source, count)
+		}
+		b.WriteString("\n")
+
+		if commits := byType[models.TypeCommit]; commits > 0 {
+			fmt.Fprintf(&b, "- %d commits\n", commits)
+		}
+		if prs := byType[models.TypePullRequest] + byType[models.TypeMergeRequest]; prs > 0 {
+			fmt.Fprintf(&b, "- %d PRs/MRs\n", prs)
+		}
+		if reviews := byType[models.TypeReview]; reviews > 0 {
+			fmt.Fprintf(&b, "- %d code reviews\n", reviews)
+		}
+		if meetings := byType[models.TypeMeeting]; meetings > 0 {
+			fmt.Fprintf(&b, "- %d meetings\n", meetings)
+		}
+		b.WriteString("\n")
+	}
+
+	if b.Len() == 0 {
+		return "No activities found for this period.", nil
+	}
+
+	return b.String(), nil
+}
+
 func sortedKeys(m map[string][]entry) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
