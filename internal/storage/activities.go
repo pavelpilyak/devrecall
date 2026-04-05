@@ -73,11 +73,12 @@ func (db *DB) InsertActivities(activities []models.Activity) (int, error) {
 
 // ActivityFilter controls which activities are returned by ListActivities.
 type ActivityFilter struct {
-	Source models.Source
-	Type   models.ActivityType
-	After  time.Time
-	Before time.Time
-	Limit  int
+	Source     models.Source
+	Type       models.ActivityType
+	IdentityID int64
+	After      time.Time
+	Before     time.Time
+	Limit      int
 }
 
 // ListActivities returns activities matching the filter, ordered by timestamp descending.
@@ -182,6 +183,80 @@ func (db *DB) CountActivitiesBySource() (map[string]int, error) {
 		counts[source] = count
 	}
 	return counts, rows.Err()
+}
+
+// FTSMatch is an FTS5 search result with BM25 relevance score.
+type FTSMatch struct {
+	Activity models.Activity
+	Rank     float64 // BM25 rank (lower = more relevant; negated to higher = better)
+}
+
+// SearchFTS performs full-text keyword search using the FTS5 index.
+// Returns activities matching the query, scored by BM25 relevance.
+func (db *DB) SearchFTS(query string, filter ActivityFilter, limit int) ([]FTSMatch, error) {
+	if query == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	sqlQuery := `
+		SELECT a.id, a.source, a.source_id, COALESCE(a.identity_id, 0),
+			a.type, a.title, COALESCE(a.content, ''), COALESCE(a.metadata, ''), a.timestamp,
+			rank
+		FROM activities_fts
+		JOIN activities a ON a.id = activities_fts.rowid
+		WHERE activities_fts MATCH ?`
+	args := []any{query}
+
+	if filter.Source != "" {
+		sqlQuery += " AND a.source = ?"
+		args = append(args, filter.Source)
+	}
+	if filter.Type != "" {
+		sqlQuery += " AND a.type = ?"
+		args = append(args, filter.Type)
+	}
+	if !filter.After.IsZero() {
+		sqlQuery += " AND a.timestamp >= ?"
+		args = append(args, filter.After.UTC().Format(time.RFC3339))
+	}
+	if !filter.Before.IsZero() {
+		sqlQuery += " AND a.timestamp < ?"
+		args = append(args, filter.Before.UTC().Format(time.RFC3339))
+	}
+	if filter.IdentityID > 0 {
+		sqlQuery += " AND a.identity_id = ?"
+		args = append(args, filter.IdentityID)
+	}
+
+	sqlQuery += " ORDER BY rank LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.Query(sqlQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("fts search: %w", err)
+	}
+	defer rows.Close()
+
+	var results []FTSMatch
+	for rows.Next() {
+		var a models.Activity
+		var ts string
+		var rank float64
+		err := rows.Scan(&a.ID, &a.Source, &a.SourceID, &a.IdentityID,
+			&a.Type, &a.Title, &a.Content, &a.Metadata, &ts, &rank)
+		if err != nil {
+			return nil, fmt.Errorf("scan fts: %w", err)
+		}
+		a.Timestamp, err = time.Parse(time.RFC3339, ts)
+		if err != nil {
+			return nil, fmt.Errorf("parse timestamp: %w", err)
+		}
+		results = append(results, FTSMatch{Activity: a, Rank: rank})
+	}
+	return results, rows.Err()
 }
 
 func scanActivities(rows *sql.Rows) ([]models.Activity, error) {
