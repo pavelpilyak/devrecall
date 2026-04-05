@@ -27,6 +27,10 @@ func (m *mockSummarizer) BragDoc(_ []models.Activity, _ []models.Summary) (strin
 	return "Brag doc content", nil
 }
 
+func (m *mockSummarizer) PerfReview(_ []models.Activity, _ []models.Summary) (string, error) {
+	return "Perf review content", nil
+}
+
 type mockLLMProvider struct {
 	response string
 }

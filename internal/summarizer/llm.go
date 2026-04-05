@@ -220,6 +220,70 @@ func buildBragPrompt(activities []models.Activity, childSummaries []models.Summa
 	return b.String()
 }
 
+const perfReviewSystemPrompt = `You are a developer performance review document generator. Given work activities and/or period summaries, write a structured performance review document.
+
+Format the document in Markdown with these sections:
+
+## Key Contributions
+- Major deliverables with measurable impact where possible
+- Cite ticket IDs, repo names, and specific outcomes
+
+## Technical Leadership
+- Architecture decisions made or influenced
+- Technical debt addressed
+- Quality improvements (testing, CI/CD, monitoring)
+
+## Collaboration & Mentorship
+- Code reviews: volume and quality signals (PRs reviewed, turnaround)
+- Knowledge sharing: design reviews led, documentation written
+- Team support: unblocking teammates, onboarding help
+
+## Evidence & Metrics
+- Quantitative: commits, PRs merged, PRs reviewed, meetings
+- Qualitative: key decisions, process improvements
+- Cross-team impact: channels participated in, external discussions
+
+## Growth Areas
+- New technologies or domains explored
+- Skills demonstrated for the first time this period
+
+Rules:
+- Be specific and evidence-based — cite dates, repos, tickets, and people.
+- Frame contributions in terms of impact, not just output.
+- Use professional language suitable for manager review or self-assessment.
+- Distinguish between individual contributions and team outcomes you influenced.
+- If data is limited, work with what's available — don't fabricate.
+
+Respond ONLY with the performance review document in Markdown, no preamble or explanation.`
+
+// PerfReview generates a structured performance review document.
+// Falls back to template-based generation on LLM failure.
+func (s *LLMSummarizer) PerfReview(activities []models.Activity, childSummaries []models.Summary) (string, error) {
+	prompt := buildBragPrompt(activities, childSummaries) // reuse the same prompt builder
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	resp, err := s.provider.Chat(ctx, []llm.Message{
+		{Role: "system", Content: perfReviewSystemPrompt},
+		{Role: "user", Content: prompt},
+	}, llm.ChatOpts{
+		Temperature: 0.3,
+		MaxTokens:   4096,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "LLM perf review generation failed: %v (falling back to template)\n", err)
+		return s.fallback.PerfReview(activities, childSummaries)
+	}
+
+	resp = strings.TrimSpace(resp)
+	if resp == "" {
+		return s.fallback.PerfReview(activities, childSummaries)
+	}
+
+	return resp, nil
+}
+
 // slackFullMeta extends slackMeta with thread messages for the LLM prompt.
 type slackFullMeta struct {
 	ChannelName string             `json:"channel_name"`

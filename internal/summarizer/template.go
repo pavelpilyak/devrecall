@@ -747,6 +747,63 @@ func (t *TemplateSummarizer) BragDoc(activities []models.Activity, childSummarie
 	return b.String(), nil
 }
 
+// PerfReview generates a template-based performance review (fallback when LLM unavailable).
+func (t *TemplateSummarizer) PerfReview(activities []models.Activity, childSummaries []models.Summary) (string, error) {
+	var b strings.Builder
+
+	// Include child summaries as context.
+	if len(childSummaries) > 0 {
+		b.WriteString("## Period Summaries\n\n")
+		for _, s := range childSummaries {
+			fmt.Fprintf(&b, "### %s (%s to %s)\n%s\n\n", s.PeriodType, s.PeriodStart, s.PeriodEnd, s.SummaryText)
+		}
+	}
+
+	if len(activities) > 0 {
+		bySource := make(map[models.Source]int)
+		byType := make(map[models.ActivityType]int)
+		for _, a := range activities {
+			bySource[a.Source]++
+			byType[a.Type]++
+		}
+
+		b.WriteString("## Evidence & Metrics\n\n")
+		if commits := byType[models.TypeCommit]; commits > 0 {
+			fmt.Fprintf(&b, "- %d commits\n", commits)
+		}
+		if prs := byType[models.TypePullRequest] + byType[models.TypeMergeRequest]; prs > 0 {
+			fmt.Fprintf(&b, "- %d PRs/MRs merged\n", prs)
+		}
+		if reviews := byType[models.TypeReview]; reviews > 0 {
+			fmt.Fprintf(&b, "- %d code reviews\n", reviews)
+		}
+		if meetings := byType[models.TypeMeeting]; meetings > 0 {
+			fmt.Fprintf(&b, "- %d meetings attended\n", meetings)
+		}
+		if messages := byType[models.TypeMessage]; messages > 0 {
+			fmt.Fprintf(&b, "- %d Slack messages/threads\n", messages)
+		}
+		if tickets := byType[models.TypeTicket]; tickets > 0 {
+			fmt.Fprintf(&b, "- %d tickets worked on\n", tickets)
+		}
+		if issues := byType[models.TypeIssue]; issues > 0 {
+			fmt.Fprintf(&b, "- %d issues addressed\n", issues)
+		}
+
+		b.WriteString("\nActivity by source:\n")
+		for source, count := range bySource {
+			fmt.Fprintf(&b, "- %s: %d\n", source, count)
+		}
+		b.WriteString("\n")
+	}
+
+	if b.Len() == 0 {
+		return "No activities found for this period.", nil
+	}
+
+	return b.String(), nil
+}
+
 func sortedKeys(m map[string][]entry) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

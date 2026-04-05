@@ -14,4 +14,7 @@ type Summarizer interface {
 
 	// BragDoc generates a brag document highlighting key accomplishments for a period.
 	BragDoc(activities []models.Activity, childSummaries []models.Summary) (string, error)
+
+	// PerfReview generates a structured performance review document for a period.
+	PerfReview(activities []models.Activity, childSummaries []models.Summary) (string, error)
 }
