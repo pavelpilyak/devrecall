@@ -4,9 +4,14 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/pavelpiliak/devrecall/internal/config"
+	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/pavelpiliak/devrecall/internal/config"
 )
+
+func init() {
+	sqlite_vec.Auto()
+}
 
 // DB wraps the SQLite connection.
 type DB struct {
@@ -48,8 +53,13 @@ func OpenPath(path string) (*DB, error) {
 }
 
 func (db *DB) migrate() error {
-	_, err := db.Exec(schema)
-	return err
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+	if _, err := db.Exec(vecSchema); err != nil {
+		return fmt.Errorf("vec schema: %w", err)
+	}
+	return nil
 }
 
 const schema = `
@@ -129,5 +139,15 @@ CREATE TABLE IF NOT EXISTS embeddings (
     dimensions  INTEGER NOT NULL,
     vector      BLOB    NOT NULL, -- little-endian float32 array
     created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+`
+
+// vecSchema creates the vec0 virtual table for KNN search.
+// Separated from main schema because vec0 uses non-standard syntax
+// that must run after sqlite-vec is loaded.
+const vecSchema = `
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_activities USING vec0(
+    activity_id INTEGER PRIMARY KEY,
+    embedding FLOAT[384]
 );
 `

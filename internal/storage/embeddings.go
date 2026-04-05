@@ -6,6 +6,7 @@ import (
 	"math"
 	"time"
 
+	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 	"github.com/pavelpiliak/devrecall/pkg/models"
 )
 
@@ -23,17 +24,18 @@ type VectorMatch struct {
 	Score    float64 // cosine similarity, 0..1
 }
 
-// scored pairs an activity with its similarity score (internal use).
-type scored struct {
-	activity models.Activity
-	score    float64
-}
-
 // InsertEmbedding stores a vector embedding for an activity.
-// On conflict (same activity_id), the embedding is replaced.
+// On conflict (same activity_id), the existing row is updated.
+// Writes to both the embeddings metadata table and the vec0 index.
 func (db *DB) InsertEmbedding(activityID int64, model string, vec []float32) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	blob := float32sToBytes(vec)
-	_, err := db.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO embeddings (activity_id, model, dimensions, vector)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(activity_id) DO UPDATE SET
@@ -46,7 +48,19 @@ func (db *DB) InsertEmbedding(activityID int64, model string, vec []float32) err
 	if err != nil {
 		return fmt.Errorf("insert embedding: %w", err)
 	}
-	return nil
+
+	// Upsert into vec0 index: delete then insert (vec0 doesn't support ON CONFLICT).
+	tx.Exec("DELETE FROM vec_activities WHERE activity_id = ?", activityID)
+	serialized, err := sqlite_vec.SerializeFloat32(vec)
+	if err != nil {
+		return fmt.Errorf("serialize vec: %w", err)
+	}
+	_, err = tx.Exec("INSERT INTO vec_activities(activity_id, embedding) VALUES (?, ?)", activityID, serialized)
+	if err != nil {
+		return fmt.Errorf("insert vec: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 // InsertEmbeddings stores a batch of embeddings in a single transaction.
@@ -57,7 +71,7 @@ func (db *DB) InsertEmbeddings(items []Embedding) (int, error) {
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`
+	embStmt, err := tx.Prepare(`
 		INSERT INTO embeddings (activity_id, model, dimensions, vector)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(activity_id) DO UPDATE SET
@@ -66,15 +80,35 @@ func (db *DB) InsertEmbeddings(items []Embedding) (int, error) {
 			vector     = excluded.vector,
 			created_at = datetime('now')`)
 	if err != nil {
-		return 0, fmt.Errorf("prepare: %w", err)
+		return 0, fmt.Errorf("prepare embeddings: %w", err)
 	}
-	defer stmt.Close()
+	defer embStmt.Close()
+
+	delStmt, err := tx.Prepare("DELETE FROM vec_activities WHERE activity_id = ?")
+	if err != nil {
+		return 0, fmt.Errorf("prepare vec delete: %w", err)
+	}
+	defer delStmt.Close()
+
+	vecStmt, err := tx.Prepare("INSERT INTO vec_activities(activity_id, embedding) VALUES (?, ?)")
+	if err != nil {
+		return 0, fmt.Errorf("prepare vec insert: %w", err)
+	}
+	defer vecStmt.Close()
 
 	inserted := 0
 	for _, e := range items {
 		blob := float32sToBytes(e.Vector)
-		if _, err := stmt.Exec(e.ActivityID, e.Model, len(e.Vector), blob); err != nil {
+		if _, err := embStmt.Exec(e.ActivityID, e.Model, len(e.Vector), blob); err != nil {
 			return inserted, fmt.Errorf("insert embedding for activity %d: %w", e.ActivityID, err)
+		}
+		delStmt.Exec(e.ActivityID)
+		serialized, err := sqlite_vec.SerializeFloat32(e.Vector)
+		if err != nil {
+			return inserted, fmt.Errorf("serialize vec for activity %d: %w", e.ActivityID, err)
+		}
+		if _, err := vecStmt.Exec(e.ActivityID, serialized); err != nil {
+			return inserted, fmt.Errorf("insert vec for activity %d: %w", e.ActivityID, err)
 		}
 		inserted++
 	}
@@ -114,39 +148,54 @@ func (db *DB) ListUnembeddedActivityIDs(limit int) ([]int64, error) {
 	return ids, rows.Err()
 }
 
-// SearchSimilar performs brute-force cosine similarity search against all stored embeddings.
-// It returns the top-K activities with highest similarity, optionally filtered by time range.
-// This will be replaced by sqlite-vss indexing in a future version.
+// SearchSimilar performs KNN vector search using sqlite-vec's vec0 index.
+// Returns the top-K activities with highest cosine similarity, optionally filtered by time range.
 func (db *DB) SearchSimilar(queryVec []float32, limit int, after, before time.Time) ([]VectorMatch, error) {
-	query := `SELECT e.vector, a.id, a.source, a.source_id, COALESCE(a.identity_id, 0),
-		a.type, a.title, COALESCE(a.content, ''), COALESCE(a.metadata, ''), a.timestamp
-		FROM embeddings e
-		JOIN activities a ON a.id = e.activity_id
-		WHERE 1=1`
-	var args []any
+	if limit <= 0 {
+		limit = 10
+	}
 
-	if !after.IsZero() {
-		query += " AND a.timestamp >= ?"
-		args = append(args, after.UTC().Format(time.RFC3339))
+	serialized, err := sqlite_vec.SerializeFloat32(queryVec)
+	if err != nil {
+		return nil, fmt.Errorf("serialize query vec: %w", err)
 	}
-	if !before.IsZero() {
-		query += " AND a.timestamp < ?"
-		args = append(args, before.UTC().Format(time.RFC3339))
+
+	// If we have date filters, we need to post-filter after KNN.
+	// Fetch more candidates than needed to account for filtering.
+	fetchLimit := limit
+	hasDateFilter := !after.IsZero() || !before.IsZero()
+	if hasDateFilter {
+		fetchLimit = limit * 5
+		if fetchLimit < 50 {
+			fetchLimit = 50
+		}
 	}
+
+	// KNN query via vec0 virtual table. distance is L2 by default.
+	// We convert to cosine similarity score afterward.
+	query := `
+		SELECT v.activity_id, v.distance,
+			a.id, a.source, a.source_id, COALESCE(a.identity_id, 0),
+			a.type, a.title, COALESCE(a.content, ''), COALESCE(a.metadata, ''), a.timestamp
+		FROM vec_activities v
+		JOIN activities a ON a.id = v.activity_id
+		WHERE v.embedding MATCH ? AND k = ?`
+	args := []any{serialized, fetchLimit}
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query embeddings: %w", err)
+		return nil, fmt.Errorf("vec search: %w", err)
 	}
 	defer rows.Close()
 
-	// Scan all rows and compute similarity.
-	var results []scored
+	var matches []VectorMatch
 	for rows.Next() {
-		var blob []byte
+		var distance float64
 		var a models.Activity
 		var ts string
-		err := rows.Scan(&blob, &a.ID, &a.Source, &a.SourceID, &a.IdentityID,
+		var vecActivityID int64
+		err := rows.Scan(&vecActivityID, &distance,
+			&a.ID, &a.Source, &a.SourceID, &a.IdentityID,
 			&a.Type, &a.Title, &a.Content, &a.Metadata, &ts)
 		if err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
@@ -156,21 +205,27 @@ func (db *DB) SearchSimilar(queryVec []float32, limit int, after, before time.Ti
 			return nil, fmt.Errorf("parse timestamp: %w", err)
 		}
 
-		vec := bytesToFloat32s(blob)
-		sim := CosineSimilarity(queryVec, vec)
-		results = append(results, scored{activity: a, score: sim})
+		// Apply date filters.
+		if !after.IsZero() && a.Timestamp.Before(after) {
+			continue
+		}
+		if !before.IsZero() && !a.Timestamp.Before(before) {
+			continue
+		}
+
+		// Convert L2 distance to a similarity score (smaller distance = higher score).
+		// Score = 1 / (1 + distance) gives a 0..1 range.
+		score := 1.0 / (1.0 + distance)
+		matches = append(matches, VectorMatch{Activity: a, Score: score})
+
+		if len(matches) >= limit {
+			break
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	// Sort by score descending (simple insertion sort for top-K).
-	topK := topKScored(results, limit)
-
-	matches := make([]VectorMatch, len(topK))
-	for i, s := range topK {
-		matches[i] = VectorMatch{Activity: s.activity, Score: s.score}
-	}
 	return matches, nil
 }
 
@@ -179,29 +234,6 @@ func (db *DB) EmbeddingCount() (int, error) {
 	var count int
 	err := db.QueryRow("SELECT COUNT(*) FROM embeddings").Scan(&count)
 	return count, err
-}
-
-// topKScored returns the top-K items by score descending.
-func topKScored(items []scored, k int) []scored {
-	if k <= 0 || len(items) == 0 {
-		return nil
-	}
-	if k > len(items) {
-		k = len(items)
-	}
-
-	// Partial sort: find top-K using a simple selection approach.
-	// Fine for thousands of embeddings; sqlite-vss will handle larger scales.
-	for i := 0; i < k; i++ {
-		maxIdx := i
-		for j := i + 1; j < len(items); j++ {
-			if items[j].score > items[maxIdx].score {
-				maxIdx = j
-			}
-		}
-		items[i], items[maxIdx] = items[maxIdx], items[i]
-	}
-	return items[:k]
 }
 
 // CosineSimilarity computes cosine similarity between two vectors.

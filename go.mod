@@ -8,6 +8,7 @@ require (
 )
 
 require (
+	github.com/asg017/sqlite-vec-go-bindings v0.1.6 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/daulet/tokenizers v1.26.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect

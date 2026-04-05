@@ -8,6 +8,13 @@ import (
 	"github.com/pavelpiliak/devrecall/pkg/models"
 )
 
+// pad384 pads a short vector to 384 dimensions (vec0 table requirement).
+func pad384(v []float32) []float32 {
+	out := make([]float32, 384)
+	copy(out, v)
+	return out
+}
+
 func insertTestActivity(t *testing.T, db *DB, sourceID, title string, ts time.Time) int64 {
 	t.Helper()
 	id, err := db.InsertActivity(models.Activity{
@@ -27,7 +34,7 @@ func TestInsertEmbedding(t *testing.T) {
 	db := mustOpen(t)
 	id := insertTestActivity(t, db, "repo:aaa", "Fix auth", time.Now().UTC())
 
-	vec := []float32{0.1, 0.2, 0.3}
+	vec := pad384([]float32{0.1, 0.2, 0.3})
 	if err := db.InsertEmbedding(id, "all-minilm", vec); err != nil {
 		t.Fatalf("InsertEmbedding: %v", err)
 	}
@@ -45,11 +52,11 @@ func TestInsertEmbedding_Upsert(t *testing.T) {
 	db := mustOpen(t)
 	id := insertTestActivity(t, db, "repo:aaa", "Fix auth", time.Now().UTC())
 
-	if err := db.InsertEmbedding(id, "all-minilm", []float32{0.1, 0.2}); err != nil {
+	if err := db.InsertEmbedding(id, "all-minilm", pad384([]float32{0.1, 0.2})); err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
 	// Overwrite with different vector.
-	if err := db.InsertEmbedding(id, "all-minilm", []float32{0.3, 0.4, 0.5}); err != nil {
+	if err := db.InsertEmbedding(id, "all-minilm", pad384([]float32{0.3, 0.4, 0.5})); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 
@@ -66,8 +73,8 @@ func TestInsertEmbeddings_Batch(t *testing.T) {
 	id2 := insertTestActivity(t, db, "repo:a2", "Commit 2", now)
 
 	items := []Embedding{
-		{ActivityID: id1, Model: "all-minilm", Vector: []float32{0.1, 0.2, 0.3}},
-		{ActivityID: id2, Model: "all-minilm", Vector: []float32{0.4, 0.5, 0.6}},
+		{ActivityID: id1, Model: "all-minilm", Vector: pad384([]float32{0.1, 0.2, 0.3})},
+		{ActivityID: id2, Model: "all-minilm", Vector: pad384([]float32{0.4, 0.5, 0.6})},
 	}
 
 	n, err := db.InsertEmbeddings(items)
@@ -91,7 +98,7 @@ func TestListUnembeddedActivityIDs(t *testing.T) {
 	id2 := insertTestActivity(t, db, "repo:a2", "Commit 2", now.Add(-time.Hour))
 
 	// Embed only id1.
-	db.InsertEmbedding(id1, "all-minilm", []float32{0.1})
+	db.InsertEmbedding(id1, "all-minilm", pad384([]float32{0.1}))
 
 	ids, err := db.ListUnembeddedActivityIDs(0)
 	if err != nil {
@@ -126,11 +133,11 @@ func TestSearchSimilar(t *testing.T) {
 	id3 := insertTestActivity(t, db, "repo:a3", "Add login validation", now.Add(-2*time.Hour))
 
 	// Embed with vectors where id1 is most similar to query, id3 somewhat, id2 least.
-	db.InsertEmbedding(id1, "all-minilm", []float32{0.9, 0.1, 0.0})
-	db.InsertEmbedding(id2, "all-minilm", []float32{0.0, 0.1, 0.9})
-	db.InsertEmbedding(id3, "all-minilm", []float32{0.7, 0.3, 0.1})
+	db.InsertEmbedding(id1, "all-minilm", pad384([]float32{0.9, 0.1, 0.0}))
+	db.InsertEmbedding(id2, "all-minilm", pad384([]float32{0.0, 0.1, 0.9}))
+	db.InsertEmbedding(id3, "all-minilm", pad384([]float32{0.7, 0.3, 0.1}))
 
-	queryVec := []float32{1.0, 0.0, 0.0}
+	queryVec := pad384([]float32{1.0, 0.0, 0.0})
 
 	matches, err := db.SearchSimilar(queryVec, 2, time.Time{}, time.Time{})
 	if err != nil {
@@ -140,7 +147,7 @@ func TestSearchSimilar(t *testing.T) {
 		t.Fatalf("got %d matches, want 2", len(matches))
 	}
 
-	// First match should be id1 (most similar to [1,0,0]).
+	// First match should be id1 (closest to [1,0,0,...]).
 	if matches[0].Activity.ID != id1 {
 		t.Errorf("top match = %d, want %d", matches[0].Activity.ID, id1)
 	}
@@ -162,12 +169,12 @@ func TestSearchSimilar_DateFilter(t *testing.T) {
 	id1 := insertTestActivity(t, db, "repo:a1", "Old commit", old)
 	id2 := insertTestActivity(t, db, "repo:a2", "Recent commit", recent)
 
-	db.InsertEmbedding(id1, "all-minilm", []float32{1.0, 0.0})
-	db.InsertEmbedding(id2, "all-minilm", []float32{0.9, 0.1})
+	db.InsertEmbedding(id1, "all-minilm", pad384([]float32{1.0, 0.0}))
+	db.InsertEmbedding(id2, "all-minilm", pad384([]float32{0.9, 0.1}))
 
 	// Search only for activities after Feb 2026.
 	after := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
-	matches, err := db.SearchSimilar([]float32{1.0, 0.0}, 10, after, time.Time{})
+	matches, err := db.SearchSimilar(pad384([]float32{1.0, 0.0}), 10, after, time.Time{})
 	if err != nil {
 		t.Fatalf("SearchSimilar: %v", err)
 	}
