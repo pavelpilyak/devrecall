@@ -208,6 +208,41 @@ func TestFindCommitsBySHAs(t *testing.T) {
 	})
 }
 
+func TestCountActivitiesBySource(t *testing.T) {
+	db := mustOpen(t)
+
+	db.InsertActivity(models.Activity{Source: models.SourceGit, SourceID: "g:1", Type: models.TypeCommit, Title: "Commit 1", Timestamp: time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)})
+	db.InsertActivity(models.Activity{Source: models.SourceGit, SourceID: "g:2", Type: models.TypeCommit, Title: "Commit 2", Timestamp: time.Date(2026, 3, 27, 11, 0, 0, 0, time.UTC)})
+	db.InsertActivity(models.Activity{Source: models.SourceSlack, SourceID: "s:1", Type: models.TypeMessage, Title: "Message", Timestamp: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC)})
+
+	counts, err := db.CountActivitiesBySource()
+	if err != nil {
+		t.Fatalf("CountActivitiesBySource: %v", err)
+	}
+
+	if counts["git"] != 2 {
+		t.Errorf("git count = %d, want 2", counts["git"])
+	}
+	if counts["slack"] != 1 {
+		t.Errorf("slack count = %d, want 1", counts["slack"])
+	}
+	if counts["calendar"] != 0 {
+		t.Errorf("calendar count = %d, want 0", counts["calendar"])
+	}
+}
+
+func TestCountActivitiesBySource_Empty(t *testing.T) {
+	db := mustOpen(t)
+
+	counts, err := db.CountActivitiesBySource()
+	if err != nil {
+		t.Fatalf("CountActivitiesBySource: %v", err)
+	}
+	if len(counts) != 0 {
+		t.Errorf("got %d entries, want 0", len(counts))
+	}
+}
+
 func TestListActivities_FilterByType(t *testing.T) {
 	db := mustOpen(t)
 

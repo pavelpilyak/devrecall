@@ -164,6 +164,26 @@ func (db *DB) FindCommitsBySHAs(shas []string) (map[string]models.Activity, erro
 	return result, nil
 }
 
+// CountActivitiesBySource returns the total number of activities for each source.
+func (db *DB) CountActivitiesBySource() (map[string]int, error) {
+	rows, err := db.Query("SELECT source, COUNT(*) FROM activities GROUP BY source")
+	if err != nil {
+		return nil, fmt.Errorf("count activities: %w", err)
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var source string
+		var count int
+		if err := rows.Scan(&source, &count); err != nil {
+			return nil, fmt.Errorf("scan count: %w", err)
+		}
+		counts[source] = count
+	}
+	return counts, rows.Err()
+}
+
 func scanActivities(rows *sql.Rows) ([]models.Activity, error) {
 	var result []models.Activity
 	for rows.Next() {
