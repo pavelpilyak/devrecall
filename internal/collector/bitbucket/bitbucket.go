@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/pavelpiliak/devrecall/internal/collector/ratelimit"
 	"github.com/pavelpiliak/devrecall/pkg/models"
 )
 
@@ -315,21 +316,18 @@ func (c *Collector) apiGet(ctx context.Context, path string, params url.Values, 
 }
 
 func (c *Collector) apiGetURL(ctx context.Context, reqURL string, dst any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return err
-	}
-	req.SetBasicAuth(c.username, c.appPassword)
-
-	resp, err := c.client.Do(req)
+	resp, err := ratelimit.Do(ctx, c.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.SetBasicAuth(c.username, c.appPassword)
+		return req, nil
+	})
 	if err != nil {
 		return fmt.Errorf("bitbucket request: %w", err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return fmt.Errorf("rate limited")
-	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

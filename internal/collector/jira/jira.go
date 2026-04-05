@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pavelpiliak/devrecall/internal/collector/ratelimit"
 	"github.com/pavelpiliak/devrecall/pkg/models"
 )
 
@@ -396,28 +397,23 @@ func (c *Collector) apiGet(ctx context.Context, path string, params url.Values, 
 		reqURL += "?" + params.Encode()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return err
-	}
-
-	if c.isCloud {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	} else {
-		req.SetBasicAuth(c.email, c.token)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.client.Do(req)
+	resp, err := ratelimit.Do(ctx, c.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		if c.isCloud {
+			req.Header.Set("Authorization", "Bearer "+c.token)
+		} else {
+			req.SetBasicAuth(c.email, c.token)
+		}
+		req.Header.Set("Accept", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		return fmt.Errorf("jira request %s: %w", path, err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusTooManyRequests {
-		retryAfter := resp.Header.Get("Retry-After")
-		return fmt.Errorf("rate limited (retry after %s seconds)", retryAfter)
-	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

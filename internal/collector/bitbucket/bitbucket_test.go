@@ -285,7 +285,10 @@ func TestRateLimited(t *testing.T) {
 		},
 	})
 
-	_, err := c.CollectSince(context.Background(), time.Now().Add(-24*time.Hour))
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	_, err := c.CollectSince(ctx, time.Now().Add(-24*time.Hour))
 	if err == nil {
 		t.Error("expected rate limit error")
 	}

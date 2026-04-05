@@ -393,7 +393,10 @@ func TestCollect_RateLimited(t *testing.T) {
 		},
 	})
 
-	_, err := c.CollectRange(ctx(),
+	shortCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	_, err := c.CollectRange(shortCtx,
 		time.Date(2026, 3, 27, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 3, 28, 0, 0, 0, 0, time.UTC))
 	if err == nil {

@@ -232,7 +232,10 @@ func TestCollect_RateLimited(t *testing.T) {
 		},
 	})
 
-	_, err := c.CollectSince(context.Background(), time.Date(2026, 3, 27, 0, 0, 0, 0, time.UTC))
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	_, err := c.CollectSince(ctx, time.Date(2026, 3, 27, 0, 0, 0, 0, time.UTC))
 	if err == nil {
 		t.Fatal("expected error on rate limit")
 	}

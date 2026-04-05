@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/pavelpiliak/devrecall/internal/collector/ratelimit"
 	"github.com/pavelpiliak/devrecall/pkg/models"
 )
 
@@ -401,23 +402,19 @@ func (c *Collector) graphql(ctx context.Context, query string, variables any, ds
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.graphqlURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", c.token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
+	resp, err := ratelimit.Do(ctx, c.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.graphqlURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", c.token)
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		return fmt.Errorf("linear request: %w", err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusTooManyRequests {
-		retryAfter := resp.Header.Get("Retry-After")
-		return fmt.Errorf("rate limited (retry after %s seconds)", retryAfter)
-	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
