@@ -50,7 +50,8 @@ Respond ONLY with the weekly summary text, no preamble or explanation.`
 type LLMSummarizer struct {
 	provider llm.Provider
 	fallback *TemplateSummarizer
-	selfUIDs []string // user IDs across sources (e.g., Slack UID) to label "You" in prompts
+	selfUIDs []string       // user IDs across sources (e.g., Slack UID) to label "You" in prompts
+	prompts  *PromptLoader  // optional custom prompt loader
 }
 
 // NewLLMSummarizer creates an LLM-powered summarizer with template fallback.
@@ -58,12 +59,19 @@ func NewLLMSummarizer(provider llm.Provider) *LLMSummarizer {
 	return &LLMSummarizer{
 		provider: provider,
 		fallback: NewTemplateSummarizer(),
+		prompts:  NewPromptLoader(""), // built-in only by default
 	}
 }
 
 // WithSelfUIDs sets user IDs that identify the standup author across sources.
 func (s *LLMSummarizer) WithSelfUIDs(uids ...string) *LLMSummarizer {
 	s.selfUIDs = uids
+	return s
+}
+
+// WithPromptLoader sets a custom prompt loader for user-customizable templates.
+func (s *LLMSummarizer) WithPromptLoader(loader *PromptLoader) *LLMSummarizer {
+	s.prompts = loader
 	return s
 }
 
@@ -84,7 +92,7 @@ func (s *LLMSummarizer) Standup(activities []models.Activity) (string, error) {
 	defer cancel()
 
 	resp, err := s.provider.Chat(ctx, []llm.Message{
-		{Role: "system", Content: standupSystemPrompt},
+		{Role: "system", Content: s.prompts.Load(PromptStandup)},
 		{Role: "user", Content: prompt},
 	}, llm.ChatOpts{
 		Temperature: 0.3,
@@ -120,7 +128,7 @@ func (s *LLMSummarizer) WeeklySummary(activities []models.Activity) (string, err
 	defer cancel()
 
 	resp, err := s.provider.Chat(ctx, []llm.Message{
-		{Role: "system", Content: weeklySystemPrompt},
+		{Role: "system", Content: s.prompts.Load(PromptWeekly)},
 		{Role: "user", Content: prompt},
 	}, llm.ChatOpts{
 		Temperature: 0.3,
@@ -177,7 +185,7 @@ func (s *LLMSummarizer) BragDoc(activities []models.Activity, childSummaries []m
 	defer cancel()
 
 	resp, err := s.provider.Chat(ctx, []llm.Message{
-		{Role: "system", Content: bragDocSystemPrompt},
+		{Role: "system", Content: s.prompts.Load(PromptBragDoc)},
 		{Role: "user", Content: prompt},
 	}, llm.ChatOpts{
 		Temperature: 0.3,
@@ -265,7 +273,7 @@ func (s *LLMSummarizer) PerfReview(activities []models.Activity, childSummaries 
 	defer cancel()
 
 	resp, err := s.provider.Chat(ctx, []llm.Message{
-		{Role: "system", Content: perfReviewSystemPrompt},
+		{Role: "system", Content: s.prompts.Load(PromptPerfReview)},
 		{Role: "user", Content: prompt},
 	}, llm.ChatOpts{
 		Temperature: 0.3,
