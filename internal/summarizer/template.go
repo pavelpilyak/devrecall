@@ -25,6 +25,8 @@ type ticketActivityMeta struct {
 	Identifier string `json:"identifier"`  // Linear
 	FromStatus string `json:"from_status"` // status transitions
 	ToStatus   string `json:"to_status"`
+	Sprint     string `json:"sprint,omitempty"` // Jira sprint name
+	Cycle      string `json:"cycle,omitempty"`  // Linear cycle name
 }
 
 // slackMeta mirrors the JSON metadata stored by the Slack collector.
@@ -203,6 +205,9 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 	todayStr := time.Now().Format("2006-01-02")
 	var todayMeetings []todayMeeting
 
+	// Track active sprints/cycles for the context line.
+	sprintCycles := make(map[string]bool)
+
 	for _, a := range activities {
 		dateStr := a.Timestamp.Format("2006-01-02")
 
@@ -321,6 +326,12 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 				if meta.ToStatus != "" {
 					e.stats = "→ " + meta.ToStatus
 				}
+				if meta.Sprint != "" {
+					sprintCycles[meta.Sprint] = true
+				}
+				if meta.Cycle != "" {
+					sprintCycles[meta.Cycle] = true
+				}
 			default:
 				var meta commitMeta
 				json.Unmarshal([]byte(a.Metadata), &meta)
@@ -343,6 +354,15 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 	}
 
 	var b strings.Builder
+
+	// Render sprint/cycle context line if any ticket activities reference one.
+	if len(sprintCycles) > 0 {
+		names := sortedMapKeys(sprintCycles)
+		b.WriteString("Sprint: ")
+		b.WriteString(strings.Join(names, ", "))
+		b.WriteString("\n\n")
+	}
+
 	for i, dateStr := range dateOrder {
 		if i > 0 {
 			b.WriteString("\n")

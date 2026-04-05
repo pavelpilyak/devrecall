@@ -57,6 +57,32 @@ func ticketActivity(source models.Source, title, issueKey, toStatus string, ts t
 	}
 }
 
+func ticketActivityWithSprint(source models.Source, title, issueKey, toStatus, sprint string, ts time.Time) models.Activity {
+	m := ticketActivityMeta{IssueKey: issueKey, ToStatus: toStatus, Sprint: sprint}
+	b, _ := json.Marshal(m)
+	return models.Activity{
+		Source:    source,
+		SourceID:  fmt.Sprintf("%s:%s", source, issueKey),
+		Type:      models.TypeTicket,
+		Title:     title,
+		Metadata:  string(b),
+		Timestamp: ts,
+	}
+}
+
+func ticketActivityWithCycle(source models.Source, title, identifier, toStatus, cycle string, ts time.Time) models.Activity {
+	m := ticketActivityMeta{Identifier: identifier, ToStatus: toStatus, Cycle: cycle}
+	b, _ := json.Marshal(m)
+	return models.Activity{
+		Source:    source,
+		SourceID:  fmt.Sprintf("%s:%s", source, identifier),
+		Type:      models.TypeTicket,
+		Title:     title,
+		Metadata:  string(b),
+		Timestamp: ts,
+	}
+}
+
 func TestStandup_Empty(t *testing.T) {
 	s := NewTemplateSummarizer()
 	out, err := s.Standup(nil)
@@ -1088,5 +1114,110 @@ func TestStandup_MixedTicketsAndPRs(t *testing.T) {
 	// Unlinked commit grouped by repo.
 	if !strings.Contains(out, "docs: Fix typo in README") {
 		t.Errorf("expected unlinked commit grouped by repo:\n%s", out)
+	}
+}
+
+func TestStandup_SprintContextFromJira(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		ticketActivityWithSprint(models.SourceJira, "PROJ-123: Fix payment retry → In Review", "PROJ-123", "In Review", "Sprint 14", ts),
+		activityWithKeys("Fix retry logic", "backend-api", "aaa1111", 3, 47, 12, []string{"PROJ-123"}, ts.Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if !strings.HasPrefix(out, "Sprint: Sprint 14") {
+		t.Errorf("expected sprint context at top:\n%s", out)
+	}
+	if !strings.Contains(out, "PROJ-123:") {
+		t.Errorf("expected ticket group:\n%s", out)
+	}
+}
+
+func TestStandup_CycleContextFromLinear(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		ticketActivityWithCycle(models.SourceLinear, "ENG-42: Fix auth refresh → Done", "ENG-42", "Done", "Cycle 7", ts),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if !strings.HasPrefix(out, "Sprint: Cycle 7") {
+		t.Errorf("expected cycle context at top:\n%s", out)
+	}
+}
+
+func TestStandup_MultipleSprintsAndCycles(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		ticketActivityWithSprint(models.SourceJira, "PROJ-123: Fix retry → In Review", "PROJ-123", "In Review", "Sprint 14", ts),
+		ticketActivityWithCycle(models.SourceLinear, "ENG-42: Fix auth → Done", "ENG-42", "Done", "Cycle 7", ts.Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	// Both should appear, sorted alphabetically.
+	if !strings.Contains(out, "Sprint: Cycle 7, Sprint 14") {
+		t.Errorf("expected both sprint and cycle:\n%s", out)
+	}
+}
+
+func TestStandup_DuplicateSprintDeduped(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		ticketActivityWithSprint(models.SourceJira, "PROJ-123: Fix retry → In Review", "PROJ-123", "In Review", "Sprint 14", ts),
+		ticketActivityWithSprint(models.SourceJira, "PROJ-456: Update docs → Done", "PROJ-456", "Done", "Sprint 14", ts.Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	// Sprint 14 should appear only once.
+	if !strings.HasPrefix(out, "Sprint: Sprint 14\n") {
+		t.Errorf("expected single Sprint 14:\n%s", out)
+	}
+}
+
+func TestStandup_NoSprintContextWithoutTickets(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		activity("Fix typo", "backend-api", "aaa1111", 1, 1, 1, ts),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if strings.HasPrefix(out, "Sprint:") {
+		t.Errorf("should not show sprint context without ticket activities:\n%s", out)
+	}
+}
+
+func TestStandup_NoSprintContextWhenSprintEmpty(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	// Ticket activity without sprint/cycle metadata.
+	out, err := s.Standup([]models.Activity{
+		ticketActivity(models.SourceJira, "PROJ-123: Fix retry → Done", "PROJ-123", "Done", ts),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if strings.HasPrefix(out, "Sprint:") {
+		t.Errorf("should not show sprint context when no sprint set:\n%s", out)
 	}
 }
