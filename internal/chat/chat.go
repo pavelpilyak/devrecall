@@ -11,6 +11,7 @@ import (
 	"github.com/pavelpiliak/devrecall/internal/llm"
 	"github.com/pavelpiliak/devrecall/internal/rag"
 	"github.com/pavelpiliak/devrecall/internal/storage"
+	"github.com/pavelpiliak/devrecall/pkg/models"
 )
 
 const maxHistory = 10 // keep last N user+assistant message pairs
@@ -87,25 +88,51 @@ func (s *Session) Run(ctx context.Context) error {
 }
 
 func (s *Session) handleQuery(ctx context.Context, query string) error {
-	// Retrieve relevant activities (with date filter if set).
+	// Auto-detect temporal expressions and use as date filter for this query.
+	queryAfter, queryBefore := s.dateAfter, s.dateBefore
+	dateHint := false
+	if queryAfter.IsZero() && queryBefore.IsZero() {
+		if a, b, ok := extractDateHint(query); ok {
+			queryAfter, queryBefore = a, b
+			dateHint = true
+		}
+	}
+
 	var results []rag.Result
 	var err error
 
-	if !s.dateAfter.IsZero() || !s.dateBefore.IsZero() {
-		if fr, ok := s.retriever.(filterRetriever); ok {
-			results, err = fr.RetrieveWithFilters(ctx, query, 10, rag.QueryFilters{
-				After:  s.dateAfter,
-				Before: s.dateBefore,
+	if dateHint || (!queryAfter.IsZero() && !queryBefore.IsZero()) {
+		// For temporal queries, fetch activities directly from the DB.
+		// Vector similarity is useless for "what did I do yesterday" — we need
+		// ALL activities from that period, not the semantically closest ones.
+		fmt.Fprintf(s.out, "Loading activities (%s to %s)...",
+			queryAfter.Format("2006-01-02"), queryBefore.Format("2006-01-02"))
+
+		var activities []models.Activity
+		if s.db != nil {
+			activities, err = s.db.ListActivities(storage.ActivityFilter{
+				After:  queryAfter,
+				Before: queryBefore,
 			})
-		} else {
-			results, err = s.retriever.Retrieve(ctx, query, 10)
+			if err != nil {
+				fmt.Fprintln(s.out)
+				return fmt.Errorf("list activities: %w", err)
+			}
+		}
+		for _, a := range activities {
+			results = append(results, rag.Result{Activity: a, Score: 1.0})
 		}
 	} else {
+		// For non-temporal queries, use hybrid RAG retrieval.
+		fmt.Fprintf(s.out, "Searching activities...")
 		results, err = s.retriever.Retrieve(ctx, query, 10)
+		if err != nil {
+			fmt.Fprintln(s.out)
+			return fmt.Errorf("retrieval failed: %w", err)
+		}
 	}
-	if err != nil {
-		return fmt.Errorf("retrieval failed: %w", err)
-	}
+
+	fmt.Fprintf(s.out, " found %d relevant activities.\n", len(results))
 
 	// Store for /context command.
 	s.lastContext = results
@@ -126,11 +153,14 @@ func (s *Session) handleQuery(ctx context.Context, query string) error {
 	messages = append(messages, llm.Message{Role: "user", Content: userMsg})
 
 	// Call LLM.
+	fmt.Fprintf(s.out, "Thinking...")
 	response, err := s.llm.Chat(ctx, messages, llm.ChatOpts{})
 	if err != nil {
+		fmt.Fprintln(s.out)
 		return fmt.Errorf("LLM failed: %w", err)
 	}
 
+	fmt.Fprintln(s.out)
 	fmt.Fprintln(s.out)
 	fmt.Fprintln(s.out, response)
 	fmt.Fprintln(s.out)
@@ -393,6 +423,68 @@ func parseDateRange(s string) (after, before time.Time, err error) {
 	}
 
 	return time.Time{}, time.Time{}, fmt.Errorf("unrecognized format")
+}
+
+// extractDateHint detects temporal expressions in a query like "yesterday",
+// "two days ago", "last week", "this month" and returns a date range.
+// Returns ok=false if no temporal hint was found.
+func extractDateHint(query string) (after, before time.Time, ok bool) {
+	q := strings.ToLower(query)
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+
+	switch {
+	case strings.Contains(q, "yesterday"):
+		y := today.AddDate(0, 0, -1)
+		return y, today, true
+
+	case strings.Contains(q, "today"):
+		return today, today.AddDate(0, 0, 1), true
+
+	case strings.Contains(q, "two days ago") || strings.Contains(q, "2 days ago"):
+		d := today.AddDate(0, 0, -2)
+		return d, d.AddDate(0, 0, 1), true
+
+	case strings.Contains(q, "three days ago") || strings.Contains(q, "3 days ago"):
+		d := today.AddDate(0, 0, -3)
+		return d, d.AddDate(0, 0, 1), true
+
+	case strings.Contains(q, "last week"):
+		weekday := int(today.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		monday := today.AddDate(0, 0, -(weekday - 1)).AddDate(0, 0, -7)
+		return monday, monday.AddDate(0, 0, 7), true
+
+	case strings.Contains(q, "this week"):
+		weekday := int(today.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		monday := today.AddDate(0, 0, -(weekday - 1))
+		return monday, monday.AddDate(0, 0, 7), true
+
+	case strings.Contains(q, "last month"):
+		first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+		return first, first.AddDate(0, 1, 0), true
+
+	case strings.Contains(q, "this month"):
+		first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		return first, first.AddDate(0, 1, 0), true
+
+	case strings.Contains(q, "last quarter"):
+		currentQ := (int(now.Month()) - 1) / 3
+		qStart := time.Date(now.Year(), time.Month(currentQ*3+1), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -3, 0)
+		return qStart, qStart.AddDate(0, 3, 0), true
+
+	case strings.Contains(q, "this quarter"):
+		currentQ := (int(now.Month()) - 1) / 3
+		qStart := time.Date(now.Year(), time.Month(currentQ*3+1), 1, 0, 0, 0, 0, time.UTC)
+		return qStart, qStart.AddDate(0, 3, 0), true
+	}
+
+	return time.Time{}, time.Time{}, false
 }
 
 func formatDateOrOpen(t time.Time, fallback string) string {

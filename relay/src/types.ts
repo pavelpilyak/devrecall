@@ -1,5 +1,6 @@
 export interface Env {
   OAUTH_SESSIONS: KVNamespace;
+  BACKUP_STORE: KVNamespace;
   SLACK_CLIENT_ID: string;
   SLACK_CLIENT_SECRET: string;
   GOOGLE_CLIENT_ID: string;

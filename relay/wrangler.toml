@@ -10,6 +10,10 @@ routes = [
 binding = "OAUTH_SESSIONS"
 id = "f59eb193690042a8a08f05acb9db5195"
 
+[[kv_namespaces]]
+binding = "BACKUP_STORE"
+id = "cf27f44f52d04f86a84ff551afe2b09e"
+
 # Secrets (set via `wrangler secret put`):
 #   SLACK_CLIENT_ID
 #   SLACK_CLIENT_SECRET

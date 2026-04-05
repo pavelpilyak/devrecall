@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pavelpiliak/devrecall/pkg/models"
@@ -31,12 +32,19 @@ func (db *DB) InsertActivity(a models.Activity) (int64, error) {
 }
 
 // InsertActivities upserts a batch of activities in a single transaction.
+// Returns the number of genuinely new rows inserted (not counting updates to existing rows).
 func (db *DB) InsertActivities(activities []models.Activity) (int, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Count rows before to compute truly new inserts.
+	var countBefore int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM activities").Scan(&countBefore); err != nil {
+		return 0, fmt.Errorf("count before: %w", err)
+	}
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO activities (source, source_id, identity_id, type, title, content, metadata, timestamp)
@@ -53,22 +61,25 @@ func (db *DB) InsertActivities(activities []models.Activity) (int, error) {
 	}
 	defer stmt.Close()
 
-	inserted := 0
 	for _, a := range activities {
 		_, err := stmt.Exec(
 			a.Source, a.SourceID, a.IdentityID, a.Type, a.Title, a.Content, a.Metadata,
 			a.Timestamp.UTC().Format(time.RFC3339),
 		)
 		if err != nil {
-			return inserted, fmt.Errorf("insert %s: %w", a.SourceID, err)
+			return 0, fmt.Errorf("insert %s: %w", a.SourceID, err)
 		}
-		inserted++
+	}
+
+	var countAfter int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM activities").Scan(&countAfter); err != nil {
+		return 0, fmt.Errorf("count after: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit: %w", err)
 	}
-	return inserted, nil
+	return countAfter - countBefore, nil
 }
 
 // ActivityFilter controls which activities are returned by ListActivities.
@@ -191,12 +202,27 @@ type FTSMatch struct {
 	Rank     float64 // BM25 rank (lower = more relevant; negated to higher = better)
 }
 
+// sanitizeFTS wraps each token in double quotes so that special FTS5
+// characters (-, *, etc.) are treated as literals.
+func sanitizeFTS(query string) string {
+	tokens := strings.Fields(query)
+	for i, t := range tokens {
+		// Strip existing quotes, then re-quote.
+		t = strings.ReplaceAll(t, `"`, ``)
+		if t != "" {
+			tokens[i] = `"` + t + `"`
+		}
+	}
+	return strings.Join(tokens, " ")
+}
+
 // SearchFTS performs full-text keyword search using the FTS5 index.
 // Returns activities matching the query, scored by BM25 relevance.
 func (db *DB) SearchFTS(query string, filter ActivityFilter, limit int) ([]FTSMatch, error) {
 	if query == "" {
 		return nil, nil
 	}
+	query = sanitizeFTS(query)
 	if limit <= 0 {
 		limit = 20
 	}
@@ -303,6 +329,31 @@ func (db *DB) Stats() (*ActivityStats, error) {
 	s.EmbeddedCount = embCount
 
 	return s, nil
+}
+
+// GetActivitiesByIDs returns activities matching the given IDs, preserving order.
+func (db *DB) GetActivitiesByIDs(ids []int64) ([]models.Activity, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`SELECT id, source, source_id, COALESCE(identity_id, 0), type, title, COALESCE(content, ''), COALESCE(metadata, ''), timestamp
+		FROM activities WHERE id IN (%s)`, strings.Join(placeholders, ","))
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get activities by ids: %w", err)
+	}
+	defer rows.Close()
+
+	return scanActivities(rows)
 }
 
 func scanActivities(rows *sql.Rows) ([]models.Activity, error) {

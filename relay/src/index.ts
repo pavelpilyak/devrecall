@@ -7,6 +7,7 @@ import { handleLinearOAuthCallback } from "./handlers/oauth-callback-linear";
 import { handleGoogleRefresh } from "./handlers/refresh-google";
 import { handleAtlassianRefresh } from "./handlers/refresh-atlassian";
 import { handlePollToken } from "./handlers/poll-token";
+import { handleBackupPush, handleBackupPull, handleBackupList } from "./handlers/backup";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -42,6 +43,18 @@ export default {
 
     if (url.pathname === "/oauth/poll" && request.method === "GET") {
       return handlePollToken(url, env);
+    }
+
+    if (url.pathname === "/v1/backup/push" && request.method === "POST") {
+      return handleBackupPush(request, env);
+    }
+
+    if (url.pathname === "/v1/backup/pull" && request.method === "GET") {
+      return handleBackupPull(request, env);
+    }
+
+    if (url.pathname === "/v1/backup/list" && request.method === "GET") {
+      return handleBackupList(request, env);
     }
 
     if (url.pathname === "/health" && request.method === "GET") {

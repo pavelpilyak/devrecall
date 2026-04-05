@@ -72,13 +72,26 @@ func (g *PeriodicGenerator) GenerateMissing(ctx context.Context, periodType stri
 		return 0, fmt.Errorf("find missing periods: %w", err)
 	}
 
-	generated := 0
+	// Filter out current (incomplete) period first for accurate count.
+	var toGenerate []time.Time
 	for _, periodStart := range missing {
-		// Don't generate summaries for the current (incomplete) period.
 		periodEnd := endOfPeriod(periodStart, periodType)
-		if periodEnd.After(until) {
-			continue
+		if !periodEnd.After(until) {
+			toGenerate = append(toGenerate, periodStart)
 		}
+	}
+
+	if len(toGenerate) > 0 {
+		fmt.Fprintf(os.Stderr, "  Generating %d %s %s...\n",
+			len(toGenerate), periodType, pluralSuffix(len(toGenerate), "summary", "summaries"))
+	}
+
+	generated := 0
+	for i, periodStart := range toGenerate {
+		periodEnd := endOfPeriod(periodStart, periodType)
+
+		fmt.Fprintf(os.Stderr, "  [%d/%d] %s %s → calling LLM...\n",
+			i+1, len(toGenerate), periodType, periodStart.Format("2006-01-02"))
 
 		summary, err := g.generateOne(ctx, periodType, periodStart, periodEnd)
 		if err != nil {
@@ -241,6 +254,13 @@ func endOfPeriod(t time.Time, periodType string) time.Time {
 	default:
 		return t.AddDate(0, 0, 1)
 	}
+}
+
+func pluralSuffix(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
 }
 
 func childPeriodType(periodType string) string {

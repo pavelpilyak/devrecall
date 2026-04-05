@@ -67,9 +67,9 @@ func TestSession_BasicQA(t *testing.T) {
 			},
 		},
 	}
-	provider := &mockLLM{responses: []string{"You fixed the auth token refresh yesterday."}}
+	provider := &mockLLM{responses: []string{"You fixed the auth token refresh."}}
 
-	in := strings.NewReader("what did I do yesterday?\n/quit\n")
+	in := strings.NewReader("tell me about auth changes\n/quit\n")
 	var out bytes.Buffer
 
 	session := NewSession(in, &out, ret, provider, nil)
@@ -79,7 +79,7 @@ func TestSession_BasicQA(t *testing.T) {
 	}
 
 	// Retriever should have been called with the user query.
-	if len(ret.queries) != 1 || ret.queries[0] != "what did I do yesterday?" {
+	if len(ret.queries) != 1 || ret.queries[0] != "tell me about auth changes" {
 		t.Errorf("retriever queries = %v", ret.queries)
 	}
 
@@ -90,7 +90,7 @@ func TestSession_BasicQA(t *testing.T) {
 
 	// Output should contain the LLM response.
 	output := out.String()
-	if !strings.Contains(output, "You fixed the auth token refresh yesterday.") {
+	if !strings.Contains(output, "You fixed the auth token refresh.") {
 		t.Errorf("output missing LLM response:\n%s", output)
 	}
 }
@@ -557,5 +557,42 @@ func TestParseDateRange_DotDotRange(t *testing.T) {
 	// before should be day after end (inclusive end date)
 	if before != time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC) {
 		t.Errorf("before = %v, want 2026-03-16", before)
+	}
+}
+
+func TestExtractDateHint(t *testing.T) {
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		query     string
+		wantOk    bool
+		wantAfter time.Time
+	}{
+		{"what did I do yesterday?", true, today.AddDate(0, 0, -1)},
+		{"show me today's work", true, today},
+		{"what happened two days ago", true, today.AddDate(0, 0, -2)},
+		{"work from 2 days ago", true, today.AddDate(0, 0, -2)},
+		{"what about 3 days ago?", true, today.AddDate(0, 0, -3)},
+		{"summarize last week", true, time.Time{}}, // just check ok
+		{"this month's PRs", true, time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)},
+		{"what is the meaning of life", false, time.Time{}},
+		{"tell me about auth", false, time.Time{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			after, _, ok := extractDateHint(tt.query)
+			if ok != tt.wantOk {
+				t.Errorf("extractDateHint(%q) ok = %v, want %v", tt.query, ok, tt.wantOk)
+				return
+			}
+			if !tt.wantOk || tt.wantAfter.IsZero() {
+				return
+			}
+			if !after.Equal(tt.wantAfter) {
+				t.Errorf("extractDateHint(%q) after = %v, want %v", tt.query, after, tt.wantAfter)
+			}
+		})
 	}
 }

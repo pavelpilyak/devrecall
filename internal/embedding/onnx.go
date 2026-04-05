@@ -125,7 +125,9 @@ func (o *ONNX) ensureModel() (string, error) {
 	}
 
 	// Download from Hugging Face.
-	downloadedPath, err := hugot.DownloadModel(defaultONNXModel, o.modelPath, hugot.NewDownloadOptions())
+	opts := hugot.NewDownloadOptions()
+	opts.OnnxFilePath = "onnx/model.onnx"
+	downloadedPath, err := hugot.DownloadModel(defaultONNXModel, o.modelPath, opts)
 	if err != nil {
 		return "", fmt.Errorf("download model %s: %w", defaultONNXModel, err)
 	}
