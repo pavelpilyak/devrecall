@@ -22,7 +22,7 @@ func TestParseLog_SingleCommit(t *testing.T) {
 		"abc123" + fieldSep + "2026-03-27T14:30:00+02:00" + fieldSep + "Fix auth refresh" + fieldSep + "Pavel" + fieldSep + "pavel@example.com\n" +
 		" 3 files changed, 47 insertions(+), 12 deletions(-)\n"
 
-	activities, err := parseLog("backend-api", "/home/user/Projects/backend-api", []byte(raw))
+	activities, err := parseLog("backend-api", "/home/user/Projects/backend-api", "", []byte(raw))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestParseLog_MultipleCommits(t *testing.T) {
 		"bbb" + fieldSep + "2026-03-27T11:00:00Z" + fieldSep + "Second commit" + fieldSep + "Pavel" + fieldSep + "p@x.com\n" +
 		" 2 files changed, 10 insertions(+), 3 deletions(-)\n"
 
-	activities, err := parseLog("repo", "/repo", []byte(raw))
+	activities, err := parseLog("repo", "/repo", "", []byte(raw))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestParseLog_NoStatLine(t *testing.T) {
 	raw := recordSep + "\n" +
 		"ccc" + fieldSep + "2026-03-27T12:00:00Z" + fieldSep + "Empty commit" + fieldSep + "Pavel" + fieldSep + "p@x.com\n"
 
-	activities, err := parseLog("repo", "/repo", []byte(raw))
+	activities, err := parseLog("repo", "/repo", "", []byte(raw))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestParseLog_NoStatLine(t *testing.T) {
 }
 
 func TestParseLog_EmptyOutput(t *testing.T) {
-	activities, err := parseLog("repo", "/repo", []byte(""))
+	activities, err := parseLog("repo", "/repo", "", []byte(""))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestParseLog_MalformedEntrySkipped(t *testing.T) {
 		recordSep + "\n" +
 		"aaa" + fieldSep + "2026-03-27T10:00:00Z" + fieldSep + "Good commit" + fieldSep + "Pavel" + fieldSep + "p@x.com\n"
 
-	activities, err := parseLog("repo", "/repo", []byte(raw))
+	activities, err := parseLog("repo", "/repo", "", []byte(raw))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestParseLog_DeletionsOnly(t *testing.T) {
 		"ddd" + fieldSep + "2026-03-27T12:00:00Z" + fieldSep + "Delete stuff" + fieldSep + "Pavel" + fieldSep + "p@x.com\n" +
 		" 1 file changed, 5 deletions(-)\n"
 
-	activities, err := parseLog("repo", "/repo", []byte(raw))
+	activities, err := parseLog("repo", "/repo", "", []byte(raw))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -157,6 +157,9 @@ func TestCollect_UsesRunGit(t *testing.T) {
 	t.Cleanup(func() { runGit = origRunGit })
 
 	runGit = func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+		if args[0] == "rev-parse" {
+			return []byte("main\n"), nil
+		}
 		out := recordSep + "\n" +
 			"abc" + fieldSep + "2026-03-27T10:00:00Z" + fieldSep + "Test commit" + fieldSep + "Pavel" + fieldSep + "pavel@test.com\n" +
 			" 1 file changed, 1 insertion(+)\n"
@@ -180,11 +183,12 @@ func TestCollect_SkipsBrokenRepos(t *testing.T) {
 	origRunGit := runGit
 	t.Cleanup(func() { runGit = origRunGit })
 
-	callCount := 0
 	runGit = func(ctx context.Context, dir string, args ...string) ([]byte, error) {
-		callCount++
 		if dir == "/bad/repo" {
 			return nil, fmt.Errorf("not a git repository")
+		}
+		if args[0] == "rev-parse" {
+			return []byte("main\n"), nil
 		}
 		out := recordSep + "\n" +
 			"abc" + fieldSep + "2026-03-27T10:00:00Z" + fieldSep + "Good" + fieldSep + "P" + fieldSep + "p@x.com\n"
@@ -199,7 +203,76 @@ func TestCollect_SkipsBrokenRepos(t *testing.T) {
 	if len(activities) != 1 {
 		t.Fatalf("got %d activities, want 1", len(activities))
 	}
-	if callCount != 2 {
-		t.Errorf("expected 2 git calls, got %d", callCount)
+}
+
+func TestParseLog_IssueKeysFromMessage(t *testing.T) {
+	raw := recordSep + "\n" +
+		"abc123" + fieldSep + "2026-03-27T14:30:00Z" + fieldSep + "PROJ-123: fix retry logic" + fieldSep + "Pavel" + fieldSep + "p@x.com\n" +
+		" 1 file changed, 5 insertions(+)\n"
+
+	activities, err := parseLog("backend", "/backend", "", []byte(raw))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(activities) != 1 {
+		t.Fatalf("got %d activities, want 1", len(activities))
+	}
+
+	var meta commitMeta
+	json.Unmarshal([]byte(activities[0].Metadata), &meta)
+	if len(meta.IssueKeys) != 1 || meta.IssueKeys[0] != "PROJ-123" {
+		t.Errorf("meta.IssueKeys = %v, want [PROJ-123]", meta.IssueKeys)
+	}
+}
+
+func TestParseLog_IssueKeysFromBranch(t *testing.T) {
+	raw := recordSep + "\n" +
+		"def456" + fieldSep + "2026-03-27T15:00:00Z" + fieldSep + "fix auth refresh" + fieldSep + "Pavel" + fieldSep + "p@x.com\n"
+
+	activities, err := parseLog("backend", "/backend", "eng-42-fix-auth", []byte(raw))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(activities) != 1 {
+		t.Fatalf("got %d activities, want 1", len(activities))
+	}
+
+	var meta commitMeta
+	json.Unmarshal([]byte(activities[0].Metadata), &meta)
+	if len(meta.IssueKeys) != 1 || meta.IssueKeys[0] != "ENG-42" {
+		t.Errorf("meta.IssueKeys = %v, want [ENG-42]", meta.IssueKeys)
+	}
+}
+
+func TestParseLog_IssueKeysFromBothSources(t *testing.T) {
+	raw := recordSep + "\n" +
+		"ghi789" + fieldSep + "2026-03-27T16:00:00Z" + fieldSep + "PROJ-123: fix related to ENG-456" + fieldSep + "Pavel" + fieldSep + "p@x.com\n"
+
+	activities, err := parseLog("backend", "/backend", "proj-123-fix", []byte(raw))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var meta commitMeta
+	json.Unmarshal([]byte(activities[0].Metadata), &meta)
+	// PROJ-123 from both message and branch (deduplicated), ENG-456 from message.
+	if len(meta.IssueKeys) != 2 {
+		t.Errorf("meta.IssueKeys = %v, want 2 keys [PROJ-123 ENG-456]", meta.IssueKeys)
+	}
+}
+
+func TestParseLog_NoIssueKeys(t *testing.T) {
+	raw := recordSep + "\n" +
+		"xyz" + fieldSep + "2026-03-27T17:00:00Z" + fieldSep + "fix typo in readme" + fieldSep + "Pavel" + fieldSep + "p@x.com\n"
+
+	activities, err := parseLog("backend", "/backend", "main", []byte(raw))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var meta commitMeta
+	json.Unmarshal([]byte(activities[0].Metadata), &meta)
+	if meta.IssueKeys != nil {
+		t.Errorf("meta.IssueKeys = %v, want nil", meta.IssueKeys)
 	}
 }

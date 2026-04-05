@@ -13,18 +13,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pavelpiliak/devrecall/internal/collector/ticketlink"
 	"github.com/pavelpiliak/devrecall/pkg/models"
 )
 
 // commitMeta holds per-commit diff stats stored as JSON in Activity.Metadata.
 type commitMeta struct {
-	Repo         string `json:"repo"`
-	SHA          string `json:"sha"`
-	AuthorName   string `json:"author_name"`
-	AuthorEmail  string `json:"author_email"`
-	FilesChanged int    `json:"files_changed"`
-	Insertions   int    `json:"insertions"`
-	Deletions    int    `json:"deletions"`
+	Repo         string   `json:"repo"`
+	SHA          string   `json:"sha"`
+	AuthorName   string   `json:"author_name"`
+	AuthorEmail  string   `json:"author_email"`
+	FilesChanged int      `json:"files_changed"`
+	Insertions   int      `json:"insertions"`
+	Deletions    int      `json:"deletions"`
+	IssueKeys    []string `json:"issue_keys,omitempty"`
 }
 
 // Separator used in git log format. Chosen to be unlikely in commit messages.
@@ -88,12 +90,24 @@ func (c *Collector) collectRepo(ctx context.Context, repoPath string) ([]models.
 		return nil, err
 	}
 
+	// Get current branch name for ticket key extraction.
+	branch := currentBranch(ctx, repoPath)
+
 	repoName := filepath.Base(repoPath)
-	return parseLog(repoName, repoPath, out)
+	return parseLog(repoName, repoPath, branch, out)
+}
+
+// currentBranch returns the current branch name, or empty string on error.
+func currentBranch(ctx context.Context, repoPath string) string {
+	out, err := runGit(ctx, repoPath, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // parseLog splits raw git log output into Activity records.
-func parseLog(repoName, repoPath string, raw []byte) ([]models.Activity, error) {
+func parseLog(repoName, repoPath, branch string, raw []byte) ([]models.Activity, error) {
 	// Split on record separator. First element is empty (before first record).
 	parts := strings.Split(string(raw), recordSep)
 
@@ -104,7 +118,7 @@ func parseLog(repoName, repoPath string, raw []byte) ([]models.Activity, error) 
 			continue
 		}
 
-		act, err := parseCommit(repoName, repoPath, part)
+		act, err := parseCommit(repoName, repoPath, branch, part)
 		if err != nil {
 			continue // skip malformed entries
 		}
@@ -114,7 +128,7 @@ func parseLog(repoName, repoPath string, raw []byte) ([]models.Activity, error) 
 }
 
 // parseCommit parses a single commit block (header line + optional stat line).
-func parseCommit(repoName, repoPath, block string) (models.Activity, error) {
+func parseCommit(repoName, repoPath, branch, block string) (models.Activity, error) {
 	scanner := bufio.NewScanner(strings.NewReader(block))
 
 	// First non-empty line is the header.
@@ -156,6 +170,9 @@ func parseCommit(repoName, repoPath, block string) (models.Activity, error) {
 		}
 	}
 
+	// Extract ticket keys from commit message and branch name.
+	issueKeys := ticketlink.Extract(subject, branch)
+
 	meta := commitMeta{
 		Repo:         repoName,
 		SHA:          sha,
@@ -164,6 +181,7 @@ func parseCommit(repoName, repoPath, block string) (models.Activity, error) {
 		FilesChanged: filesChanged,
 		Insertions:   insertions,
 		Deletions:    deletions,
+		IssueKeys:    issueKeys,
 	}
 	metaJSON, _ := json.Marshal(meta)
 
