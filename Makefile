@@ -4,13 +4,13 @@ BINARY := devrecall
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
 build:
-	go build -tags "fts5" -ldflags "-X main.version=$(VERSION)" -o bin/$(BINARY) ./cmd/devrecall
+	go build -tags "fts5 GO" -ldflags "-X main.version=$(VERSION)" -o bin/$(BINARY) ./cmd/devrecall
 
 run: build
 	./bin/$(BINARY)
 
 test:
-	go test -tags "fts5" ./... -race -count=1
+	go test -tags "fts5 GO" ./... -race -count=1
 
 lint:
 	golangci-lint run ./...

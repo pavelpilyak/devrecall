@@ -26,6 +26,7 @@ internal/
     jira/               Jira API
     linear/             Linear GraphQL API
   config/               App configuration (~/.devrecall/config.json)
+  embedding/            Vector embeddings (ONNX bundled, Ollama, OpenAI)
   identity/             Cross-source identity resolution (email-based)
   rag/                  Hybrid retrieval pipeline (vector + FTS5 + filters + re-ranking)
   storage/              SQLite database layer (includes FTS5 virtual table)
@@ -38,12 +39,14 @@ docs/                   Product documentation and specs
 ## Commands
 
 ```bash
-make build              # Build binary to bin/devrecall
-make test               # Run tests with race detector
+make build              # Build binary to bin/devrecall (tags: fts5 GO)
+make test               # Run tests with race detector (tags: fts5 GO)
 make lint               # Run golangci-lint
 make relay-deploy       # Deploy Cloudflare Worker
 make relay-test         # Run relay tests (vitest)
 ```
+
+Build tags: `fts5` enables SQLite FTS5 full-text search, `GO` enables hugot's pure Go ONNX backend for embeddings.
 
 ## Testing
 

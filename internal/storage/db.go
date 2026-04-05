@@ -122,4 +122,12 @@ CREATE INDEX IF NOT EXISTS idx_activities_timestamp ON activities(timestamp);
 CREATE INDEX IF NOT EXISTS idx_activities_type ON activities(type);
 CREATE INDEX IF NOT EXISTS idx_activities_identity ON activities(identity_id);
 CREATE INDEX IF NOT EXISTS idx_summaries_period ON summaries(period_type, period_start);
+
+CREATE TABLE IF NOT EXISTS embeddings (
+    activity_id INTEGER PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE,
+    model       TEXT    NOT NULL, -- model that produced the embedding (e.g. "all-minilm")
+    dimensions  INTEGER NOT NULL,
+    vector      BLOB    NOT NULL, -- little-endian float32 array
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
 `

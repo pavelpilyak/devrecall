@@ -66,19 +66,21 @@ func (p PrivacyConfig) ModeFor(source string) PrivacyMode {
 }
 
 type Config struct {
-	Git          GitConfig      `json:"git"`
-	Slack        SlackConfig    `json:"slack"`
-	Calendar     CalendarConfig `json:"calendar"`
-	GitHub       GitHubConfig   `json:"github"`
-	GitLab       GitLabConfig      `json:"gitlab"`
-	Bitbucket    BitbucketConfig   `json:"bitbucket"`
-	Jira         JiraConfig        `json:"jira"`
-	Linear       LinearConfig   `json:"linear"`
-	LLM          LLMConfig      `json:"llm"`
-	Privacy      PrivacyConfig  `json:"privacy,omitempty"`
-	TokenStorage string         `json:"token_storage,omitempty"` // "keychain" or "file" (default: "file")
+	Git          GitConfig        `json:"git"`
+	Slack        SlackConfig      `json:"slack"`
+	Calendar     CalendarConfig   `json:"calendar"`
+	GitHub       GitHubConfig     `json:"github"`
+	GitLab       GitLabConfig     `json:"gitlab"`
+	Bitbucket    BitbucketConfig  `json:"bitbucket"`
+	Jira         JiraConfig       `json:"jira"`
+	Linear       LinearConfig     `json:"linear"`
+	LLM          LLMConfig        `json:"llm"`
+	Embedding    EmbeddingConfig  `json:"embedding,omitempty"`
+	Privacy      PrivacyConfig    `json:"privacy,omitempty"`
+	TokenStorage string           `json:"token_storage,omitempty"` // "keychain" or "file" (default: "file")
 	filePath     string
 }
+
 
 type GitConfig struct {
 	Enabled   bool     `json:"enabled"`
@@ -132,6 +134,15 @@ type LLMConfig struct {
 	Provider string `json:"provider"` // "ollama", "openai", "anthropic"
 	Model    string `json:"model"`
 	BaseURL  string `json:"base_url,omitempty"`
+}
+
+// EmbeddingConfig controls the vector embedding provider.
+// If Provider is empty, defaults to the LLM provider.
+type EmbeddingConfig struct {
+	Provider   string `json:"provider,omitempty"`   // "ollama" or "openai"; defaults to LLM provider
+	Model      string `json:"model,omitempty"`      // embedding model name; defaults to "all-minilm" (ollama) or "text-embedding-3-small" (openai)
+	BaseURL    string `json:"base_url,omitempty"`   // override endpoint
+	Dimensions int    `json:"dimensions,omitempty"` // vector size; 0 = model default (384 for all-minilm, 1536 for openai)
 }
 
 // Dir returns the DevRecall data directory (~/.devrecall).
