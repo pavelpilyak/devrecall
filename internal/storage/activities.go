@@ -259,6 +259,52 @@ func (db *DB) SearchFTS(query string, filter ActivityFilter, limit int) ([]FTSMa
 	return results, rows.Err()
 }
 
+// ActivityStats holds aggregate information about stored activities.
+type ActivityStats struct {
+	TotalCount   int
+	BySource     map[string]int
+	EmbeddedCount int
+	OldestTime   time.Time
+	NewestTime   time.Time
+}
+
+// Stats returns aggregate statistics about all stored activities.
+func (db *DB) Stats() (*ActivityStats, error) {
+	s := &ActivityStats{BySource: make(map[string]int)}
+
+	// Count by source.
+	counts, err := db.CountActivitiesBySource()
+	if err != nil {
+		return nil, err
+	}
+	s.BySource = counts
+	for _, c := range counts {
+		s.TotalCount += c
+	}
+
+	// Date range.
+	row := db.QueryRow("SELECT MIN(timestamp), MAX(timestamp) FROM activities")
+	var minTS, maxTS sql.NullString
+	if err := row.Scan(&minTS, &maxTS); err != nil {
+		return nil, fmt.Errorf("date range: %w", err)
+	}
+	if minTS.Valid {
+		s.OldestTime, _ = time.Parse(time.RFC3339, minTS.String)
+	}
+	if maxTS.Valid {
+		s.NewestTime, _ = time.Parse(time.RFC3339, maxTS.String)
+	}
+
+	// Embedding count.
+	embCount, err := db.EmbeddingCount()
+	if err != nil {
+		return nil, err
+	}
+	s.EmbeddedCount = embCount
+
+	return s, nil
+}
+
 func scanActivities(rows *sql.Rows) ([]models.Activity, error) {
 	var result []models.Activity
 	for rows.Next() {

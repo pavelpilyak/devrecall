@@ -10,6 +10,7 @@ import (
 
 	"github.com/pavelpiliak/devrecall/internal/llm"
 	"github.com/pavelpiliak/devrecall/internal/rag"
+	"github.com/pavelpiliak/devrecall/internal/storage"
 	"github.com/pavelpiliak/devrecall/pkg/models"
 )
 
@@ -44,6 +45,16 @@ func (m *mockLLM) Chat(_ context.Context, msgs []llm.Message, _ llm.ChatOpts) (s
 
 func (m *mockLLM) Name() string { return "mock" }
 
+func mustOpenDB(t *testing.T) *storage.DB {
+	t.Helper()
+	db, err := storage.OpenPath(":memory:")
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
 func TestSession_BasicQA(t *testing.T) {
 	ret := &mockRetriever{
 		results: []rag.Result{
@@ -61,7 +72,7 @@ func TestSession_BasicQA(t *testing.T) {
 	in := strings.NewReader("what did I do yesterday?\n/quit\n")
 	var out bytes.Buffer
 
-	session := NewSession(in, &out, ret, provider)
+	session := NewSession(in, &out, ret, provider, nil)
 	err := session.Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -94,7 +105,7 @@ func TestSession_ConversationHistory(t *testing.T) {
 	in := strings.NewReader("what did I work on?\ntell me more about that\n/quit\n")
 	var out bytes.Buffer
 
-	session := NewSession(in, &out, ret, provider)
+	session := NewSession(in, &out, ret, provider, nil)
 	_ = session.Run(context.Background())
 
 	if provider.calls != 2 {
@@ -126,7 +137,7 @@ func TestSession_QuitCommand(t *testing.T) {
 	in := strings.NewReader("/quit\n")
 	var out bytes.Buffer
 
-	session := NewSession(in, &out, ret, provider)
+	session := NewSession(in, &out, ret, provider, nil)
 	err := session.Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -147,7 +158,7 @@ func TestSession_ClearCommand(t *testing.T) {
 	in := strings.NewReader("question one\n/clear\nquestion two\n/quit\n")
 	var out bytes.Buffer
 
-	session := NewSession(in, &out, ret, provider)
+	session := NewSession(in, &out, ret, provider, nil)
 	_ = session.Run(context.Background())
 
 	if provider.calls != 2 {
@@ -169,7 +180,7 @@ func TestSession_RetrievalError(t *testing.T) {
 	in := strings.NewReader("test query\n/quit\n")
 	var out bytes.Buffer
 
-	session := NewSession(in, &out, ret, provider)
+	session := NewSession(in, &out, ret, provider, nil)
 	_ = session.Run(context.Background())
 
 	if provider.calls != 0 {
@@ -187,7 +198,7 @@ func TestSession_EmptyInputSkipped(t *testing.T) {
 	in := strings.NewReader("\n\n\n/quit\n")
 	var out bytes.Buffer
 
-	session := NewSession(in, &out, ret, provider)
+	session := NewSession(in, &out, ret, provider, nil)
 	_ = session.Run(context.Background())
 
 	if provider.calls != 0 {
@@ -211,7 +222,7 @@ func TestSession_HistoryTrimmed(t *testing.T) {
 	in := strings.NewReader(strings.Join(inputLines, "\n") + "\n")
 	var out bytes.Buffer
 
-	session := NewSession(in, &out, ret, provider)
+	session := NewSession(in, &out, ret, provider, nil)
 	_ = session.Run(context.Background())
 
 	// History should be capped at maxHistory*2 messages.
@@ -219,6 +230,205 @@ func TestSession_HistoryTrimmed(t *testing.T) {
 		t.Errorf("history length = %d, want <= %d", len(session.history), maxHistory*2)
 	}
 }
+
+// --- New command tests ---
+
+func TestSession_ContextCommand(t *testing.T) {
+	activity := models.Activity{
+		ID: 1, Source: models.SourceGit, Type: models.TypeCommit,
+		Title: "Fix auth bug", Timestamp: time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC),
+	}
+	ret := &mockRetriever{results: []rag.Result{{Activity: activity, Score: 0.85}}}
+	provider := &mockLLM{responses: []string{"You fixed auth."}}
+
+	in := strings.NewReader("what did I do?\n/context\n/quit\n")
+	var out bytes.Buffer
+
+	session := NewSession(in, &out, ret, provider, nil)
+	_ = session.Run(context.Background())
+
+	output := out.String()
+	if !strings.Contains(output, "Retrieved 1 activities") {
+		t.Errorf("expected context output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Fix auth bug") {
+		t.Errorf("context should show activity title")
+	}
+	if !strings.Contains(output, "0.8500") {
+		t.Errorf("context should show score")
+	}
+}
+
+func TestSession_ContextCommand_NoQuery(t *testing.T) {
+	ret := &mockRetriever{}
+	provider := &mockLLM{}
+
+	in := strings.NewReader("/context\n/quit\n")
+	var out bytes.Buffer
+
+	session := NewSession(in, &out, ret, provider, nil)
+	_ = session.Run(context.Background())
+
+	if !strings.Contains(out.String(), "No context available") {
+		t.Error("expected 'no context' message before any query")
+	}
+}
+
+func TestSession_SearchCommand(t *testing.T) {
+	db := mustOpenDB(t)
+	now := time.Now().UTC()
+
+	db.InsertActivity(models.Activity{
+		Source: models.SourceGit, SourceID: "r:a1", Type: models.TypeCommit,
+		Title: "Fix auth token refresh", Content: "Handle expired tokens",
+		Timestamp: now,
+	})
+	db.InsertActivity(models.Activity{
+		Source: models.SourceGit, SourceID: "r:a2", Type: models.TypeCommit,
+		Title: "Update README", Content: "Add badges",
+		Timestamp: now.Add(-time.Hour),
+	})
+
+	ret := &mockRetriever{}
+	provider := &mockLLM{}
+
+	in := strings.NewReader("/search auth\n/quit\n")
+	var out bytes.Buffer
+
+	session := NewSession(in, &out, ret, provider, db)
+	_ = session.Run(context.Background())
+
+	output := out.String()
+	if !strings.Contains(output, "Fix auth token refresh") {
+		t.Errorf("search should find auth activity, got:\n%s", output)
+	}
+	if strings.Contains(output, "Update README") {
+		t.Error("search should not return unrelated results")
+	}
+	if provider.calls != 0 {
+		t.Error("/search should not call LLM")
+	}
+}
+
+func TestSession_SearchCommand_NoQuery(t *testing.T) {
+	ret := &mockRetriever{}
+	provider := &mockLLM{}
+
+	in := strings.NewReader("/search\n/quit\n")
+	var out bytes.Buffer
+
+	session := NewSession(in, &out, ret, provider, nil)
+	_ = session.Run(context.Background())
+
+	if !strings.Contains(out.String(), "Usage") {
+		t.Error("expected usage hint for /search without query")
+	}
+}
+
+func TestSession_StatsCommand(t *testing.T) {
+	db := mustOpenDB(t)
+	now := time.Now().UTC()
+
+	db.InsertActivity(models.Activity{
+		Source: models.SourceGit, SourceID: "r:a1", Type: models.TypeCommit,
+		Title: "Commit 1", Timestamp: now,
+	})
+	db.InsertActivity(models.Activity{
+		Source: models.SourceSlack, SourceID: "s:m1", Type: models.TypeMessage,
+		Title: "Message 1", Timestamp: now.Add(-24 * time.Hour),
+	})
+
+	ret := &mockRetriever{}
+	provider := &mockLLM{}
+
+	in := strings.NewReader("/stats\n/quit\n")
+	var out bytes.Buffer
+
+	session := NewSession(in, &out, ret, provider, db)
+	_ = session.Run(context.Background())
+
+	output := out.String()
+	if !strings.Contains(output, "Activities: 2 total") {
+		t.Errorf("stats should show total count, got:\n%s", output)
+	}
+	if !strings.Contains(output, "git") {
+		t.Error("stats should show git source")
+	}
+	if !strings.Contains(output, "slack") {
+		t.Error("stats should show slack source")
+	}
+}
+
+func TestSession_StatsCommand_NoDB(t *testing.T) {
+	ret := &mockRetriever{}
+	provider := &mockLLM{}
+
+	in := strings.NewReader("/stats\n/quit\n")
+	var out bytes.Buffer
+
+	session := NewSession(in, &out, ret, provider, nil)
+	_ = session.Run(context.Background())
+
+	if !strings.Contains(out.String(), "not available") {
+		t.Error("expected 'not available' when db is nil")
+	}
+}
+
+func TestSession_DateCommand(t *testing.T) {
+	ret := &mockRetriever{}
+	provider := &mockLLM{}
+
+	in := strings.NewReader("/date last week\n/date\n/date clear\n/date\n/quit\n")
+	var out bytes.Buffer
+
+	session := NewSession(in, &out, ret, provider, nil)
+	_ = session.Run(context.Background())
+
+	output := out.String()
+	// After setting, should show the range.
+	if !strings.Contains(output, "Date filter set:") {
+		t.Errorf("expected date filter confirmation, got:\n%s", output)
+	}
+	// After clearing, should show "no filter".
+	if !strings.Contains(output, "No date filter set") {
+		t.Errorf("expected 'no filter' after clear, got:\n%s", output)
+	}
+}
+
+func TestSession_DateCommand_InvalidFormat(t *testing.T) {
+	ret := &mockRetriever{}
+	provider := &mockLLM{}
+
+	in := strings.NewReader("/date banana\n/quit\n")
+	var out bytes.Buffer
+
+	session := NewSession(in, &out, ret, provider, nil)
+	_ = session.Run(context.Background())
+
+	if !strings.Contains(out.String(), "Could not parse") {
+		t.Error("expected parse error for invalid date")
+	}
+}
+
+func TestSession_HelpShowsAllCommands(t *testing.T) {
+	ret := &mockRetriever{}
+	provider := &mockLLM{}
+
+	in := strings.NewReader("/help\n/quit\n")
+	var out bytes.Buffer
+
+	session := NewSession(in, &out, ret, provider, nil)
+	_ = session.Run(context.Background())
+
+	output := out.String()
+	for _, cmd := range []string{"/help", "/quit", "/clear", "/search", "/context", "/date", "/stats"} {
+		if !strings.Contains(output, cmd) {
+			t.Errorf("/help output missing %s", cmd)
+		}
+	}
+}
+
+// --- formatContext tests ---
 
 func TestFormatContext(t *testing.T) {
 	now := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
@@ -278,5 +488,74 @@ func TestFormatContext_Empty(t *testing.T) {
 	out := formatContext(nil)
 	if out != "" {
 		t.Errorf("empty results should return empty string, got %q", out)
+	}
+}
+
+// --- parseDateRange tests ---
+
+func TestParseDateRange(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"today", false},
+		{"yesterday", false},
+		{"last week", false},
+		{"this week", false},
+		{"last month", false},
+		{"this month", false},
+		{"2026-03", false},
+		{"2026-03-15", false},
+		{"2026-03-01..2026-03-31", false},
+		{"banana", true},
+		{"", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			after, before, err := parseDateRange(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("parseDateRange(%q) = no error, want error", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseDateRange(%q) error: %v", tt.input, err)
+			}
+			if after.IsZero() || before.IsZero() {
+				t.Errorf("parseDateRange(%q) returned zero times", tt.input)
+			}
+			if !before.After(after) {
+				t.Errorf("parseDateRange(%q): before (%v) should be after (%v)", tt.input, before, after)
+			}
+		})
+	}
+}
+
+func TestParseDateRange_MonthRange(t *testing.T) {
+	after, before, err := parseDateRange("2026-03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC) {
+		t.Errorf("after = %v, want 2026-03-01", after)
+	}
+	if before != time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC) {
+		t.Errorf("before = %v, want 2026-04-01", before)
+	}
+}
+
+func TestParseDateRange_DotDotRange(t *testing.T) {
+	after, before, err := parseDateRange("2026-03-01..2026-03-15")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC) {
+		t.Errorf("after = %v, want 2026-03-01", after)
+	}
+	// before should be day after end (inclusive end date)
+	if before != time.Date(2026, 3, 16, 0, 0, 0, 0, time.UTC) {
+		t.Errorf("before = %v, want 2026-03-16", before)
 	}
 }
