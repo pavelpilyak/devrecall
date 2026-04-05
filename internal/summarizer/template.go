@@ -11,11 +11,20 @@ import (
 
 // commitMeta mirrors the JSON metadata stored by the git collector.
 type commitMeta struct {
-	Repo         string `json:"repo"`
-	SHA          string `json:"sha"`
-	FilesChanged int    `json:"files_changed"`
-	Insertions   int    `json:"insertions"`
-	Deletions    int    `json:"deletions"`
+	Repo         string   `json:"repo"`
+	SHA          string   `json:"sha"`
+	FilesChanged int      `json:"files_changed"`
+	Insertions   int      `json:"insertions"`
+	Deletions    int      `json:"deletions"`
+	IssueKeys    []string `json:"issue_keys,omitempty"`
+}
+
+// ticketActivityMeta is a minimal struct for parsing ticket metadata from Jira/Linear.
+type ticketActivityMeta struct {
+	IssueKey   string `json:"issue_key"`   // Jira
+	Identifier string `json:"identifier"`  // Linear
+	FromStatus string `json:"from_status"` // status transitions
+	ToStatus   string `json:"to_status"`
 }
 
 // slackMeta mirrors the JSON metadata stored by the Slack collector.
@@ -296,10 +305,30 @@ func (s *TemplateSummarizer) Standup(activities []models.Activity) (string, erro
 					group = "unknown"
 				}
 				e = entry{title: a.Title, stats: meta.State}
+			case models.TypeTicket:
+				var meta ticketActivityMeta
+				json.Unmarshal([]byte(a.Metadata), &meta)
+				key := meta.IssueKey
+				if key == "" {
+					key = meta.Identifier
+				}
+				if key != "" {
+					group = key
+				} else {
+					group = string(a.Source)
+				}
+				e = entry{title: a.Title}
+				if meta.ToStatus != "" {
+					e.stats = "→ " + meta.ToStatus
+				}
 			default:
 				var meta commitMeta
 				json.Unmarshal([]byte(a.Metadata), &meta)
-				group = meta.Repo
+				if len(meta.IssueKeys) > 0 {
+					group = meta.IssueKeys[0]
+				} else {
+					group = meta.Repo
+				}
 				if group == "" {
 					group = "unknown"
 				}

@@ -17,12 +17,42 @@ func meta(repo, sha string, files, ins, del int) string {
 	return string(b)
 }
 
+func metaWithKeys(repo, sha string, files, ins, del int, issueKeys []string) string {
+	b, _ := json.Marshal(commitMeta{
+		Repo: repo, SHA: sha, FilesChanged: files, Insertions: ins, Deletions: del, IssueKeys: issueKeys,
+	})
+	return string(b)
+}
+
 func activity(title, repo, sha string, files, ins, del int, ts time.Time) models.Activity {
 	return models.Activity{
 		Source:    models.SourceGit,
 		Type:     models.TypeCommit,
 		Title:    title,
 		Metadata: meta(repo, sha, files, ins, del),
+		Timestamp: ts,
+	}
+}
+
+func activityWithKeys(title, repo, sha string, files, ins, del int, issueKeys []string, ts time.Time) models.Activity {
+	return models.Activity{
+		Source:    models.SourceGit,
+		Type:     models.TypeCommit,
+		Title:    title,
+		Metadata: metaWithKeys(repo, sha, files, ins, del, issueKeys),
+		Timestamp: ts,
+	}
+}
+
+func ticketActivity(source models.Source, title, issueKey, toStatus string, ts time.Time) models.Activity {
+	m := ticketActivityMeta{IssueKey: issueKey, ToStatus: toStatus}
+	b, _ := json.Marshal(m)
+	return models.Activity{
+		Source:    source,
+		SourceID:  fmt.Sprintf("%s:%s", source, issueKey),
+		Type:      models.TypeTicket,
+		Title:     title,
+		Metadata:  string(b),
 		Timestamp: ts,
 	}
 }
@@ -904,5 +934,159 @@ func TestFormatDuration(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("formatDuration(%d) = %q, want %q", tt.mins, got, tt.want)
 		}
+	}
+}
+
+func TestStandup_CommitsGroupedByTicketKey(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		activityWithKeys("Fix retry logic", "backend-api", "aaa1111", 3, 47, 12, []string{"PROJ-123"}, ts),
+		activityWithKeys("Add retry tests", "backend-api", "bbb2222", 1, 10, 0, []string{"PROJ-123"}, ts.Add(time.Hour)),
+		activityWithKeys("Update login form", "frontend", "ccc3333", 2, 20, 5, []string{"ENG-456"}, ts.Add(2*time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	// Commits should be grouped by ticket key, not repo.
+	if !strings.Contains(out, "PROJ-123: Fix retry logic") {
+		t.Errorf("missing PROJ-123 grouped commit:\n%s", out)
+	}
+	if !strings.Contains(out, "PROJ-123: Add retry tests") {
+		t.Errorf("missing second PROJ-123 commit:\n%s", out)
+	}
+	if !strings.Contains(out, "ENG-456: Update login form") {
+		t.Errorf("missing ENG-456 grouped commit:\n%s", out)
+	}
+	// Should NOT be grouped by repo name.
+	if strings.Contains(out, "backend-api:") {
+		t.Errorf("should group by ticket, not repo:\n%s", out)
+	}
+}
+
+func TestStandup_CommitsWithoutTicketKeyGroupByRepo(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		activity("Fix typo", "backend-api", "aaa1111", 1, 1, 1, ts),
+		activityWithKeys("PROJ-123: Fix retry", "backend-api", "bbb2222", 3, 47, 12, []string{"PROJ-123"}, ts.Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	// Commit without ticket key should group by repo.
+	if !strings.Contains(out, "backend-api: Fix typo") {
+		t.Errorf("commit without ticket should group by repo:\n%s", out)
+	}
+	// Commit with ticket key should group by ticket.
+	if !strings.Contains(out, "PROJ-123: PROJ-123: Fix retry") {
+		t.Errorf("commit with ticket should group by ticket key:\n%s", out)
+	}
+}
+
+func TestStandup_TicketActivitiesGroupedByIssueKey(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		ticketActivity(models.SourceJira, "PROJ-123: Fix payment retry → moved to In Review", "PROJ-123", "In Review", ts),
+		activityWithKeys("Fix retry logic", "backend-api", "aaa1111", 3, 47, 12, []string{"PROJ-123"}, ts.Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	// Both the ticket transition and commit should be under PROJ-123.
+	if !strings.Contains(out, "PROJ-123:") {
+		t.Errorf("expected PROJ-123 group:\n%s", out)
+	}
+	if !strings.Contains(out, "→ In Review") {
+		t.Errorf("expected status transition:\n%s", out)
+	}
+	if !strings.Contains(out, "Fix retry logic") {
+		t.Errorf("expected commit under ticket group:\n%s", out)
+	}
+}
+
+func TestStandup_TicketActivityWithoutIssueKey(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	// A ticket activity with empty issue_key falls back to source name.
+	act := models.Activity{
+		Source:    models.SourceJira,
+		SourceID:  "jira:unknown",
+		Type:      models.TypeTicket,
+		Title:     "Some ticket activity",
+		Metadata:  `{}`,
+		Timestamp: ts,
+	}
+
+	out, err := s.Standup([]models.Activity{act})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if !strings.Contains(out, "jira: Some ticket activity") {
+		t.Errorf("ticket without key should fall back to source:\n%s", out)
+	}
+}
+
+func TestStandup_LinearTicketGroupedByIdentifier(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	linearMeta, _ := json.Marshal(ticketActivityMeta{Identifier: "ENG-42", ToStatus: "Done"})
+	act := models.Activity{
+		Source:    models.SourceLinear,
+		SourceID:  "linear:eng-42",
+		Type:      models.TypeTicket,
+		Title:     "ENG-42: Fix auth refresh",
+		Metadata:  string(linearMeta),
+		Timestamp: ts,
+	}
+
+	out, err := s.Standup([]models.Activity{act})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	if !strings.Contains(out, "ENG-42:") {
+		t.Errorf("expected ENG-42 group:\n%s", out)
+	}
+	if !strings.Contains(out, "→ Done") {
+		t.Errorf("expected status transition:\n%s", out)
+	}
+}
+
+func TestStandup_MixedTicketsAndPRs(t *testing.T) {
+	s := NewTemplateSummarizer()
+	ts := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+
+	out, err := s.Standup([]models.Activity{
+		ticketActivity(models.SourceJira, "PROJ-123: Fix payment retry → moved to In Review", "PROJ-123", "In Review", ts),
+		activityWithKeys("Fix retry logic", "backend-api", "aaa1111", 3, 47, 12, []string{"PROJ-123"}, ts.Add(time.Hour)),
+		prActivity("Fix payment retry PR", "octocat/backend-api", 42, []string{"aaa1111"}, ts.Add(2*time.Hour)),
+		activity("Fix typo in README", "docs", "zzz9999", 1, 1, 0, ts.Add(3*time.Hour)),
+	})
+	if err != nil {
+		t.Fatalf("Standup: %v", err)
+	}
+
+	// Ticket + linked commit under PROJ-123.
+	if !strings.Contains(out, "PROJ-123:") {
+		t.Errorf("expected PROJ-123 group:\n%s", out)
+	}
+	// PR grouped by repo.
+	if !strings.Contains(out, "octocat/backend-api:") {
+		t.Errorf("expected PR grouped by repo:\n%s", out)
+	}
+	// Unlinked commit grouped by repo.
+	if !strings.Contains(out, "docs: Fix typo in README") {
+		t.Errorf("expected unlinked commit grouped by repo:\n%s", out)
 	}
 }
