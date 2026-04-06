@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod hotkey;
 mod server;
 mod tray;
 
@@ -26,11 +27,17 @@ fn api_url() -> String {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![check_api, api_url])
         .setup(|app| {
             // Build tray menu.
             tray::setup(app)?;
+
+            // Register global hotkey (Cmd+Shift+D).
+            if let Err(e) = hotkey::register(app.handle()) {
+                eprintln!("Failed to register global hotkey: {e}");
+            }
 
             // Spawn or attach to the DevRecall API server.
             let app_handle = app.handle().clone();

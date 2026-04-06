@@ -1,19 +1,40 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { apiStatus, connected, checkConnection } from "./lib/stores";
-  import Popover from "./components/Popover.svelte";
+  import { connected, checkConnection } from "./lib/stores";
+  import Chat from "./routes/Chat.svelte";
+  import Standup from "./routes/Standup.svelte";
+  import Weekly from "./routes/Weekly.svelte";
 
-  let currentView = $state<"popover" | "standup" | "weekly" | "settings">("popover");
+  type Tab = "chat" | "standup" | "weekly";
+
+  const tabs: { id: Tab; label: string }[] = [
+    { id: "chat", label: "Chat" },
+    { id: "standup", label: "Standup" },
+    { id: "weekly", label: "Weekly" },
+  ];
+
+  let activeTab = $state<Tab>("chat");
 
   onMount(() => {
     checkConnection();
-    // Poll API status every 30 seconds.
     const interval = setInterval(checkConnection, 30_000);
-    return () => clearInterval(interval);
+
+    // Escape hides the window (Tauri handles it via close → hide).
+    function onKeydown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        window.close();
+      }
+    }
+    window.addEventListener("keydown", onKeydown);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("keydown", onKeydown);
+    };
   });
 </script>
 
-<main class="h-screen flex flex-col">
+<main class="h-screen flex flex-col bg-white dark:bg-zinc-900">
   {#if !$connected}
     <div class="flex-1 flex items-center justify-center p-8">
       <div class="text-center space-y-3">
@@ -25,6 +46,30 @@
       </div>
     </div>
   {:else}
-    <Popover />
+    <!-- Tab bar -->
+    <nav class="flex border-b border-zinc-200 dark:border-zinc-700 px-2 pt-1">
+      {#each tabs as tab}
+        <button
+          onclick={() => activeTab = tab.id}
+          class="px-4 py-2 text-sm font-medium border-b-2 transition-colors
+                 {activeTab === tab.id
+                   ? 'border-devrecall-600 text-devrecall-600 dark:text-devrecall-500'
+                   : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'}"
+        >
+          {tab.label}
+        </button>
+      {/each}
+    </nav>
+
+    <!-- Tab content -->
+    <div class="flex-1 overflow-hidden">
+      {#if activeTab === "chat"}
+        <Chat />
+      {:else if activeTab === "standup"}
+        <Standup />
+      {:else if activeTab === "weekly"}
+        <Weekly />
+      {/if}
+    </div>
   {/if}
 </main>
