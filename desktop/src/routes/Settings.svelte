@@ -2,16 +2,30 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { api, type SourceStatus } from "../lib/api";
+  import { licenseInfo, type LicenseInfo } from "../lib/license";
+  import { checkConnection } from "../lib/stores";
 
   let sources = $state<SourceStatus[]>([]);
   let loading = $state(true);
   let syncing = $state(false);
   let error = $state("");
 
+  // License activation
+  let licenseKey = $state("");
+  let activating = $state(false);
+  let activateError = $state("");
+  let activateSuccess = $state("");
+
   // Hotkey remapping
   let currentHotkey = $state("CmdOrCtrl+Shift+D");
   let recording = $state(false);
   let hotkeyError = $state("");
+
+  // Update check
+  let updateAvailable = $state<string | null>(null);
+  let checkingUpdate = $state(false);
+  let updating = $state(false);
+  let updateError = $state("");
 
   async function loadStatus() {
     loading = true;
@@ -102,6 +116,61 @@
   function cancelRecording() {
     recording = false;
     hotkeyError = "";
+  }
+
+  async function handleActivateLicense() {
+    if (!licenseKey.trim()) return;
+    activating = true;
+    activateError = "";
+    activateSuccess = "";
+    try {
+      const result = await api.activate(licenseKey.trim());
+      activateSuccess = result.message;
+      licenseKey = "";
+      await checkConnection();
+    } catch (e) {
+      activateError = e instanceof Error ? e.message : "Activation failed";
+    } finally {
+      activating = false;
+    }
+  }
+
+  async function checkForUpdate() {
+    checkingUpdate = true;
+    updateError = "";
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const update = await check();
+      if (update) {
+        updateAvailable = update.version;
+      } else {
+        updateAvailable = null;
+      }
+    } catch (e) {
+      updateError = e instanceof Error ? e.message : "Update check failed";
+    } finally {
+      checkingUpdate = false;
+    }
+  }
+
+  async function installUpdate() {
+    updating = true;
+    updateError = "";
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const update = await check();
+      if (update) {
+        await update.downloadAndInstall();
+        // Tauri will restart the app after install.
+      }
+    } catch (e) {
+      updateError = e instanceof Error ? e.message : "Update failed";
+      updating = false;
+    }
+  }
+
+  function openPricing() {
+    window.open("https://devrecall.dev/pricing", "_blank");
   }
 
   function formatHotkeyDisplay(hk: string): string {
@@ -202,11 +271,98 @@
       {/if}
     </section>
 
-    <!-- About -->
+    <!-- License -->
+    <section>
+      <h2 class="text-sm font-semibold mb-3">License</h2>
+      <div class="space-y-3">
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-zinc-600 dark:text-zinc-400">Plan:</span>
+          <span class="text-sm font-medium capitalize
+                       {$licenseInfo.plan === 'free'
+                         ? 'text-zinc-700 dark:text-zinc-300'
+                         : 'text-devrecall-600 dark:text-devrecall-400'}">
+            {$licenseInfo.plan}
+          </span>
+          {#if $licenseInfo.activated_at}
+            <span class="text-xs text-zinc-400">
+              (activated {new Date($licenseInfo.activated_at).toLocaleDateString()})
+            </span>
+          {/if}
+        </div>
+
+        {#if $licenseInfo.plan === "free"}
+          <div class="space-y-2">
+            <div class="flex gap-2">
+              <input
+                type="text"
+                bind:value={licenseKey}
+                placeholder="DR-PRO-XXXX-XXXX-XXXX"
+                class="flex-1 px-3 py-2 text-sm rounded-lg border border-zinc-300
+                       dark:border-zinc-600 bg-white dark:bg-zinc-800
+                       focus:outline-none focus:ring-2 focus:ring-devrecall-500"
+                onkeydown={(e: KeyboardEvent) => { if (e.key === "Enter") handleActivateLicense(); }}
+              />
+              <button
+                onclick={handleActivateLicense}
+                disabled={activating || !licenseKey.trim()}
+                class="px-4 py-2 text-sm font-medium rounded-lg bg-devrecall-600 text-white
+                       hover:bg-devrecall-700 disabled:opacity-50 transition-colors"
+              >
+                {activating ? "Activating..." : "Activate"}
+              </button>
+            </div>
+            {#if activateError}
+              <p class="text-xs text-red-500">{activateError}</p>
+            {/if}
+            {#if activateSuccess}
+              <p class="text-xs text-green-600 dark:text-green-400">{activateSuccess}</p>
+            {/if}
+            <button
+              onclick={openPricing}
+              class="text-xs text-devrecall-600 dark:text-devrecall-500 hover:underline"
+            >
+              Get a license key at devrecall.dev/pricing
+            </button>
+          </div>
+        {/if}
+      </div>
+    </section>
+
+    <!-- About & Updates -->
     <section>
       <h2 class="text-sm font-semibold mb-3">About</h2>
-      <div class="text-sm text-zinc-600 dark:text-zinc-400 space-y-1">
+      <div class="text-sm text-zinc-600 dark:text-zinc-400 space-y-2">
         <div>DevRecall Desktop v0.1.0</div>
+
+        {#if updateAvailable}
+          <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-devrecall-50
+                      dark:bg-devrecall-900/20 border border-devrecall-200 dark:border-devrecall-800">
+            <span class="text-sm text-devrecall-700 dark:text-devrecall-300">
+              Update available: v{updateAvailable}
+            </span>
+            <button
+              onclick={installUpdate}
+              disabled={updating}
+              class="px-3 py-1 text-xs font-medium rounded-md bg-devrecall-600 text-white
+                     hover:bg-devrecall-700 disabled:opacity-50 transition-colors"
+            >
+              {updating ? "Installing..." : "Update Now"}
+            </button>
+          </div>
+        {:else}
+          <button
+            onclick={checkForUpdate}
+            disabled={checkingUpdate}
+            class="text-xs text-devrecall-600 dark:text-devrecall-500 hover:underline disabled:opacity-50"
+          >
+            {checkingUpdate ? "Checking..." : "Check for updates"}
+          </button>
+        {/if}
+
+        {#if updateError}
+          <p class="text-xs text-red-500">{updateError}</p>
+        {/if}
+
         <div class="text-xs text-zinc-400">
           All data stored locally on your device.
         </div>

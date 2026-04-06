@@ -11,6 +11,7 @@ import (
 	"github.com/pavelpiliak/devrecall/internal/auth"
 	"github.com/pavelpiliak/devrecall/internal/config"
 	"github.com/pavelpiliak/devrecall/internal/embedding"
+	"github.com/pavelpiliak/devrecall/internal/license"
 	"github.com/pavelpiliak/devrecall/internal/llm"
 	"github.com/pavelpiliak/devrecall/internal/privacy"
 	"github.com/pavelpiliak/devrecall/internal/rag"
@@ -28,6 +29,7 @@ type Server struct {
 	db         *storage.DB
 	cfg        *config.Config
 	tokenStore auth.TokenStore
+	dataDir    string // override for ~/.devrecall (used in tests)
 }
 
 // NewServer creates a local API server on the given port (0 = default 9147).
@@ -77,6 +79,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/search", s.handleSearch)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/sync", s.handleSync)
+	mux.HandleFunc("POST /api/activate", s.handleActivate)
 }
 
 // --- Handlers ---
@@ -123,9 +126,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		result = append(result, ss)
 	}
 
+	licInfo := s.getLicenseInfo()
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
 		"sources": result,
+		"license": licInfo,
 	})
 }
 
@@ -396,6 +402,49 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 		"message":    "sync acknowledged",
 		"activities": counts,
 	})
+}
+
+func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Key == "" {
+		writeError(w, http.StatusBadRequest, "missing required field: key")
+		return
+	}
+
+	dir := s.configDir()
+
+	lic, err := license.Activate(dir, req.Key)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": fmt.Sprintf("%s plan activated", lic.Plan),
+		"license": license.GetInfo(dir),
+	})
+}
+
+func (s *Server) getLicenseInfo() license.Info {
+	dir := s.configDir()
+	return license.GetInfo(dir)
+}
+
+func (s *Server) configDir() string {
+	if s.dataDir != "" {
+		return s.dataDir
+	}
+	dir, err := config.Dir()
+	if err != nil {
+		return ""
+	}
+	return dir
 }
 
 // --- Helpers ---

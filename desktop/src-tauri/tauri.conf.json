@@ -29,6 +29,12 @@
       "tooltip": "DevRecall"
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://releases.devrecall.dev/tauri/{{target}}/{{arch}}/{{current_version}}"],
+      "pubkey": ""
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

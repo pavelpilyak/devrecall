@@ -11,9 +11,18 @@ export interface SourceStatus {
   count: number;
 }
 
+export interface LicenseInfo {
+  plan: string;
+  features: string[];
+  devices_used: number;
+  devices_allowed: number;
+  activated_at?: string;
+}
+
 export interface StatusResponse {
   status: string;
   sources: SourceStatus[];
+  license: LicenseInfo;
 }
 
 export interface StandupResponse {
@@ -117,4 +126,7 @@ export const api = {
     post<ChatResponse>("/api/chat", { message, history }),
 
   sync: () => post<{ message: string }>("/api/sync"),
+
+  activate: (key: string) =>
+    post<{ message: string; license: LicenseInfo }>("/api/activate", { key }),
 };

@@ -36,6 +36,7 @@ func setupTestServer(t *testing.T) (*Server, *storage.DB) {
 	}
 
 	srv := NewServer(0, db, cfg, &mockTokenStore{})
+	srv.dataDir = t.TempDir()
 	return srv, db
 }
 
@@ -308,6 +309,7 @@ func TestHandleChat_NoLLM(t *testing.T) {
 		LLM: config.LLMConfig{Provider: "anthropic"},
 	}
 	srv := NewServer(0, db, cfg, &mockTokenStore{})
+	srv.dataDir = t.TempDir()
 
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
@@ -416,4 +418,90 @@ func TestNewServer_CustomPort(t *testing.T) {
 	if srv.Port() != 8080 {
 		t.Errorf("expected port 8080, got %d", srv.Port())
 	}
+}
+
+func TestHandleStatus_IncludesLicense(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, newRequest("GET", "/api/status", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+
+	lic, ok := resp["license"].(map[string]any)
+	if !ok {
+		t.Fatal("expected license object in status response")
+	}
+	if lic["plan"] != "free" {
+		t.Errorf("expected free plan in default status, got %v", lic["plan"])
+	}
+}
+
+func TestHandleActivate(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	t.Run("valid key", func(t *testing.T) {
+		body := map[string]string{"key": "DR-PRO-A1B2-C3D4-E5F6"}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("POST", "/api/activate", body))
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["message"] != "pro plan activated" {
+			t.Errorf("expected 'pro plan activated', got %v", resp["message"])
+		}
+
+		lic, ok := resp["license"].(map[string]any)
+		if !ok {
+			t.Fatal("expected license object in response")
+		}
+		if lic["plan"] != "pro" {
+			t.Errorf("expected pro plan, got %v", lic["plan"])
+		}
+	})
+
+	t.Run("invalid key format", func(t *testing.T) {
+		body := map[string]string{"key": "INVALID-KEY"}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("POST", "/api/activate", body))
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("empty key", func(t *testing.T) {
+		body := map[string]string{"key": ""}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("POST", "/api/activate", body))
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/activate", bytes.NewReader([]byte("not json")))
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
 }
