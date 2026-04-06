@@ -21,6 +21,21 @@
   let recording = $state(false);
   let hotkeyError = $state("");
 
+  // Notifications
+  interface NotificationPrefs {
+    standup_enabled: boolean;
+    weekly_enabled: boolean;
+    hour: number;
+    minute: number;
+  }
+  let notifPrefs = $state<NotificationPrefs>({
+    standup_enabled: true,
+    weekly_enabled: true,
+    hour: 9,
+    minute: 0,
+  });
+  let notifSaving = $state(false);
+
   // Update check
   let updateAvailable = $state<string | null>(null);
   let checkingUpdate = $state(false);
@@ -39,10 +54,27 @@
       } catch {
         // Fallback to default if command not available.
       }
+      // Load notification prefs.
+      try {
+        notifPrefs = await invoke<NotificationPrefs>("get_notification_prefs");
+      } catch {
+        // Fallback to defaults if command not available.
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : "Failed to load status";
     } finally {
       loading = false;
+    }
+  }
+
+  async function saveNotifPrefs() {
+    notifSaving = true;
+    try {
+      await invoke("set_notification_prefs", { prefs: notifPrefs });
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      notifSaving = false;
     }
   }
 
@@ -269,6 +301,52 @@
       {#if hotkeyError}
         <div class="text-xs text-red-500 mt-1">{hotkeyError}</div>
       {/if}
+    </section>
+
+    <!-- Notifications -->
+    <section>
+      <h2 class="text-sm font-semibold mb-3">Notifications</h2>
+      <div class="space-y-3">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            bind:checked={notifPrefs.standup_enabled}
+            onchange={saveNotifPrefs}
+            class="rounded border-zinc-300 dark:border-zinc-600 text-devrecall-600
+                   focus:ring-devrecall-500"
+          />
+          <span class="text-sm text-zinc-700 dark:text-zinc-300">Standup ready (daily)</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            bind:checked={notifPrefs.weekly_enabled}
+            onchange={saveNotifPrefs}
+            class="rounded border-zinc-300 dark:border-zinc-600 text-devrecall-600
+                   focus:ring-devrecall-500"
+          />
+          <span class="text-sm text-zinc-700 dark:text-zinc-300">Weekly summary (Monday)</span>
+        </label>
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-zinc-600 dark:text-zinc-400">Notify at:</span>
+          <input
+            type="time"
+            value="{String(notifPrefs.hour).padStart(2, '0')}:{String(notifPrefs.minute).padStart(2, '0')}"
+            onchange={(e: Event) => {
+              const val = (e.target as HTMLInputElement).value;
+              const [h, m] = val.split(":").map(Number);
+              notifPrefs.hour = h;
+              notifPrefs.minute = m;
+              saveNotifPrefs();
+            }}
+            class="px-2 py-1 text-sm rounded-md border border-zinc-300 dark:border-zinc-600
+                   bg-white dark:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-devrecall-500"
+          />
+          {#if notifSaving}
+            <span class="text-xs text-zinc-400">Saving...</span>
+          {/if}
+        </div>
+      </div>
     </section>
 
     <!-- License -->

@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod hotkey;
+mod notifications;
 mod server;
 mod tray;
 
@@ -30,7 +31,15 @@ fn main() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![check_api, api_url, hotkey::get_hotkey, hotkey::set_hotkey])
+        .plugin(tauri_plugin_notification::init())
+        .invoke_handler(tauri::generate_handler![
+            check_api,
+            api_url,
+            hotkey::get_hotkey,
+            hotkey::set_hotkey,
+            notifications::get_notification_prefs,
+            notifications::set_notification_prefs,
+        ])
         .setup(|app| {
             // Build tray menu.
             tray::setup(app)?;
@@ -39,6 +48,9 @@ fn main() {
             if let Err(e) = hotkey::register(app.handle()) {
                 eprintln!("Failed to register global hotkey: {e}");
             }
+
+            // Start notification scheduler.
+            notifications::start_scheduler(app.handle());
 
             // Spawn or attach to the DevRecall API server.
             let app_handle = app.handle().clone();

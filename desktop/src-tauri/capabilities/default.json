@@ -9,6 +9,7 @@
     "tray:default",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
-    "updater:default"
+    "updater:default",
+    "notification:default"
   ]
 }
