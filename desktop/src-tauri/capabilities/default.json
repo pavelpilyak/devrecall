@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/niclas-niclas/tauri-v2-schema/refs/heads/main/capability.schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for DevRecall",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "tray:default"
+  ]
+}

@@ -1,0 +1,20 @@
+import { writable } from "svelte/store";
+import { api, type StatusResponse } from "./api";
+
+/** Whether we have a live connection to the DevRecall API. */
+export const connected = writable(false);
+
+/** Latest API status response. */
+export const apiStatus = writable<StatusResponse | null>(null);
+
+/** Check connection to the API and update stores. */
+export async function checkConnection() {
+  try {
+    const status = await api.status();
+    apiStatus.set(status);
+    connected.set(true);
+  } catch {
+    connected.set(false);
+    apiStatus.set(null);
+  }
+}
