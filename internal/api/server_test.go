@@ -1,0 +1,419 @@
+package api
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/pavelpiliak/devrecall/internal/config"
+	"github.com/pavelpiliak/devrecall/internal/storage"
+	"github.com/pavelpiliak/devrecall/pkg/models"
+)
+
+// mockTokenStore is a no-op token store for tests.
+type mockTokenStore struct{}
+
+func (m *mockTokenStore) Save(vendor, key string, token any) error { return nil }
+func (m *mockTokenStore) Load(vendor, key string, dst any) error {
+	return fmt.Errorf("no tokens in test")
+}
+func (m *mockTokenStore) Delete(vendor, key string) error { return nil }
+
+func setupTestServer(t *testing.T) (*Server, *storage.DB) {
+	t.Helper()
+	db, err := storage.OpenPath(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	cfg := &config.Config{
+		Git: config.GitConfig{Enabled: true},
+	}
+
+	srv := NewServer(0, db, cfg, &mockTokenStore{})
+	return srv, db
+}
+
+func newRequest(method, path string, body any) *http.Request {
+	if body != nil {
+		data, _ := json.Marshal(body)
+		return httptest.NewRequest(method, path, bytes.NewReader(data))
+	}
+	return httptest.NewRequest(method, path, nil)
+}
+
+func TestHandleStatus(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	// Insert some activities.
+	db.InsertActivities([]models.Activity{
+		{Source: models.SourceGit, SourceID: "abc123", Type: models.TypeCommit, Title: "Fix bug", Timestamp: time.Now()},
+		{Source: models.SourceGit, SourceID: "def456", Type: models.TypeCommit, Title: "Add feature", Timestamp: time.Now()},
+	})
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, newRequest("GET", "/api/status", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp["status"] != "ok" {
+		t.Errorf("expected status ok, got %v", resp["status"])
+	}
+
+	sources, ok := resp["sources"].([]any)
+	if !ok || len(sources) == 0 {
+		t.Fatal("expected non-empty sources array")
+	}
+
+	// Check git source has count 2.
+	gitSrc := sources[0].(map[string]any)
+	if gitSrc["name"] != "git" {
+		t.Errorf("expected first source to be git, got %v", gitSrc["name"])
+	}
+	if gitSrc["count"] != float64(2) {
+		t.Errorf("expected git count 2, got %v", gitSrc["count"])
+	}
+	if gitSrc["enabled"] != true {
+		t.Errorf("expected git enabled true")
+	}
+}
+
+func TestHandleActivities(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	db.InsertActivities([]models.Activity{
+		{Source: models.SourceGit, SourceID: "a1", Type: models.TypeCommit, Title: "Commit 1", Timestamp: now},
+		{Source: models.SourceSlack, SourceID: "s1", Type: models.TypeMessage, Title: "Message 1", Timestamp: now},
+		{Source: models.SourceGit, SourceID: "a2", Type: models.TypeCommit, Title: "Commit 2", Timestamp: now.Add(-time.Hour)},
+	})
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	t.Run("all activities", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/activities", nil))
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["count"] != float64(3) {
+			t.Errorf("expected 3 activities, got %v", resp["count"])
+		}
+	})
+
+	t.Run("filter by source", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/activities?source=git", nil))
+
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["count"] != float64(2) {
+			t.Errorf("expected 2 git activities, got %v", resp["count"])
+		}
+	})
+
+	t.Run("filter by type", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/activities?type=message", nil))
+
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["count"] != float64(1) {
+			t.Errorf("expected 1 message activity, got %v", resp["count"])
+		}
+	})
+
+	t.Run("custom limit", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/activities?limit=1", nil))
+
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["count"] != float64(1) {
+			t.Errorf("expected 1 activity with limit=1, got %v", resp["count"])
+		}
+	})
+
+	t.Run("invalid limit", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/activities?limit=abc", nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+}
+
+func TestHandleSearch(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	db.InsertActivities([]models.Activity{
+		{Source: models.SourceGit, SourceID: "c1", Type: models.TypeCommit, Title: "Fix authentication bug", Content: "Fixed token refresh logic", Timestamp: time.Now()},
+		{Source: models.SourceGit, SourceID: "c2", Type: models.TypeCommit, Title: "Add payment feature", Content: "Stripe integration", Timestamp: time.Now()},
+	})
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	t.Run("search with results", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/search?q=authentication", nil))
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["query"] != "authentication" {
+			t.Errorf("expected query 'authentication', got %v", resp["query"])
+		}
+		count := resp["count"].(float64)
+		if count < 1 {
+			t.Errorf("expected at least 1 result, got %v", count)
+		}
+	})
+
+	t.Run("search with no results", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/search?q=zzzznonexistent", nil))
+
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["count"] != float64(0) {
+			t.Errorf("expected 0 results, got %v", resp["count"])
+		}
+	})
+
+	t.Run("missing query", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/search", nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+}
+
+func TestHandleStandup(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	// Insert activities for yesterday.
+	yesterday := time.Now().AddDate(0, 0, -1)
+	dayStart := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 10, 0, 0, 0, time.UTC)
+	db.InsertActivities([]models.Activity{
+		{Source: models.SourceGit, SourceID: "s1", Type: models.TypeCommit, Title: "Fix login bug", Timestamp: dayStart},
+	})
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	t.Run("default date (yesterday)", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/standup", nil))
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["date"] != yesterday.Format("2006-01-02") {
+			t.Errorf("expected date %s, got %v", yesterday.Format("2006-01-02"), resp["date"])
+		}
+		if resp["report"] == nil || resp["report"] == "" {
+			t.Error("expected non-empty report")
+		}
+	})
+
+	t.Run("explicit date", func(t *testing.T) {
+		dateStr := yesterday.Format("2006-01-02")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/standup?date="+dateStr, nil))
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("invalid date", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/standup?date=not-a-date", nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+}
+
+func TestHandleWeek(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	t.Run("current week", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/week", nil))
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["week_start"] == nil {
+			t.Error("expected week_start")
+		}
+		if resp["report"] == nil {
+			t.Error("expected report")
+		}
+	})
+
+	t.Run("invalid weeks_back", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("GET", "/api/week?weeks_back=abc", nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+}
+
+func TestHandleChat_NoLLM(t *testing.T) {
+	db, err := storage.OpenPath(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Use "anthropic" provider without a token — FromConfig will return an error.
+	cfg := &config.Config{
+		LLM: config.LLMConfig{Provider: "anthropic"},
+	}
+	srv := NewServer(0, db, cfg, &mockTokenStore{})
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	body := map[string]string{"message": "What did I do yesterday?"}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, newRequest("POST", "/api/chat", body))
+
+	// Without LLM configured, should return 503.
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 without LLM, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleChat_InvalidBody(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	t.Run("empty message", func(t *testing.T) {
+		body := map[string]string{"message": ""}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("POST", "/api/chat", body))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/chat", bytes.NewReader([]byte("not json")))
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+}
+
+func TestHandleSync(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, newRequest("POST", "/api/sync", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["message"] != "sync acknowledged" {
+		t.Errorf("expected sync acknowledged, got %v", resp["message"])
+	}
+}
+
+func TestHandleActivities_DateFilter(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	march1 := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	march15 := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	db.InsertActivities([]models.Activity{
+		{Source: models.SourceGit, SourceID: "d1", Type: models.TypeCommit, Title: "March 1 commit", Timestamp: march1},
+		{Source: models.SourceGit, SourceID: "d2", Type: models.TypeCommit, Title: "March 15 commit", Timestamp: march15},
+	})
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, newRequest("GET", "/api/activities?after=2026-03-10&before=2026-03-20", nil))
+
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["count"] != float64(1) {
+		t.Errorf("expected 1 activity in date range, got %v", resp["count"])
+	}
+}
+
+func TestMethodNotAllowed(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	// POST to a GET-only endpoint should fail.
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, newRequest("POST", "/api/status", nil))
+	if w.Code == http.StatusOK {
+		t.Error("expected non-200 for POST to GET-only endpoint")
+	}
+}
+
+func TestNewServer_DefaultPort(t *testing.T) {
+	srv := NewServer(0, nil, &config.Config{}, &mockTokenStore{})
+	if srv.Port() != 9147 {
+		t.Errorf("expected default port 9147, got %d", srv.Port())
+	}
+}
+
+func TestNewServer_CustomPort(t *testing.T) {
+	srv := NewServer(8080, nil, &config.Config{}, &mockTokenStore{})
+	if srv.Port() != 8080 {
+		t.Errorf("expected port 8080, got %d", srv.Port())
+	}
+}
