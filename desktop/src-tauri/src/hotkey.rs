@@ -131,3 +131,86 @@ pub fn set_hotkey(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn default_hotkey_value() {
+        assert_eq!(DEFAULT_HOTKEY, "CmdOrCtrl+Shift+D");
+    }
+
+    #[test]
+    fn desktop_prefs_roundtrip() {
+        let prefs = DesktopPrefs {
+            hotkey: Some("CmdOrCtrl+Shift+K".to_string()),
+        };
+        let json = serde_json::to_string(&prefs).unwrap();
+        let parsed: DesktopPrefs = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.hotkey.unwrap(), "CmdOrCtrl+Shift+K");
+    }
+
+    #[test]
+    fn desktop_prefs_default_has_none_hotkey() {
+        let prefs = DesktopPrefs::default();
+        assert!(prefs.hotkey.is_none());
+    }
+
+    #[test]
+    fn desktop_prefs_missing_hotkey_field() {
+        let json = "{}";
+        let prefs: DesktopPrefs = serde_json::from_str(json).unwrap();
+        assert!(prefs.hotkey.is_none());
+    }
+
+    #[test]
+    fn desktop_prefs_extra_fields_ignored() {
+        let json = r#"{"hotkey": "CmdOrCtrl+Shift+X", "theme": "dark"}"#;
+        let prefs: DesktopPrefs = serde_json::from_str(json).unwrap();
+        assert_eq!(prefs.hotkey.unwrap(), "CmdOrCtrl+Shift+X");
+    }
+
+    #[test]
+    fn save_and_load_hotkey_via_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(PREFS_FILE);
+
+        // Write prefs manually.
+        let prefs = DesktopPrefs {
+            hotkey: Some("Alt+Shift+R".to_string()),
+        };
+        let mut f = fs::File::create(&path).unwrap();
+        f.write_all(serde_json::to_string_pretty(&prefs).unwrap().as_bytes())
+            .unwrap();
+
+        // Read back.
+        let data = fs::read_to_string(&path).unwrap();
+        let loaded: DesktopPrefs = serde_json::from_str(&data).unwrap();
+        assert_eq!(loaded.hotkey.unwrap(), "Alt+Shift+R");
+    }
+
+    #[test]
+    fn load_hotkey_returns_default_without_file() {
+        let hk = load_hotkey();
+        assert!(!hk.is_empty());
+    }
+
+    #[test]
+    fn prefs_path_is_under_devrecall() {
+        if let Some(p) = prefs_path() {
+            assert!(
+                p.to_string_lossy().contains(".devrecall"),
+                "prefs path should be under .devrecall: {:?}",
+                p
+            );
+            assert!(
+                p.to_string_lossy().ends_with(PREFS_FILE),
+                "prefs path should end with {}: {:?}",
+                PREFS_FILE,
+                p
+            );
+        }
+    }
+}

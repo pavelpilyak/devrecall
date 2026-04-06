@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.23"
+  NODE_VERSION: "22"
+
+jobs:
+  # Build Go CLI binaries for macOS (aarch64 + x86_64)
+  build-cli:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - goarch: arm64
+            artifact: devrecall-darwin-aarch64
+          - goarch: amd64
+            artifact: devrecall-darwin-x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build CLI
+        env:
+          GOOS: darwin
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          go build -tags "fts5 GO" \
+            -ldflags "-X main.version=${VERSION}" \
+            -o ${{ matrix.artifact }} \
+            ./cmd/devrecall
+
+      - name: Create tarball
+        run: |
+          tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+
+  # Run Go tests
+  test-go:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run tests
+        run: make test
+
+  # Run Rust tests for the desktop app
+  test-rust:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install frontend deps
+        working-directory: desktop
+        run: pnpm install
+
+      - name: Build frontend (needed for Tauri)
+        working-directory: desktop
+        run: pnpm build
+
+      - name: Run Rust tests
+        working-directory: desktop/src-tauri
+        run: cargo test
+
+  # Run frontend tests
+  test-frontend:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install deps and test
+        working-directory: desktop
+        run: |
+          pnpm install
+          pnpm test
+
+  # Build Tauri desktop app for macOS
+  build-desktop:
+    needs: [test-go, test-rust, test-frontend]
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: aarch64
+          - target: x86_64-apple-darwin
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install frontend deps
+        working-directory: desktop
+        run: pnpm install
+
+      - name: Build Tauri app
+        working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm tauri build --target ${{ matrix.target }}
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevRecall-${{ matrix.arch }}.dmg
+          path: desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+
+  # Create GitHub Release with all artifacts
+  release:
+    needs: [build-cli, build-desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name "*.tar.gz" -o -name "*.dmg" \) -exec sha256sum {} \; > checksums.sha256
+          cat checksums.sha256
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.dmg
+            artifacts/checksums.sha256

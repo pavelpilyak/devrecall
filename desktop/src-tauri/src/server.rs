@@ -96,3 +96,51 @@ fn find_binary() -> Option<PathBuf> {
 fn dirs_home() -> Option<PathBuf> {
     std::env::var("HOME").ok().map(PathBuf::from)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_port_is_9147() {
+        assert_eq!(API_PORT, 9147);
+    }
+
+    #[test]
+    fn api_base_uses_loopback() {
+        assert!(API_BASE.starts_with("http://127.0.0.1:"));
+    }
+
+    #[test]
+    fn dirs_home_returns_some() {
+        // HOME is always set in dev/CI environments.
+        let home = dirs_home();
+        assert!(home.is_some());
+        assert!(home.unwrap().is_absolute());
+    }
+
+    #[test]
+    fn find_binary_returns_path_or_none() {
+        // We can't guarantee devrecall is installed, but the function must not panic.
+        let result = find_binary();
+        // If found, path must be absolute.
+        if let Some(p) = result {
+            assert!(p.is_absolute(), "binary path should be absolute: {:?}", p);
+        }
+    }
+
+    #[test]
+    fn health_retries_is_reasonable() {
+        assert!(HEALTH_RETRIES >= 5, "need enough retries for server startup");
+        assert!(HEALTH_RETRIES <= 30, "too many retries would cause long waits");
+    }
+
+    #[test]
+    fn health_interval_is_reasonable() {
+        assert!(
+            HEALTH_INTERVAL.as_millis() >= 200 && HEALTH_INTERVAL.as_millis() <= 2000,
+            "health interval should be 200ms-2s, got {}ms",
+            HEALTH_INTERVAL.as_millis()
+        );
+    }
+}
