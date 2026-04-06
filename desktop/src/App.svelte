@@ -4,13 +4,19 @@
   import Chat from "./routes/Chat.svelte";
   import Standup from "./routes/Standup.svelte";
   import Weekly from "./routes/Weekly.svelte";
+  import Timeline from "./routes/Timeline.svelte";
+  import Search from "./routes/Search.svelte";
+  import Settings from "./routes/Settings.svelte";
 
-  type Tab = "chat" | "standup" | "weekly";
+  type Tab = "chat" | "standup" | "weekly" | "timeline" | "search" | "settings";
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "chat", label: "Chat" },
     { id: "standup", label: "Standup" },
     { id: "weekly", label: "Weekly" },
+    { id: "timeline", label: "Timeline" },
+    { id: "search", label: "Search" },
+    { id: "settings", label: "Settings" },
   ];
 
   let activeTab = $state<Tab>("chat");
@@ -19,7 +25,6 @@
     checkConnection();
     const interval = setInterval(checkConnection, 30_000);
 
-    // Escape hides the window (Tauri handles it via close → hide).
     function onKeydown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         window.close();
@@ -47,11 +52,11 @@
     </div>
   {:else}
     <!-- Tab bar -->
-    <nav class="flex border-b border-zinc-200 dark:border-zinc-700 px-2 pt-1">
+    <nav class="flex border-b border-zinc-200 dark:border-zinc-700 px-1 pt-1 overflow-x-auto">
       {#each tabs as tab}
         <button
           onclick={() => activeTab = tab.id}
-          class="px-4 py-2 text-sm font-medium border-b-2 transition-colors
+          class="px-3 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap
                  {activeTab === tab.id
                    ? 'border-devrecall-600 text-devrecall-600 dark:text-devrecall-500'
                    : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'}"
@@ -69,6 +74,12 @@
         <Standup />
       {:else if activeTab === "weekly"}
         <Weekly />
+      {:else if activeTab === "timeline"}
+        <Timeline />
+      {:else if activeTab === "search"}
+        <Search />
+      {:else if activeTab === "settings"}
+        <Settings />
       {/if}
     </div>
   {/if}

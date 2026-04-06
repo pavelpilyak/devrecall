@@ -29,7 +29,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![check_api, api_url])
+        .invoke_handler(tauri::generate_handler![check_api, api_url, hotkey::get_hotkey, hotkey::set_hotkey])
         .setup(|app| {
             // Build tray menu.
             tray::setup(app)?;

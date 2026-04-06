@@ -1,14 +1,83 @@
-//! Global hotkey registration (Cmd+Shift+D on macOS).
+//! Global hotkey registration with runtime remapping.
+//!
+//! Default: Cmd+Shift+D (macOS) / Ctrl+Shift+D (other).
+//! The user can remap via the Settings screen. The preference is persisted
+//! to ~/.devrecall/desktop-prefs.json so it survives restarts.
+
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
-/// Default hotkey: Cmd+Shift+D (macOS) / Ctrl+Shift+D (other).
-const HOTKEY: &str = "CmdOrCtrl+Shift+D";
+const DEFAULT_HOTKEY: &str = "CmdOrCtrl+Shift+D";
+const PREFS_FILE: &str = "desktop-prefs.json";
 
-/// Register the global hotkey that toggles the main window.
+/// Preferences stored on disk.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct DesktopPrefs {
+    #[serde(default)]
+    hotkey: Option<String>,
+}
+
+/// In-memory state for the current hotkey string.
+pub struct HotkeyState(pub Mutex<String>);
+
+/// Load the saved hotkey or return the default.
+fn load_hotkey() -> String {
+    if let Some(path) = prefs_path() {
+        if let Ok(data) = fs::read_to_string(&path) {
+            if let Ok(prefs) = serde_json::from_str::<DesktopPrefs>(&data) {
+                if let Some(hk) = prefs.hotkey {
+                    return hk;
+                }
+            }
+        }
+    }
+    DEFAULT_HOTKEY.to_string()
+}
+
+/// Persist the hotkey to desktop-prefs.json.
+fn save_hotkey(hotkey: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let path = prefs_path().ok_or("cannot determine prefs path")?;
+    let mut prefs = DesktopPrefs::default();
+
+    // Read existing prefs to preserve other fields.
+    if let Ok(data) = fs::read_to_string(&path) {
+        if let Ok(existing) = serde_json::from_str::<DesktopPrefs>(&data) {
+            prefs = existing;
+        }
+    }
+
+    prefs.hotkey = Some(hotkey.to_string());
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, serde_json::to_string_pretty(&prefs)?)?;
+    Ok(())
+}
+
+fn prefs_path() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(PathBuf::from(home).join(".devrecall").join(PREFS_FILE))
+}
+
+/// Register the global hotkey on startup using saved or default shortcut.
 pub fn register(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let shortcut: Shortcut = HOTKEY.parse()?;
+    let hotkey_str = load_hotkey();
+    register_shortcut(app, &hotkey_str)?;
+
+    // Store in managed state so we can read it from commands.
+    app.manage(HotkeyState(Mutex::new(hotkey_str)));
+
+    Ok(())
+}
+
+/// Register a specific shortcut string.
+fn register_shortcut(app: &AppHandle, hotkey_str: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let shortcut: Shortcut = hotkey_str.parse()?;
     let app_handle = app.clone();
 
     app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, _event| {
@@ -21,6 +90,44 @@ pub fn register(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     })?;
+
+    Ok(())
+}
+
+// --- Tauri commands ---
+
+/// Get the current hotkey string.
+#[tauri::command]
+pub fn get_hotkey(state: tauri::State<'_, HotkeyState>) -> String {
+    state.0.lock().unwrap().clone()
+}
+
+/// Change the global hotkey. Unregisters the old one, registers the new one, persists to disk.
+#[tauri::command]
+pub fn set_hotkey(
+    app: AppHandle,
+    state: tauri::State<'_, HotkeyState>,
+    shortcut: String,
+) -> Result<(), String> {
+    // Validate the new shortcut parses.
+    let _: Shortcut = shortcut.parse().map_err(|e: tauri_plugin_global_shortcut::Error| {
+        format!("Invalid shortcut: {e}")
+    })?;
+
+    // Unregister all existing shortcuts.
+    app.global_shortcut()
+        .unregister_all()
+        .map_err(|e| format!("Failed to unregister old shortcut: {e}"))?;
+
+    // Register the new one.
+    register_shortcut(&app, &shortcut)
+        .map_err(|e| format!("Failed to register shortcut: {e}"))?;
+
+    // Persist.
+    save_hotkey(&shortcut).map_err(|e| format!("Failed to save preference: {e}"))?;
+
+    // Update in-memory state.
+    *state.0.lock().unwrap() = shortcut;
 
     Ok(())
 }
