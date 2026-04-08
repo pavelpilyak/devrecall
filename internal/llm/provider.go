@@ -3,9 +3,22 @@ package llm
 import "context"
 
 // Message represents a single message in a chat conversation.
+//
+// For tool-calling flows, extra fields carry tool-call metadata:
+//   - An assistant message that emitted tool calls sets ToolCalls.
+//   - A tool-result message uses Role=="tool" with ToolCallID set to the
+//     ID of the call it is answering and Content holding the result payload.
 type Message struct {
-	Role    string // "system", "user", "assistant"
+	Role    string // "system", "user", "assistant", "tool"
 	Content string
+
+	// ToolCalls is populated on assistant messages that requested tool
+	// invocations. Empty for normal text replies.
+	ToolCalls []ToolCall
+
+	// ToolCallID is populated on tool-result messages (Role=="tool") and
+	// identifies which ToolCall the content is answering.
+	ToolCallID string
 }
 
 // ChatOpts controls LLM generation behavior.
