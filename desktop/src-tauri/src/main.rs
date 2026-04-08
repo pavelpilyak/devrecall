@@ -60,9 +60,10 @@ fn main() {
                 }
             });
 
-            // Hide the main window on startup — the tray icon is the entry point.
+            // Open devtools in debug builds.
+            #[cfg(debug_assertions)]
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.hide();
+                window.open_devtools();
             }
 
             Ok(())

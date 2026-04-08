@@ -18,16 +18,10 @@
         "width": 420,
         "height": 520,
         "resizable": true,
-        "visible": false,
+        "visible": true,
         "decorations": true
       }
-    ],
-    "trayIcon": {
-      "id": "devrecall-tray",
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true,
-      "tooltip": "DevRecall"
-    }
+    ]
   },
   "plugins": {
     "updater": {

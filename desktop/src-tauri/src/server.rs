@@ -90,6 +90,23 @@ fn find_binary() -> Option<PathBuf> {
         }
     }
 
+    // 4. Development: project bin/ directory (from make build).
+    if let Ok(exe) = std::env::current_exe() {
+        // Walk up from the executable to find the project root.
+        let mut dir = exe.parent().map(|p| p.to_path_buf());
+        for _ in 0..10 {
+            if let Some(ref d) = dir {
+                let candidate = d.join("bin/devrecall");
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+                dir = d.parent().map(|p| p.to_path_buf());
+            } else {
+                break;
+            }
+        }
+    }
+
     None
 }
 

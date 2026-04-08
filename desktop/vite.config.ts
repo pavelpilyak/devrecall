@@ -9,6 +9,9 @@ export default defineConfig({
     strictPort: true,
   },
   envPrefix: ["VITE_", "TAURI_"],
+  resolve: {
+    conditions: ["browser", "import", "module", "default"],
+  },
   build: {
     target: "safari15",
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,

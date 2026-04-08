@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pavelpiliak/devrecall/internal/auth"
+	"github.com/pavelpiliak/devrecall/internal/collector/git"
 	"github.com/pavelpiliak/devrecall/internal/config"
 	"github.com/pavelpiliak/devrecall/internal/embedding"
 	"github.com/pavelpiliak/devrecall/internal/license"
@@ -52,7 +54,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.srv = &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", s.port),
-		Handler: mux,
+		Handler: corsMiddleware(mux),
 	}
 
 	go func() {
@@ -363,6 +365,35 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Supplement with date-filtered activities if query mentions relative dates.
+	if start, end, ok := parseDateRange(req.Message); ok {
+		dateActivities, _ := s.db.ListActivities(storage.ActivityFilter{
+			After:  start,
+			Before: end,
+			Limit:  20,
+		})
+		// If no data for the requested period, auto-sync and retry.
+		if len(dateActivities) == 0 && len(results) == 0 {
+			if n := s.syncGit(r.Context()); n > 0 {
+				dateActivities, _ = s.db.ListActivities(storage.ActivityFilter{
+					After:  start,
+					Before: end,
+					Limit:  20,
+				})
+			}
+		}
+		// Merge date-filtered activities into RAG results (avoid duplicates).
+		existingIDs := make(map[string]bool)
+		for _, r := range results {
+			existingIDs[r.Activity.SourceID] = true
+		}
+		for _, a := range dateActivities {
+			if !existingIDs[a.SourceID] {
+				results = append(results, rag.Result{Activity: a, Score: 1.0})
+			}
+		}
+	}
+
 	// Build context from retrieved activities.
 	contextStr := formatRAGContext(results)
 
@@ -389,9 +420,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
-	// Trigger a lightweight sync — just report what would be synced.
-	// Full sync with all collectors is complex and long-running;
-	// the POST /api/sync endpoint acknowledges the request and returns source status.
+	synced := s.syncGit(r.Context())
+
 	counts, err := s.db.CountActivitiesBySource()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "counting activities: "+err.Error())
@@ -399,9 +429,47 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"message":    "sync acknowledged",
+		"message":    fmt.Sprintf("sync complete — %d new activities", synced),
 		"activities": counts,
 	})
+}
+
+// syncGit runs git collector and inserts new activities. Returns count of new activities.
+func (s *Server) syncGit(ctx context.Context) int {
+	if !s.cfg.Git.Enabled {
+		return 0
+	}
+	repos := s.cfg.Git.Repos
+	if len(s.cfg.Git.ScanPaths) > 0 {
+		repos = mergeUnique(repos, git.DiscoverRepos(s.cfg.Git.ScanPaths))
+	}
+	emails := mergeUnique(s.cfg.Git.Emails, git.DetectEmails(repos))
+
+	if len(repos) == 0 || len(emails) == 0 {
+		return 0
+	}
+	collector := git.New(repos, emails)
+	activities, err := collector.Collect(ctx)
+	if err != nil || len(activities) == 0 {
+		return 0
+	}
+	inserted, _ := s.db.InsertActivities(activities)
+	return inserted
+}
+
+func mergeUnique(a, b []string) []string {
+	seen := make(map[string]bool, len(a))
+	for _, s := range a {
+		seen[s] = true
+	}
+	result := append([]string{}, a...)
+	for _, s := range b {
+		if !seen[s] {
+			result = append(result, s)
+			seen[s] = true
+		}
+	}
+	return result
 }
 
 func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
@@ -484,6 +552,73 @@ func (s *Server) promptLoader() *summarizer.PromptLoader {
 		return summarizer.NewPromptLoader("")
 	}
 	return summarizer.NewPromptLoader(dir + "/prompts")
+}
+
+// corsMiddleware adds CORS headers for local development (Tauri dev server on localhost:5173).
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// parseDateRange detects relative date references in a query and returns
+// the corresponding time range. Supports "yesterday", "today", "this week",
+// "last week", "last N days".
+func parseDateRange(query string) (start, end time.Time, ok bool) {
+	q := strings.ToLower(query)
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+	switch {
+	case strings.Contains(q, "yesterday"):
+		start = today.AddDate(0, 0, -1)
+		end = today
+		ok = true
+	case strings.Contains(q, "today"):
+		start = today
+		end = today.AddDate(0, 0, 1)
+		ok = true
+	case strings.Contains(q, "this week"):
+		weekday := int(today.Weekday())
+		if weekday == 0 {
+			weekday = 7 // Sunday = 7
+		}
+		start = today.AddDate(0, 0, -(weekday - 1)) // Monday
+		end = today.AddDate(0, 0, 1)
+		ok = true
+	case strings.Contains(q, "last week"):
+		weekday := int(today.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		thisMonday := today.AddDate(0, 0, -(weekday - 1))
+		start = thisMonday.AddDate(0, 0, -7)
+		end = thisMonday
+		ok = true
+	default:
+		// "last N days" / "past N days"
+		for _, prefix := range []string{"last ", "past "} {
+			if idx := strings.Index(q, prefix); idx >= 0 {
+				rest := q[idx+len(prefix):]
+				if spaceIdx := strings.Index(rest, " day"); spaceIdx > 0 {
+					if n, err := strconv.Atoi(strings.TrimSpace(rest[:spaceIdx])); err == nil && n > 0 {
+						start = today.AddDate(0, 0, -n)
+						end = today.AddDate(0, 0, 1)
+						ok = true
+						return
+					}
+				}
+			}
+		}
+	}
+	return
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

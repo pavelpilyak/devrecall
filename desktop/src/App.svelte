@@ -66,21 +66,14 @@
       {/each}
     </nav>
 
-    <!-- Tab content -->
-    <div class="flex-1 overflow-hidden">
-      {#if activeTab === "chat"}
-        <Chat />
-      {:else if activeTab === "standup"}
-        <Standup />
-      {:else if activeTab === "weekly"}
-        <Weekly />
-      {:else if activeTab === "timeline"}
-        <Timeline />
-      {:else if activeTab === "search"}
-        <Search />
-      {:else if activeTab === "settings"}
-        <Settings />
-      {/if}
+    <!-- Tab content — all mounted, hidden via CSS to preserve state -->
+    <div class="flex-1 overflow-hidden relative">
+      <div class="absolute inset-0" class:hidden={activeTab !== "chat"}><Chat /></div>
+      <div class="absolute inset-0" class:hidden={activeTab !== "standup"}><Standup /></div>
+      <div class="absolute inset-0" class:hidden={activeTab !== "weekly"}><Weekly /></div>
+      <div class="absolute inset-0" class:hidden={activeTab !== "timeline"}><Timeline /></div>
+      <div class="absolute inset-0" class:hidden={activeTab !== "search"}><Search /></div>
+      <div class="absolute inset-0" class:hidden={activeTab !== "settings"}><Settings /></div>
     </div>
   {/if}
 </main>

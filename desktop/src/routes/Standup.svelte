@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { api, type StandupResponse } from "../lib/api";
 
   let date = $state(yesterdayStr());
@@ -42,9 +41,6 @@
     loadStandup();
   }
 
-  onMount(() => {
-    loadStandup();
-  });
 </script>
 
 <div class="flex flex-col h-full">
@@ -98,6 +94,16 @@
       {:else}
         <div class="text-sm whitespace-pre-wrap leading-relaxed">{report.report}</div>
       {/if}
+    {:else}
+      <div class="flex items-center justify-center h-32">
+        <button
+          onclick={loadStandup}
+          class="px-6 py-2.5 text-sm font-medium rounded-lg bg-devrecall-600 text-white
+                 hover:bg-devrecall-700 transition-colors"
+        >
+          Generate Standup
+        </button>
+      </div>
     {/if}
   </div>
 

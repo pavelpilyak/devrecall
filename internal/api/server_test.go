@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -364,8 +365,9 @@ func TestHandleSync(t *testing.T) {
 
 	var resp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["message"] != "sync acknowledged" {
-		t.Errorf("expected sync acknowledged, got %v", resp["message"])
+	msg, _ := resp["message"].(string)
+	if !strings.Contains(msg, "sync complete") {
+		t.Errorf("expected 'sync complete' message, got %q", msg)
 	}
 }
 
@@ -504,4 +506,69 @@ func TestHandleActivate(t *testing.T) {
 			t.Errorf("expected 400, got %d", w.Code)
 		}
 	})
+}
+
+func TestParseDateRange(t *testing.T) {
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+	tests := []struct {
+		name      string
+		query     string
+		wantOK    bool
+		wantStart time.Time
+		wantEnd   time.Time
+	}{
+		{
+			name:      "yesterday",
+			query:     "What did I do yesterday?",
+			wantOK:    true,
+			wantStart: today.AddDate(0, 0, -1),
+			wantEnd:   today,
+		},
+		{
+			name:      "today",
+			query:     "Show me today's work",
+			wantOK:    true,
+			wantStart: today,
+			wantEnd:   today.AddDate(0, 0, 1),
+		},
+		{
+			name:      "last 3 days",
+			query:     "what happened in the last 3 days",
+			wantOK:    true,
+			wantStart: today.AddDate(0, 0, -3),
+			wantEnd:   today.AddDate(0, 0, 1),
+		},
+		{
+			name:      "past 7 days",
+			query:     "summary of the past 7 days",
+			wantOK:    true,
+			wantStart: today.AddDate(0, 0, -7),
+			wantEnd:   today.AddDate(0, 0, 1),
+		},
+		{
+			name:   "no date reference",
+			query:  "What is the auth middleware?",
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start, end, ok := parseDateRange(tt.query)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if !start.Equal(tt.wantStart) {
+				t.Errorf("start = %v, want %v", start, tt.wantStart)
+			}
+			if !end.Equal(tt.wantEnd) {
+				t.Errorf("end = %v, want %v", end, tt.wantEnd)
+			}
+		})
+	}
 }

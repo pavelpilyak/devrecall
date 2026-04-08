@@ -1,8 +1,9 @@
 //! System tray (menu bar) icon and context menu.
 
 use tauri::{
+    image::Image,
     menu::{Menu, MenuItem},
-    tray::TrayIconEvent,
+    tray::{TrayIconBuilder, TrayIconEvent},
     Manager,
 };
 
@@ -14,10 +15,14 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let menu = Menu::with_items(app, &[&show, &sync_now, &quit])?;
 
-    if let Some(tray) = app.tray_by_id("devrecall-tray") {
-        tray.set_menu(Some(menu))?;
+    let icon = Image::from_bytes(include_bytes!("../icons/icon.png"))
+        .map_err(|e| format!("Failed to load tray icon: {e}"))?;
 
-        tray.on_menu_event(move |app, event| match event.id.as_ref() {
+    let tray = TrayIconBuilder::with_id("devrecall-tray")
+        .icon(icon)
+        .tooltip("DevRecall")
+        .menu(&menu)
+        .on_menu_event(move |app, event| match event.id.as_ref() {
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
@@ -29,7 +34,6 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 tauri::async_runtime::spawn(async move {
                     let url = format!("http://127.0.0.1:{}/api/sync", crate::server::API_PORT);
                     let _ = reqwest::Client::new().post(&url).send().await;
-                    // Update tray tooltip after sync.
                     if let Some(tray) = app.tray_by_id("devrecall-tray") {
                         let _ = tray.set_tooltip(Some("DevRecall — synced just now"));
                     }
@@ -39,11 +43,10 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 app.exit(0);
             }
             _ => {}
-        });
-
-        // Left-click on tray icon toggles the main window.
-        tray.on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { .. } = event {
+        })
+        .on_tray_icon_event(|tray, event| {
+            // Only react to left-click, not double-click or other events.
+            if matches!(event, TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, button_state: tauri::tray::MouseButtonState::Up, .. }) {
                 let app = tray.app_handle();
                 if let Some(window) = app.get_webview_window("main") {
                     if window.is_visible().unwrap_or(false) {
@@ -54,8 +57,10 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-        });
-    }
+        })
+        .build(app)?;
+
+    let _ = tray.set_show_menu_on_left_click(false);
 
     Ok(())
 }

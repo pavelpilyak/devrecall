@@ -110,7 +110,7 @@ pub fn set_hotkey(
     shortcut: String,
 ) -> Result<(), String> {
     // Validate the new shortcut parses.
-    let _: Shortcut = shortcut.parse().map_err(|e: tauri_plugin_global_shortcut::Error| {
+    let _: Shortcut = shortcut.parse().map_err(|e| {
         format!("Invalid shortcut: {e}")
     })?;
 
