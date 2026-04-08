@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/pavelpiliak/devrecall/internal/agent"
+	"github.com/pavelpiliak/devrecall/internal/chat/freshness"
 	"github.com/pavelpiliak/devrecall/internal/llm"
 	"github.com/pavelpiliak/devrecall/internal/storage"
 )
@@ -48,6 +49,12 @@ type Session struct {
 	db      *storage.DB
 	history []llm.Message
 
+	// freshness, if non-nil, is run before each query against syncers
+	// to keep stale sources up to date. Both fields are usually wired
+	// up together; either being nil disables the step entirely.
+	freshness *freshness.Checker
+	syncers   map[string]freshness.Syncer
+
 	// lastTrace holds the tool-call trace from the most recent agent run,
 	// so /trace can show what the agent did.
 	lastTrace []agent.TraceStep
@@ -65,6 +72,17 @@ func NewSession(in io.Reader, out io.Writer, loop *agent.Loop, db *storage.DB) *
 		loop: loop,
 		db:   db,
 	}
+}
+
+// WithFreshness wires a pre-agent sync step into this session. Before
+// each query the Checker runs the provided syncers; stale sources emit
+// "Syncing …" / "synced N new" lines and the agent loop only starts
+// after the wait cap. The /sync slash command forces a refresh of every
+// registered source on demand.
+func (s *Session) WithFreshness(checker *freshness.Checker, syncers map[string]freshness.Syncer) *Session {
+	s.freshness = checker
+	s.syncers = syncers
+	return s
 }
 
 // Run starts the interactive chat REPL. It blocks until the user types /quit or input ends.
@@ -100,7 +118,54 @@ func (s *Session) Run(ctx context.Context) error {
 	return scanner.Err()
 }
 
+// runFreshness runs the freshness checker (if wired) and renders any
+// emitted events to the REPL output. force=true is used by the /sync
+// slash command to bypass TTLs and the Enabled flag.
+//
+// Errors from individual syncers are surfaced inline as " ! source: err"
+// lines but never abort the chat loop — the agent should still try to
+// answer with whatever data is already in SQLite.
+func (s *Session) runFreshness(ctx context.Context, force bool) {
+	if s.freshness == nil || len(s.syncers) == 0 {
+		if force {
+			fmt.Fprintln(s.out, "(no syncers wired)")
+			fmt.Fprintln(s.out)
+		}
+		return
+	}
+
+	events := s.freshness.Run(ctx, s.syncers, force)
+	rendered := false
+	for ev := range events {
+		switch ev.Status {
+		case freshness.StatusSyncing:
+			fmt.Fprintf(s.out, "⟳ Syncing %s…\n", ev.Source)
+			rendered = true
+		case freshness.StatusSynced:
+			if ev.Added > 0 {
+				fmt.Fprintf(s.out, "✓ %s synced (%d new)\n", ev.Source, ev.Added)
+			} else {
+				fmt.Fprintf(s.out, "✓ %s synced\n", ev.Source)
+			}
+			rendered = true
+		case freshness.StatusError:
+			fmt.Fprintf(s.out, "! %s sync failed: %s\n", ev.Source, ev.Err)
+			rendered = true
+		case freshness.StatusFresh:
+			// Only emitted on a forced run.
+			fmt.Fprintf(s.out, "· %s fresh\n", ev.Source)
+			rendered = true
+		}
+	}
+	if rendered {
+		fmt.Fprintln(s.out)
+	}
+}
+
 func (s *Session) handleQuery(ctx context.Context, query string) error {
+	// Pre-agent freshness sync — silent when everything is fresh.
+	s.runFreshness(ctx, false)
+
 	// Assemble messages: system + history + current.
 	messages := make([]llm.Message, 0, 2+len(s.history))
 	messages = append(messages, llm.Message{Role: "system", Content: systemPrompt})
@@ -189,7 +254,7 @@ func (s *Session) handleQuery(ctx context.Context, query string) error {
 	return nil
 }
 
-func (s *Session) handleCommand(_ context.Context, cmd string) (quit bool) {
+func (s *Session) handleCommand(ctx context.Context, cmd string) (quit bool) {
 	parts := strings.SplitN(cmd, " ", 2)
 	command := parts[0]
 	arg := ""
@@ -210,6 +275,7 @@ func (s *Session) handleCommand(_ context.Context, cmd string) (quit bool) {
 		fmt.Fprintln(s.out, "  /search <query>    FTS5 keyword search (no LLM)")
 		fmt.Fprintln(s.out, "  /trace             Show tool calls from the last answer")
 		fmt.Fprintln(s.out, "  /stats             Show activity statistics")
+		fmt.Fprintln(s.out, "  /sync              Force re-sync of every wired source")
 		fmt.Fprintln(s.out)
 
 	case "/clear":
@@ -226,6 +292,9 @@ func (s *Session) handleCommand(_ context.Context, cmd string) (quit bool) {
 
 	case "/stats":
 		s.cmdStats()
+
+	case "/sync":
+		s.runFreshness(ctx, true)
 
 	default:
 		fmt.Fprintf(s.out, "Unknown command: %s (type /help)\n\n", cmd)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/pavelpiliak/devrecall/internal/agent"
 	agenttools "github.com/pavelpiliak/devrecall/internal/agent/tools"
+	"github.com/pavelpiliak/devrecall/internal/chat/freshness"
 	"github.com/pavelpiliak/devrecall/internal/embedding"
 	"github.com/pavelpiliak/devrecall/internal/llm"
 )
@@ -78,6 +79,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	// Pre-agent freshness sync: keep stale local sources up to date
+	// before the agent loop starts. Stream each lifecycle event as a
+	// `freshness` SSE frame so the UI can show "Syncing slack…".
+	s.runChatFreshness(r, w, flusher, false)
+
 	messages := make([]llm.Message, 0, 2+len(req.History))
 	messages = append(messages, llm.Message{Role: "system", Content: chatStreamSystemPrompt})
 	messages = append(messages, req.History...)
@@ -118,6 +124,39 @@ func (s *Server) chatLoop() (*agent.Loop, error) {
 		Embedder: embedder,
 	})
 	return agent.NewLoop(toolProvider, registry, agent.LoopOptions{}), nil
+}
+
+// runChatFreshness invokes the freshness checker before the agent loop
+// starts and re-emits each Event as an SSE `freshness` frame so the UI
+// can render "Syncing slack…" / "slack synced (12 new)" lines without
+// blocking on the agent. force=true bypasses TTLs and the Enabled flag.
+//
+// Tests can override the wired checker/syncers via the
+// freshnessCheckerFactory and freshnessSyncerFactory hooks on Server.
+func (s *Server) runChatFreshness(r *http.Request, w http.ResponseWriter, flusher http.Flusher, force bool) {
+	checker, syncers := s.chatFreshness()
+	if checker == nil || len(syncers) == 0 {
+		return
+	}
+	for ev := range checker.Run(r.Context(), syncers, force) {
+		payload, err := json.Marshal(ev)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(w, "event: freshness\ndata: %s\n\n", payload)
+		flusher.Flush()
+	}
+}
+
+// chatFreshness returns the freshness checker + syncers used by the
+// chat-stream handler. Tests inject fakes via freshnessFactory; in
+// production it's built lazily from cfg + db on each request (cheap —
+// no I/O until Run is called).
+func (s *Server) chatFreshness() (*freshness.Checker, map[string]freshness.Syncer) {
+	if s.freshnessFactory != nil {
+		return s.freshnessFactory()
+	}
+	return BuildFreshnessChecker(s.cfg, s.db), BuildFreshnessSyncers(s.cfg, s.db)
 }
 
 // writeSSE serialises one AgentEvent as an SSE event frame.

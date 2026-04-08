@@ -15,6 +15,7 @@ import (
 
 	"github.com/pavelpiliak/devrecall/internal/agent"
 	agenttools "github.com/pavelpiliak/devrecall/internal/agent/tools"
+	"github.com/pavelpiliak/devrecall/internal/chat/freshness"
 	"github.com/pavelpiliak/devrecall/internal/llm"
 	"github.com/pavelpiliak/devrecall/pkg/models"
 )
@@ -161,6 +162,101 @@ func TestHandleChatStream_HappyPath(t *testing.T) {
 	}
 	if doneEv.Content != "It is noon." {
 		t.Errorf("done.content = %q", doneEv.Content)
+	}
+}
+
+// TestHandleChatStream_FreshnessEvents verifies the SSE handler runs the
+// freshness checker before the agent loop starts and surfaces lifecycle
+// events as `freshness` SSE frames.
+func TestHandleChatStream_FreshnessEvents(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	prov := &fakeStreamProvider{
+		responses: []llm.ChatResponse{{Content: "ok"}},
+	}
+	installFakeLoop(srv, prov)
+
+	syncerCalls := 0
+	srv.freshnessFactory = func() (*freshness.Checker, map[string]freshness.Syncer) {
+		return freshness.New(db, freshness.Options{
+				Enabled:    true,
+				DefaultTTL: time.Hour,
+			}),
+			map[string]freshness.Syncer{
+				"git": func(_ context.Context) (int, error) {
+					syncerCalls++
+					return 4, nil
+				},
+			}
+	}
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, newRequest("POST", "/api/chat/stream",
+		map[string]any{"message": "what's new?"}))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	if syncerCalls != 1 {
+		t.Errorf("git syncer should run exactly once, got %d", syncerCalls)
+	}
+
+	frames := readSSE(t, w.Body.Bytes())
+
+	// We expect at least two `freshness` frames (Syncing then Synced)
+	// emitted before the agent's `done` frame.
+	var freshFrames []sseFrame
+	doneIdx := -1
+	for i, f := range frames {
+		if f.Event == "freshness" {
+			freshFrames = append(freshFrames, f)
+		}
+		if f.Event == "done" && doneIdx == -1 {
+			doneIdx = i
+		}
+	}
+	if len(freshFrames) < 2 {
+		t.Fatalf("expected ≥2 freshness frames, got %d:\n%s", len(freshFrames), w.Body.String())
+	}
+	if doneIdx == -1 {
+		t.Fatalf("missing done frame")
+	}
+	// Freshness must precede done.
+	for i, f := range frames[:doneIdx] {
+		if f.Event == "freshness" {
+			break
+		}
+		if i == doneIdx-1 {
+			t.Errorf("no freshness frame before done")
+		}
+	}
+
+	// Check Syncing/Synced statuses are present in the payloads.
+	var statuses []string
+	for _, f := range freshFrames {
+		var ev struct {
+			Status string `json:"status"`
+			Added  int    `json:"added,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(f.Data), &ev); err != nil {
+			t.Fatalf("freshness payload: %v (%s)", err, f.Data)
+		}
+		statuses = append(statuses, ev.Status)
+	}
+	hasSyncing, hasSynced := false, false
+	for _, s := range statuses {
+		if s == "syncing" {
+			hasSyncing = true
+		}
+		if s == "synced" {
+			hasSynced = true
+		}
+	}
+	if !hasSyncing || !hasSynced {
+		t.Errorf("expected syncing+synced statuses, got %v", statuses)
 	}
 }
 

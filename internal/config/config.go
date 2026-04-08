@@ -77,8 +77,31 @@ type Config struct {
 	LLM          LLMConfig        `json:"llm"`
 	Embedding    EmbeddingConfig  `json:"embedding,omitempty"`
 	Privacy      PrivacyConfig    `json:"privacy,omitempty"`
+	Chat         ChatConfig       `json:"chat,omitempty"`
 	TokenStorage string           `json:"token_storage,omitempty"` // "keychain" or "file" (default: "file")
 	filePath     string
+}
+
+// ChatConfig holds chat-loop runtime tweaks.
+type ChatConfig struct {
+	SyncFreshness SyncFreshnessConfig `json:"sync_freshness,omitempty"`
+}
+
+// SyncFreshnessConfig configures the pre-agent freshness sync step. See
+// docs/chat-agent-rewrite.md ("Sync freshness — pre-agent only"). Durations
+// are time.ParseDuration strings, e.g. "3h", "30m".
+type SyncFreshnessConfig struct {
+	// Disabled turns the freshness step off entirely. The /sync slash
+	// command can still force a refresh.
+	Disabled bool `json:"disabled,omitempty"`
+	// DefaultTTL is the freshness window applied to any source not listed
+	// in PerSource. Empty falls back to freshness.DefaultTTL (3h).
+	DefaultTTL string `json:"default_ttl,omitempty"`
+	// PerSource overrides DefaultTTL by source name (e.g. "slack": "1h").
+	PerSource map[string]string `json:"per_source,omitempty"`
+	// Wait caps the total time spent blocking on in-flight syncs. Empty
+	// falls back to freshness.DefaultWait (10s).
+	Wait string `json:"wait,omitempty"`
 }
 
 

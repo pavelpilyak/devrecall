@@ -11,6 +11,7 @@ import (
 
 	"github.com/pavelpiliak/devrecall/internal/agent"
 	"github.com/pavelpiliak/devrecall/internal/auth"
+	"github.com/pavelpiliak/devrecall/internal/chat/freshness"
 	"github.com/pavelpiliak/devrecall/internal/collector/git"
 	"github.com/pavelpiliak/devrecall/internal/config"
 	"github.com/pavelpiliak/devrecall/internal/embedding"
@@ -38,6 +39,11 @@ type Server struct {
 	// Tests inject a fake provider through this hook; in production it's
 	// constructed from cfg + tokenStore on first call (see chatLoop).
 	agentLoopFactory func() (*agent.Loop, error)
+
+	// freshnessFactory builds the (Checker, syncers) pair used by the
+	// chat-stream handler. Tests inject deterministic syncers through
+	// this hook; in production it's BuildFreshnessChecker / BuildFreshnessSyncers.
+	freshnessFactory func() (*freshness.Checker, map[string]freshness.Syncer)
 }
 
 // NewServer creates a local API server on the given port (0 = default 9147).

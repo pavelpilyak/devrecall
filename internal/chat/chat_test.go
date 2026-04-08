@@ -12,6 +12,7 @@ import (
 
 	"github.com/pavelpiliak/devrecall/internal/agent"
 	"github.com/pavelpiliak/devrecall/internal/agent/tools"
+	"github.com/pavelpiliak/devrecall/internal/chat/freshness"
 	"github.com/pavelpiliak/devrecall/internal/llm"
 	"github.com/pavelpiliak/devrecall/internal/storage"
 	"github.com/pavelpiliak/devrecall/pkg/models"
@@ -354,6 +355,118 @@ func TestSession_StatsCommand(t *testing.T) {
 	}
 }
 
+// ─── pre-agent freshness sync ────────────────────────────────────────────────
+
+// TestSession_FreshnessRunsBeforeQuery confirms a stale source is synced
+// (with its lifecycle lines rendered) before the agent loop sees the query.
+func TestSession_FreshnessRunsBeforeQuery(t *testing.T) {
+	prov := &scriptedProvider{
+		responses: []llm.ChatResponse{finalAnswer("ok")},
+	}
+	db := mustOpenDB(t)
+	session, out := newTestSession(t, "what's new?\n/quit\n", prov, db)
+
+	calls := 0
+	syncers := map[string]freshness.Syncer{
+		"git": func(_ context.Context) (int, error) {
+			calls++
+			return 7, nil
+		},
+	}
+	checker := freshness.New(db, freshness.Options{
+		Enabled:    true,
+		DefaultTTL: time.Hour,
+	})
+	session.WithFreshness(checker, syncers)
+
+	_ = session.Run(context.Background())
+
+	if calls != 1 {
+		t.Errorf("syncer should run exactly once before query, calls=%d", calls)
+	}
+	output := out.String()
+	if !strings.Contains(output, "Syncing git") {
+		t.Errorf("expected 'Syncing git' line, got:\n%s", output)
+	}
+	if !strings.Contains(output, "git synced (7 new)") {
+		t.Errorf("expected 'git synced (7 new)' line, got:\n%s", output)
+	}
+}
+
+// TestSession_SyncCommandForces verifies /sync runs even when the
+// freshness step is disabled and bypasses TTLs.
+func TestSession_SyncCommandForces(t *testing.T) {
+	prov := &scriptedProvider{}
+	db := mustOpenDB(t)
+	// Pretend git was synced just now — under the 1h default TTL it would
+	// be considered fresh on a normal Run, but /sync forces it.
+	if err := db.SetSyncState("git", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	session, out := newTestSession(t, "/sync\n/quit\n", prov, db)
+
+	calls := 0
+	syncers := map[string]freshness.Syncer{
+		"git": func(_ context.Context) (int, error) {
+			calls++
+			return 0, nil
+		},
+	}
+	// Enabled=false to prove /sync forces past it.
+	checker := freshness.New(db, freshness.Options{Enabled: false, DefaultTTL: time.Hour})
+	session.WithFreshness(checker, syncers)
+
+	_ = session.Run(context.Background())
+
+	if calls != 1 {
+		t.Errorf("/sync should force the syncer once, calls=%d", calls)
+	}
+	if prov.calls != 0 {
+		t.Errorf("/sync should not call LLM, calls=%d", prov.calls)
+	}
+	if !strings.Contains(out.String(), "git synced") {
+		t.Errorf("expected synced line, got:\n%s", out.String())
+	}
+}
+
+// TestSession_FreshnessSilentWhenFresh verifies fresh sources do not emit
+// any noise during a normal query.
+func TestSession_FreshnessSilentWhenFresh(t *testing.T) {
+	prov := &scriptedProvider{
+		responses: []llm.ChatResponse{finalAnswer("ok")},
+	}
+	db := mustOpenDB(t)
+	if err := db.SetSyncState("git", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	session, out := newTestSession(t, "what's new?\n/quit\n", prov, db)
+
+	calls := 0
+	syncers := map[string]freshness.Syncer{
+		"git": func(_ context.Context) (int, error) {
+			calls++
+			return 0, nil
+		},
+	}
+	checker := freshness.New(db, freshness.Options{
+		Enabled:    true,
+		DefaultTTL: time.Hour,
+		Now:        func() time.Time { return time.Now().Add(time.Minute) },
+	})
+	session.WithFreshness(checker, syncers)
+
+	_ = session.Run(context.Background())
+
+	if calls != 0 {
+		t.Errorf("fresh source should not invoke syncer, calls=%d", calls)
+	}
+	if strings.Contains(out.String(), "Syncing git") {
+		t.Errorf("fresh source should not emit Syncing line, got:\n%s", out.String())
+	}
+}
+
 // ─── /help ────────────────────────────────────────────────────────────────────
 
 func TestSession_HelpShowsAllCommands(t *testing.T) {
@@ -362,7 +475,7 @@ func TestSession_HelpShowsAllCommands(t *testing.T) {
 	_ = session.Run(context.Background())
 
 	output := out.String()
-	for _, cmd := range []string{"/help", "/quit", "/clear", "/search", "/trace", "/stats"} {
+	for _, cmd := range []string{"/help", "/quit", "/clear", "/search", "/trace", "/stats", "/sync"} {
 		if !strings.Contains(output, cmd) {
 			t.Errorf("/help output missing %s", cmd)
 		}
