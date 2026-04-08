@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -258,7 +259,27 @@ func (a *Anthropic) buildToolRequestBody(messages []Message, tools []Tool, opts 
 	if stream {
 		reqBody["stream"] = true
 	}
-	return json.Marshal(reqBody)
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		// Surface exactly which tool_use Input is malformed so we can chase
+		// the corruption back to its source. The error string itself
+		// (e.g. `json: error calling MarshalJSON for type json.RawMessage:
+		// invalid character '{' after top-level value`) hides which call
+		// caused it; this dump prints every assistant tool_use we tried
+		// to send so the bad one stands out.
+		log.Printf("anthropic: build request body failed: %v", err)
+		for _, m := range messages {
+			if m.Role != "assistant" {
+				continue
+			}
+			for _, tc := range m.ToolCalls {
+				log.Printf("anthropic:   assistant tool_use id=%q name=%q args=%q",
+					tc.ID, tc.Name, string(tc.Arguments))
+			}
+		}
+		return nil, err
+	}
+	return body, nil
 }
 
 // ChatWithTools sends a tool-calling chat request and returns the buffered

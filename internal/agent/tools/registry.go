@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/pavelpiliak/devrecall/internal/embedding"
@@ -107,6 +108,12 @@ func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessag
 	}
 	if len(args) == 0 {
 		args = json.RawMessage(`{}`)
+	}
+	// Log args verbatim so we can spot mid-stream JSON corruption
+	// (e.g. `{}{"key":"v"}` from broken Anthropic delta concatenation)
+	// at the boundary between provider and tool execution.
+	if !json.Valid(args) {
+		log.Printf("tools: Execute received invalid JSON args tool=%q raw=%q", name, string(args))
 	}
 	return t.Execute(ctx, args)
 }

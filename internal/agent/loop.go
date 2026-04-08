@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/pavelpiliak/devrecall/internal/agent/tools"
@@ -111,6 +112,8 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) (Result, error) 
 			return Result{Steps: step - 1, Trace: trace}, fmt.Errorf("agent step %d: %w", step, err)
 		}
 
+		sanitizeToolCalls(resp.ToolCalls, fmt.Sprintf("buffered step=%d provider=%s", step, l.provider.Name()))
+
 		// Final answer: model produced text and no tool calls.
 		if len(resp.ToolCalls) == 0 {
 			return Result{
@@ -159,6 +162,36 @@ func (l *Loop) executeOne(ctx context.Context, step int, call llm.ToolCall) Trac
 		ts.Result = result
 	}
 	return ts
+}
+
+// sanitizeToolCalls validates each ToolCall.Arguments is a single parseable
+// JSON object. Anything else (empty, malformed, multiple top-level values
+// like the `{}{"k":"v"}` Anthropic-deltas-bug pattern) is replaced with `{}`
+// so downstream json.Marshal of the next request body can't blow up with
+// "invalid character '{' after top-level value".
+//
+// When sanitization kicks in we log to stderr with the source context so we
+// can see in the dev console exactly which provider/path produced bad args.
+func sanitizeToolCalls(calls []llm.ToolCall, src string) {
+	for i := range calls {
+		raw := calls[i].Arguments
+		if isValidJSONObject(raw) {
+			continue
+		}
+		log.Printf("agent: sanitizing malformed tool args [%s] tool=%q id=%q raw=%q",
+			src, calls[i].Name, calls[i].ID, string(raw))
+		calls[i].Arguments = json.RawMessage(`{}`)
+	}
+}
+
+// isValidJSONObject reports whether raw is a single, parseable JSON object.
+// Empty `{}` is considered valid (the model is allowed to call argless tools).
+func isValidJSONObject(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var v map[string]interface{}
+	return json.Unmarshal(raw, &v) == nil
 }
 
 // toolResultMessage builds the tool-role message that's fed back to the

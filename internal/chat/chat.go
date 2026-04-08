@@ -186,7 +186,12 @@ func (s *Session) handleQuery(ctx context.Context, query string) error {
 	for ev := range events {
 		switch ev.Type {
 		case agent.AgentEventThinking:
-			// Quiet — tool_call lines convey progress better than a "Thinking..." spinner.
+			// Show "thinking" between tool steps so the user can tell the
+			// agent is alive even before the first token streams in.
+			if ev.Step > 1 {
+				fmt.Fprintln(s.out)
+			}
+			fmt.Fprintf(s.out, "✦ thinking (step %d)…\n", ev.Step)
 
 		case agent.AgentEventToken:
 			if !answerStarted {

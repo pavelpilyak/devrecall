@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/pavelpiliak/devrecall/internal/llm"
@@ -193,6 +194,11 @@ func (l *Loop) streamOneTurn(
 			if ev.ToolCall == nil {
 				continue
 			}
+			// Don't seed argsBuf from Start. Anthropic and friends emit a
+			// placeholder ({}) on Start and stream the real arguments via
+			// deltas; concatenating both produces invalid JSON like
+			// `{}{"key":"v"}`. argsBuf is delta-only; tc.Arguments holds
+			// whatever the provider sends on Start/End for the no-deltas case.
 			tc := &llm.ToolCall{
 				ID:        ev.ToolCall.ID,
 				Name:      ev.ToolCall.Name,
@@ -201,7 +207,6 @@ func (l *Loop) streamOneTurn(
 			toolCalls = append(toolCalls, tc)
 			toolByID[tc.ID] = tc
 			argsBuf[tc.ID] = &strings.Builder{}
-			argsBuf[tc.ID].Write(tc.Arguments)
 
 		case llm.StreamEventToolCallDelta:
 			if ev.ToolCall == nil {
@@ -233,6 +238,8 @@ func (l *Loop) streamOneTurn(
 				if ev.ToolCall.Name != "" {
 					tc.Name = ev.ToolCall.Name
 				}
+				// End carries the fully-assembled arguments. Always trust it
+				// over whatever Start placeholder we recorded earlier.
 				if len(ev.ToolCall.Arguments) > 0 {
 					tc.Arguments = append(json.RawMessage(nil), ev.ToolCall.Arguments...)
 				}
@@ -253,20 +260,55 @@ func (l *Loop) streamOneTurn(
 		return llm.ChatResponse{}, streamErr
 	}
 
-	// Finalise tool-call arguments from accumulated deltas.
+	// Finalise tool-call arguments. Preference order:
+	//   1. tc.Arguments populated by an End event (provider's authoritative
+	//      assembled args).
+	//   2. The delta buffer (for providers that stream deltas without an End).
+	//   3. Whatever Start gave us (typically `{}`).
+	// Anything that isn't valid JSON is normalised to `{}` so the registry
+	// json.Unmarshal call doesn't blow up downstream.
 	finalCalls := make([]llm.ToolCall, 0, len(toolCalls))
 	for _, tc := range toolCalls {
-		if buf, ok := argsBuf[tc.ID]; ok && buf.Len() > 0 {
-			tc.Arguments = json.RawMessage(buf.String())
+		if !looksLikePopulatedJSONObject(tc.Arguments) {
+			if buf, ok := argsBuf[tc.ID]; ok && buf.Len() > 0 {
+				log.Printf("agent: stream finalize falling back to delta buffer tool=%q id=%q end_args=%q delta=%q",
+					tc.Name, tc.ID, string(tc.Arguments), buf.String())
+				tc.Arguments = json.RawMessage(buf.String())
+			}
 		}
-		if len(tc.Arguments) == 0 {
+		if !isValidJSONObject(tc.Arguments) {
+			log.Printf("agent: stream finalize replacing malformed args with `{}` tool=%q id=%q raw=%q",
+				tc.Name, tc.ID, string(tc.Arguments))
 			tc.Arguments = json.RawMessage(`{}`)
 		}
 		finalCalls = append(finalCalls, *tc)
 	}
 
+	// Defense-in-depth: even if the per-tc loop above passed, run the shared
+	// sanitizer so any future code path can't sneak malformed args through.
+	sanitizeToolCalls(finalCalls, fmt.Sprintf("stream provider=%s", l.provider.Name()))
+
 	return llm.ChatResponse{
 		Content:   text.String(),
 		ToolCalls: finalCalls,
 	}, nil
+}
+
+// looksLikePopulatedJSONObject reports whether raw is a single, parseable
+// JSON object with at least one field. Used during streaming finalisation
+// to reject Anthropic's `{}` placeholder when real arguments are still
+// expected (so a non-empty delta buffer can win), and to catch the
+// `{}{...}` corruption pattern that brought us here.
+//
+// For "is this safe to send back to the model?" use isValidJSONObject in
+// loop.go — that one accepts empty `{}` because some tools take no args.
+func looksLikePopulatedJSONObject(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var v map[string]interface{}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return false
+	}
+	return len(v) > 0
 }

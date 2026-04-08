@@ -13,11 +13,15 @@
 
   // Each chat message is either a plain user line or an assistant turn
   // that may carry inline tool calls + an answer that streams in.
+  // `status` is a transient phase label rendered while the agent is still
+  // working ("Thinking…", "Calling list_activities…") so the user can see
+  // what's happening between tool steps.
   type ChatMessage = {
     role: "user" | "assistant";
     content: string;
     tools?: ToolCall[];
     streaming?: boolean;
+    status?: string;
   };
 
   let message = $state("");
@@ -37,7 +41,7 @@
     chatHistory = [
       ...chatHistory,
       { role: "user", content: userMessage },
-      { role: "assistant", content: "", tools: [], streaming: true },
+      { role: "assistant", content: "", tools: [], streaming: true, status: "Thinking…" },
     ];
     scrollToBottom();
 
@@ -56,7 +60,7 @@
     } finally {
       const last = chatHistory[chatHistory.length - 1];
       if (last && last.role === "assistant") {
-        chatHistory[chatHistory.length - 1] = { ...last, streaming: false };
+        chatHistory[chatHistory.length - 1] = { ...last, streaming: false, status: undefined };
       }
       loading = false;
       scrollToBottom();
@@ -69,10 +73,16 @@
     const next = { ...last, tools: [...(last.tools ?? [])] };
 
     switch (ev.type) {
+      case "thinking":
+        next.status = ev.step > 1 ? `Thinking… (step ${ev.step})` : "Thinking…";
+        break;
       case "token":
+        // First streamed token clears the status pill.
+        next.status = undefined;
         next.content = (next.content ?? "") + ev.token;
         break;
       case "tool_call":
+        next.status = `Calling ${ev.tool_name}…`;
         next.tools.push({
           name: ev.tool_name,
           args: ev.tool_args,
@@ -80,6 +90,7 @@
         });
         break;
       case "tool_result": {
+        next.status = "Thinking…";
         // Match the most recent unresolved pill for this tool.
         for (let i = next.tools.length - 1; i >= 0; i--) {
           const t = next.tools[i];
@@ -96,6 +107,7 @@
         break;
       }
       case "done":
+        next.status = undefined;
         // The streamed tokens already populated next.content; only fall back
         // to ev.content if nothing was streamed (non-streaming providers).
         if (!next.content && ev.content) {
@@ -213,7 +225,13 @@
                 {/if}
               {/each}
             {/if}
-            <p class="whitespace-pre-wrap">{msg.content}{#if msg.streaming}<span class="animate-pulse">▍</span>{/if}</p>
+            {#if msg.status}
+              <p class="text-[11px] italic text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+                <span class="inline-block w-1.5 h-1.5 rounded-full bg-devrecall-500 animate-pulse"></span>
+                {msg.status}
+              </p>
+            {/if}
+            <p class="whitespace-pre-wrap">{msg.content}{#if msg.streaming && msg.content}<span class="animate-pulse">▍</span>{/if}</p>
           </div>
         </div>
       {/each}

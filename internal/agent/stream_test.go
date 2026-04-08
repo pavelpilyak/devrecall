@@ -166,6 +166,89 @@ func TestRunStream_StreamingHappyPath(t *testing.T) {
 	}
 }
 
+// ─── Anthropic-style streaming: Start with `{}` placeholder + delta chunks ───
+
+// TestRunStream_AnthropicStylePartialJSON regression-tests the bug where
+// Anthropic emits a tool_call_start with Arguments=`{}` (placeholder),
+// followed by delta chunks carrying the real JSON, then a tool_call_end
+// with the assembled args. The streaming finalizer used to concatenate
+// the placeholder with the deltas, producing `{}{"start":"…"}` which
+// failed json.RawMessage marshalling downstream ("invalid character '{'
+// after top-level value").
+func TestRunStream_AnthropicStylePartialJSON(t *testing.T) {
+	reg := newRegistryWithFixture(t)
+
+	turn1 := []llm.StreamEvent{
+		// Start carries the `{}` placeholder Anthropic always sends.
+		{Type: llm.StreamEventToolCallStart, ToolCall: &llm.ToolCall{
+			ID: "c1", Name: "list_activities", Arguments: json.RawMessage(`{}`),
+		}},
+		// Deltas stream the real JSON character-by-character (chunked here).
+		{Type: llm.StreamEventToolCallDelta, ToolCall: &llm.ToolCall{
+			ID: "c1", Arguments: json.RawMessage(`{"limit":`),
+		}},
+		{Type: llm.StreamEventToolCallDelta, ToolCall: &llm.ToolCall{
+			ID: "c1", Arguments: json.RawMessage(`2}`),
+		}},
+		// End carries the fully-assembled args.
+		{Type: llm.StreamEventToolCallEnd, ToolCall: &llm.ToolCall{
+			ID: "c1", Arguments: json.RawMessage(`{"limit":2}`),
+		}},
+		{Type: llm.StreamEventDone},
+	}
+	turn2 := []llm.StreamEvent{
+		{Type: llm.StreamEventToken, Token: "ok"},
+		{Type: llm.StreamEventDone},
+	}
+	prov := &streamingProvider{
+		turns:       [][]llm.StreamEvent{turn1, turn2},
+		streamingOn: true,
+	}
+
+	loop := NewLoop(prov, reg, LoopOptions{})
+	events := drain(loop.RunStream(context.Background(), []llm.Message{
+		{Role: "user", Content: "show me 2"},
+	}))
+
+	// Find the tool_call event and verify its args round-trip cleanly.
+	var tc *AgentEvent
+	for i := range events {
+		if events[i].Type == AgentEventToolCall {
+			tc = &events[i]
+			break
+		}
+	}
+	if tc == nil {
+		t.Fatalf("no tool_call event in stream")
+	}
+	got := strings.TrimSpace(string(tc.ToolArgs))
+	if got != `{"limit":2}` {
+		t.Errorf("tool_call args = %q, want {\"limit\":2}", got)
+	}
+
+	// And the tool_result must have actually fired (not been blocked by
+	// a JSON-parse error in the registry).
+	var tr *AgentEvent
+	for i := range events {
+		if events[i].Type == AgentEventToolResult {
+			tr = &events[i]
+			break
+		}
+	}
+	if tr == nil {
+		t.Fatalf("no tool_result event — args were probably mis-parsed")
+	}
+	if tr.ToolError != "" {
+		t.Errorf("tool_result error = %q (args were corrupted)", tr.ToolError)
+	}
+
+	// Final round-trip MarshalJSON should not error — that was the user-
+	// reported symptom downstream.
+	if _, err := json.Marshal(tc.ToolArgs); err != nil {
+		t.Errorf("tool_call args MarshalJSON: %v", err)
+	}
+}
+
 // ─── non-streaming fallback ───────────────────────────────────────────────────
 
 func TestRunStream_NonStreamingFallback(t *testing.T) {
