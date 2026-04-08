@@ -82,6 +82,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/sync", s.handleSync)
 	mux.HandleFunc("POST /api/activate", s.handleActivate)
+	mux.HandleFunc("POST /api/log", s.handleLog)
 }
 
 // --- Handlers ---
@@ -470,6 +471,97 @@ func mergeUnique(a, b []string) []string {
 		}
 	}
 	return result
+}
+
+func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text   string   `json:"text"`
+		At     string   `json:"at,omitempty"`
+		Tags   []string `json:"tags,omitempty"`
+		People []string `json:"people,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		writeError(w, http.StatusBadRequest, "missing required field: text")
+		return
+	}
+
+	ts := time.Now()
+	if req.At != "" {
+		parsed, err := parseLogTimestamp(req.At, ts.Location())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ts = parsed
+	}
+
+	title := text
+	if idx := strings.IndexByte(title, '\n'); idx >= 0 {
+		title = title[:idx]
+	}
+	if len(title) > 200 {
+		title = title[:200]
+	}
+
+	metadata := map[string]any{}
+	if len(req.Tags) > 0 {
+		metadata["tags"] = req.Tags
+	}
+	if len(req.People) > 0 {
+		metadata["people"] = req.People
+	}
+	var metaStr string
+	if len(metadata) > 0 {
+		b, _ := json.Marshal(metadata)
+		metaStr = string(b)
+	}
+
+	activity := models.Activity{
+		Source:    models.SourceManual,
+		SourceID:  fmt.Sprintf("manual-%d", ts.UnixNano()),
+		Type:      models.TypeNote,
+		Title:     title,
+		Content:   text,
+		Metadata:  metaStr,
+		Timestamp: ts,
+	}
+	if self, err := s.db.GetSelfIdentity(); err == nil && self != nil {
+		activity.IdentityID = self.ID
+	}
+
+	id, err := s.db.InsertActivity(activity)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to log: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":        id,
+		"timestamp": activity.Timestamp,
+		"title":     activity.Title,
+	})
+}
+
+func parseLogTimestamp(s string, loc *time.Location) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	layouts := []string{
+		"2006-01-02 15:04",
+		"2006-01-02T15:04",
+		"2006-01-02 15:04:05",
+		time.RFC3339,
+		"2006-01-02",
+	}
+	for _, layout := range layouts {
+		if t, err := time.ParseInLocation(layout, s, loc); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid timestamp %q (use YYYY-MM-DD or YYYY-MM-DD HH:MM)", s)
 }
 
 func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {

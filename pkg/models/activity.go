@@ -14,6 +14,7 @@ const (
 	SourceBitbucket Source = "bitbucket"
 	SourceJira      Source = "jira"
 	SourceLinear   Source = "linear"
+	SourceManual    Source = "manual"
 )
 
 // ActivityType categorizes what kind of work event this is.
@@ -28,6 +29,7 @@ const (
 	TypePullRequest  ActivityType = "pull_request"
 	TypeMergeRequest ActivityType = "merge_request"
 	TypeIssue        ActivityType = "issue"
+	TypeNote         ActivityType = "note"
 )
 
 // Activity is a single work event collected from any source.

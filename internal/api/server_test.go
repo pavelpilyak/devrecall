@@ -572,3 +572,92 @@ func TestParseDateRange(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleLog(t *testing.T) {
+	srv, db := setupTestServer(t)
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	t.Run("creates manual activity", func(t *testing.T) {
+		body := map[string]any{
+			"text":   "Talked to mobile team about API contract",
+			"tags":   []string{"meeting"},
+			"people": []string{"anna@example.com"},
+		}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("POST", "/api/log", body))
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if _, ok := resp["id"]; !ok {
+			t.Error("response missing id")
+		}
+		if resp["title"] != "Talked to mobile team about API contract" {
+			t.Errorf("title = %v", resp["title"])
+		}
+
+		// Verify it was stored as a manual activity.
+		acts, err := db.ListActivities(storage.ActivityFilter{Source: models.SourceManual, Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(acts) != 1 {
+			t.Fatalf("expected 1 manual activity, got %d", len(acts))
+		}
+		if acts[0].Type != models.TypeNote {
+			t.Errorf("type = %q, want note", acts[0].Type)
+		}
+		if !strings.Contains(acts[0].Metadata, "anna@example.com") {
+			t.Errorf("metadata missing person: %q", acts[0].Metadata)
+		}
+	})
+
+	t.Run("custom timestamp", func(t *testing.T) {
+		body := map[string]any{
+			"text": "Past event",
+			"at":   "2026-04-01 09:30",
+		}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("POST", "/api/log", body))
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		ts, _ := resp["timestamp"].(string)
+		if !strings.HasPrefix(ts, "2026-04-01T09:30") {
+			t.Errorf("timestamp = %q, want 2026-04-01T09:30...", ts)
+		}
+	})
+
+	t.Run("missing text", func(t *testing.T) {
+		body := map[string]any{"text": "   "}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("POST", "/api/log", body))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("invalid timestamp", func(t *testing.T) {
+		body := map[string]any{"text": "ok", "at": "garbage"}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, newRequest("POST", "/api/log", body))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/log", bytes.NewReader([]byte("not json")))
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+}

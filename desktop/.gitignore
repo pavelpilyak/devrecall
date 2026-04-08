@@ -1,2 +1,26 @@
-node_modules/*
-src-tauri/target/*
+# Node
+node_modules/
+dist/
+.pnpm-store/
+
+# Vite
+.vite/
+*.local
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
