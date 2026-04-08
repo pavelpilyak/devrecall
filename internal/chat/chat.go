@@ -107,24 +107,78 @@ func (s *Session) handleQuery(ctx context.Context, query string) error {
 	messages = append(messages, s.history...)
 	messages = append(messages, llm.Message{Role: "user", Content: query})
 
-	fmt.Fprintf(s.out, "Thinking...")
-	res, err := s.loop.Run(ctx, messages)
-	// Always store the trace, even on error, so /trace can show what was attempted.
-	s.lastTrace = res.Trace
-	if err != nil {
+	events := s.loop.RunStream(ctx, messages)
+
+	var (
+		answer    strings.Builder
+		trace     []agent.TraceStep
+		streamErr string
+		// inAnswer becomes true after the first token of the final answer
+		// is rendered, so we can prefix it with a blank line cleanly.
+		answerStarted bool
+	)
+
+	for ev := range events {
+		switch ev.Type {
+		case agent.AgentEventThinking:
+			// Quiet — tool_call lines convey progress better than a "Thinking..." spinner.
+
+		case agent.AgentEventToken:
+			if !answerStarted {
+				fmt.Fprintln(s.out)
+				answerStarted = true
+			}
+			fmt.Fprint(s.out, ev.Token)
+			answer.WriteString(ev.Token)
+
+		case agent.AgentEventToolCall:
+			fmt.Fprintf(s.out, "→ %s(%s)\n", ev.ToolName, compactArgs(ev.ToolArgs))
+
+		case agent.AgentEventToolResult:
+			step := agent.TraceStep{
+				Step:       ev.Step,
+				ToolName:   ev.ToolName,
+				ToolArgs:   ev.ToolArgs,
+				Result:     ev.ToolResult,
+				Error:      ev.ToolError,
+				DurationMs: ev.DurationMs,
+			}
+			trace = append(trace, step)
+			if ev.ToolError != "" {
+				fmt.Fprintf(s.out, "  ← error: %s (%dms)\n", ev.ToolError, ev.DurationMs)
+			} else {
+				fmt.Fprintf(s.out, "  ← %s (%dms)\n", previewJSON(ev.ToolResult, 80), ev.DurationMs)
+			}
+
+		case agent.AgentEventDone:
+			// If the model produced a content-only Done (no streamed
+			// tokens, e.g. non-streaming provider in tool-only loops),
+			// surface its content here.
+			if !answerStarted && ev.Content != "" {
+				fmt.Fprintln(s.out)
+				fmt.Fprint(s.out, ev.Content)
+				answer.WriteString(ev.Content)
+			}
+
+		case agent.AgentEventError:
+			streamErr = ev.Err
+		}
+	}
+
+	s.lastTrace = trace
+
+	if streamErr != "" {
 		fmt.Fprintln(s.out)
-		return fmt.Errorf("agent: %w", err)
+		return fmt.Errorf("agent: %s", streamErr)
 	}
 
 	fmt.Fprintln(s.out)
-	fmt.Fprintln(s.out)
-	fmt.Fprintln(s.out, res.Content)
 	fmt.Fprintln(s.out)
 
 	// Append to conversation history.
 	s.history = append(s.history,
 		llm.Message{Role: "user", Content: query},
-		llm.Message{Role: "assistant", Content: res.Content},
+		llm.Message{Role: "assistant", Content: answer.String()},
 	)
 
 	// Trim history to last N pairs.
@@ -253,6 +307,32 @@ func compactJSON(raw json.RawMessage) string {
 		return string(raw)
 	}
 	return string(b)
+}
+
+// compactArgs renders tool-call arguments for the streaming "→ tool(args)"
+// line. Empty objects collapse to nothing so the line stays clean.
+func compactArgs(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	c := compactJSON(raw)
+	if c == "{}" {
+		return ""
+	}
+	return c
+}
+
+// previewJSON compacts a JSON blob and truncates it to max characters
+// (with an ellipsis) so streamed tool result lines stay one-line.
+func previewJSON(raw json.RawMessage, max int) string {
+	if len(raw) == 0 {
+		return "{}"
+	}
+	c := compactJSON(raw)
+	if max > 3 && len(c) > max {
+		return c[:max-3] + "..."
+	}
+	return c
 }
 
 func (s *Session) cmdStats() {

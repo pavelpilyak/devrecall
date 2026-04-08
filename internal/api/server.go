@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pavelpiliak/devrecall/internal/agent"
 	"github.com/pavelpiliak/devrecall/internal/auth"
 	"github.com/pavelpiliak/devrecall/internal/collector/git"
 	"github.com/pavelpiliak/devrecall/internal/config"
@@ -32,6 +33,11 @@ type Server struct {
 	cfg        *config.Config
 	tokenStore auth.TokenStore
 	dataDir    string // override for ~/.devrecall (used in tests)
+
+	// agentLoopFactory builds the agent loop used by the chat-stream handler.
+	// Tests inject a fake provider through this hook; in production it's
+	// constructed from cfg + tokenStore on first call (see chatLoop).
+	agentLoopFactory func() (*agent.Loop, error)
 }
 
 // NewServer creates a local API server on the given port (0 = default 9147).
@@ -80,6 +86,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/activities", s.handleActivities)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
+	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
 	mux.HandleFunc("POST /api/sync", s.handleSync)
 	mux.HandleFunc("POST /api/activate", s.handleActivate)
 	mux.HandleFunc("POST /api/log", s.handleLog)

@@ -1,8 +1,27 @@
 <script lang="ts">
-  import { api } from "../lib/api";
+  import { api, type ChatStreamEvent } from "../lib/api";
+
+  // A tool call rendered inside an assistant message bubble.
+  type ToolCall = {
+    name: string;
+    args: unknown;
+    result?: unknown;
+    error?: string;
+    durationMs?: number;
+    expanded: boolean;
+  };
+
+  // Each chat message is either a plain user line or an assistant turn
+  // that may carry inline tool calls + an answer that streams in.
+  type ChatMessage = {
+    role: "user" | "assistant";
+    content: string;
+    tools?: ToolCall[];
+    streaming?: boolean;
+  };
 
   let message = $state("");
-  let chatHistory = $state<{ role: string; content: string }[]>([]);
+  let chatHistory = $state<ChatMessage[]>([]);
   let loading = $state(false);
   let error = $state("");
   let messagesEl: HTMLDivElement;
@@ -15,23 +34,97 @@
     error = "";
     loading = true;
 
-    chatHistory = [...chatHistory, { role: "user", content: userMessage }];
+    chatHistory = [
+      ...chatHistory,
+      { role: "user", content: userMessage },
+      { role: "assistant", content: "", tools: [], streaming: true },
+    ];
     scrollToBottom();
 
+    // The history we send to the server: only the prior turns, in the
+    // {role, content} shape the agent expects. Tool pills are local UI.
+    const historyForServer = chatHistory
+      .slice(0, -1)
+      .map((m) => ({ role: m.role, content: m.content }));
+
     try {
-      const resp = await api.chat(
-        userMessage,
-        chatHistory.slice(0, -1)
-      );
-      chatHistory = [
-        ...chatHistory,
-        { role: "assistant", content: resp.response },
-      ];
+      await api.chatStream(userMessage, handleStreamEvent, {
+        history: historyForServer.slice(0, -1), // drop the just-added user message
+      });
     } catch (e) {
       error = e instanceof Error ? e.message : "Chat failed";
     } finally {
+      const last = chatHistory[chatHistory.length - 1];
+      if (last && last.role === "assistant") {
+        chatHistory[chatHistory.length - 1] = { ...last, streaming: false };
+      }
       loading = false;
       scrollToBottom();
+    }
+  }
+
+  function handleStreamEvent(ev: ChatStreamEvent) {
+    const last = chatHistory[chatHistory.length - 1];
+    if (!last || last.role !== "assistant") return;
+    const next = { ...last, tools: [...(last.tools ?? [])] };
+
+    switch (ev.type) {
+      case "token":
+        next.content = (next.content ?? "") + ev.token;
+        break;
+      case "tool_call":
+        next.tools.push({
+          name: ev.tool_name,
+          args: ev.tool_args,
+          expanded: false,
+        });
+        break;
+      case "tool_result": {
+        // Match the most recent unresolved pill for this tool.
+        for (let i = next.tools.length - 1; i >= 0; i--) {
+          const t = next.tools[i];
+          if (t.name === ev.tool_name && t.result === undefined && !t.error) {
+            next.tools[i] = {
+              ...t,
+              result: ev.tool_result,
+              error: ev.tool_error,
+              durationMs: ev.duration_ms,
+            };
+            break;
+          }
+        }
+        break;
+      }
+      case "done":
+        // The streamed tokens already populated next.content; only fall back
+        // to ev.content if nothing was streamed (non-streaming providers).
+        if (!next.content && ev.content) {
+          next.content = ev.content;
+        }
+        break;
+      case "error":
+        error = ev.error;
+        break;
+    }
+
+    chatHistory[chatHistory.length - 1] = next;
+    scrollToBottom();
+  }
+
+  function toggleTool(msgIdx: number, toolIdx: number) {
+    const msg = chatHistory[msgIdx];
+    if (!msg || msg.role !== "assistant" || !msg.tools) return;
+    const tools = [...msg.tools];
+    tools[toolIdx] = { ...tools[toolIdx], expanded: !tools[toolIdx].expanded };
+    chatHistory[msgIdx] = { ...msg, tools };
+  }
+
+  function compact(v: unknown): string {
+    if (v === undefined || v === null) return "";
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
     }
   }
 
@@ -54,7 +147,7 @@
   }
 
   async function copyLastResponse() {
-    const last = chatHistory.findLast(m => m.role === "assistant");
+    const last = chatHistory.findLast((m) => m.role === "assistant");
     if (last) {
       await navigator.clipboard.writeText(last.content);
     }
@@ -87,23 +180,43 @@
         </div>
       </div>
     {:else}
-      {#each chatHistory as msg}
+      {#each chatHistory as msg, msgIdx}
         <div class="text-sm {msg.role === 'user' ? 'text-right' : ''}">
           <div class="inline-block max-w-[80%] px-3 py-2 rounded-lg {msg.role === 'user'
             ? 'bg-devrecall-600 text-white'
             : 'bg-zinc-100 dark:bg-zinc-800'}">
-            <p class="whitespace-pre-wrap">{msg.content}</p>
+            {#if msg.role === 'assistant' && msg.tools && msg.tools.length > 0}
+              <div class="flex flex-wrap gap-1 mb-2">
+                {#each msg.tools as tool, toolIdx}
+                  <button
+                    onclick={() => toggleTool(msgIdx, toolIdx)}
+                    class="text-[11px] px-2 py-0.5 rounded-full border
+                           {tool.error
+                             ? 'border-red-400 text-red-600 dark:text-red-400'
+                             : 'border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300'}
+                           hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+                    title={tool.error ?? "click to expand"}
+                  >
+                    {tool.name}
+                    {#if tool.durationMs !== undefined}
+                      <span class="opacity-60">{tool.durationMs}ms</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+              {#each msg.tools as tool, toolIdx}
+                {#if tool.expanded}
+                  <pre class="text-[11px] bg-zinc-200 dark:bg-zinc-900 rounded px-2 py-1 mb-2 overflow-x-auto whitespace-pre-wrap">
+<span class="opacity-60">args:</span> {compact(tool.args)}
+{#if tool.error}<span class="text-red-500">error:</span> {tool.error}{:else}<span class="opacity-60">result:</span> {compact(tool.result)}{/if}
+                  </pre>
+                {/if}
+              {/each}
+            {/if}
+            <p class="whitespace-pre-wrap">{msg.content}{#if msg.streaming}<span class="animate-pulse">▍</span>{/if}</p>
           </div>
         </div>
       {/each}
-
-      {#if loading}
-        <div class="text-sm">
-          <div class="inline-block px-3 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-500 animate-pulse">
-            Thinking...
-          </div>
-        </div>
-      {/if}
     {/if}
 
     {#if error}

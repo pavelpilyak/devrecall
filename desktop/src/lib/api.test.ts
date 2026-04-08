@@ -151,6 +151,85 @@ describe("api.chat", () => {
   });
 });
 
+describe("api.chatStream", () => {
+  // Builds a fake fetch response whose body is a ReadableStream that
+  // emits the given SSE-formatted text in chunks. Lets us exercise the
+  // line-buffer parser without spinning up a real server.
+  function mockSSEResponse(chunks: string[]) {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const c of chunks) controller.enqueue(encoder.encode(c));
+        controller.close();
+      },
+    });
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      body,
+      json: () => Promise.resolve({}),
+    };
+  }
+
+  it("decodes a multi-event SSE stream", async () => {
+    const sse =
+      "event: thinking\ndata: {\"step\":1}\n\n" +
+      "event: tool_call\ndata: {\"step\":1,\"tool_name\":\"current_time\",\"tool_args\":{}}\n\n" +
+      "event: tool_result\ndata: {\"step\":1,\"tool_name\":\"current_time\",\"tool_result\":{\"now\":\"noon\"},\"duration_ms\":3}\n\n" +
+      "event: token\ndata: {\"token\":\"It is \"}\n\n" +
+      "event: token\ndata: {\"token\":\"noon.\"}\n\n" +
+      "event: done\ndata: {\"step\":2,\"content\":\"It is noon.\"}\n\n";
+
+    mockFetch.mockResolvedValue(mockSSEResponse([sse]));
+
+    const events: any[] = [];
+    await api.chatStream("what time is it?", (ev) => events.push(ev));
+
+    const types = events.map((e) => e.type);
+    expect(types).toEqual([
+      "thinking",
+      "tool_call",
+      "tool_result",
+      "token",
+      "token",
+      "done",
+    ]);
+    expect(events[3].token).toBe("It is ");
+    expect(events[5].content).toBe("It is noon.");
+  });
+
+  it("handles chunks split mid-line", async () => {
+    // Same payload, but the bytes are sliced arbitrarily across reads —
+    // the buffered parser must still reassemble each frame correctly.
+    const sse =
+      "event: token\ndata: {\"token\":\"hi\"}\n\nevent: done\ndata: {\"content\":\"hi\"}\n\n";
+    const chunks = [sse.slice(0, 10), sse.slice(10, 25), sse.slice(25)];
+
+    mockFetch.mockResolvedValue(mockSSEResponse(chunks));
+
+    const events: any[] = [];
+    await api.chatStream("hi", (ev) => events.push(ev));
+
+    expect(events.map((e) => e.type)).toEqual(["token", "done"]);
+    expect(events[0].token).toBe("hi");
+  });
+
+  it("rejects when the server responds with an error", async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+      body: null,
+      json: () => Promise.resolve({ error: "LLM not configured" }),
+    });
+
+    await expect(api.chatStream("hi", () => {})).rejects.toThrow(
+      "LLM not configured"
+    );
+  });
+});
+
 describe("api.activate", () => {
   it("sends POST with license key", async () => {
     const licenseData = {

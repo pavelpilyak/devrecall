@@ -72,6 +72,31 @@ export interface LogRequest {
   people?: string[];
 }
 
+/**
+ * One event from POST /api/chat/stream. Only the fields relevant to `type`
+ * are populated; switch on `type` before reading the rest.
+ */
+export type ChatStreamEvent =
+  | { type: "thinking"; step: number }
+  | { type: "token"; token: string }
+  | {
+      type: "tool_call";
+      step: number;
+      tool_name: string;
+      tool_args?: unknown;
+    }
+  | {
+      type: "tool_result";
+      step: number;
+      tool_name: string;
+      tool_args?: unknown;
+      tool_result?: unknown;
+      tool_error?: string;
+      duration_ms: number;
+    }
+  | { type: "done"; step: number; content: string }
+  | { type: "error"; error: string };
+
 async function get<T>(path: string): Promise<T> {
   const resp = await fetch(`${BASE_URL}${path}`);
   if (!resp.ok) {
@@ -137,6 +162,72 @@ export const api = {
 
   chat: (message: string, history?: { role: string; content: string }[]) =>
     post<ChatResponse>("/api/chat", { message, history }),
+
+  /**
+   * Open a streaming chat connection. Calls `onEvent` for each decoded
+   * SSE event from the server. The returned promise resolves when the
+   * stream closes (after a `done` or `error` event), and rejects on
+   * transport errors. Pass an AbortSignal in `signal` to cancel.
+   */
+  chatStream: async (
+    message: string,
+    onEvent: (ev: ChatStreamEvent) => void,
+    opts?: {
+      history?: { role: string; content: string }[];
+      signal?: AbortSignal;
+    }
+  ): Promise<void> => {
+    const resp = await fetch(`${BASE_URL}/api/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, history: opts?.history }),
+      signal: opts?.signal,
+    });
+    if (!resp.ok || !resp.body) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      throw new Error(err.error || resp.statusText);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let currentEvent = "";
+    let dataLine = "";
+
+    // SSE frames are delimited by a blank line; each frame has at most one
+    // `event:` line and one `data:` line. We accumulate raw bytes, split on
+    // newlines, and dispatch whenever we hit a blank line.
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      let idx: number;
+      while ((idx = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, idx);
+        buf = buf.slice(idx + 1);
+
+        if (line === "") {
+          if (currentEvent && dataLine) {
+            try {
+              const parsed = JSON.parse(dataLine);
+              onEvent({ type: currentEvent, ...parsed } as ChatStreamEvent);
+            } catch {
+              /* swallow malformed frame */
+            }
+          }
+          currentEvent = "";
+          dataLine = "";
+          continue;
+        }
+        if (line.startsWith("event: ")) {
+          currentEvent = line.slice("event: ".length).trim();
+        } else if (line.startsWith("data: ")) {
+          dataLine = line.slice("data: ".length);
+        }
+      }
+    }
+  },
 
   sync: () => post<{ message: string }>("/api/sync"),
 

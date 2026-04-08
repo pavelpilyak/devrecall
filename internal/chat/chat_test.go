@@ -201,6 +201,49 @@ func TestSession_HistoryTrimmed(t *testing.T) {
 	}
 }
 
+// ─── streaming render ─────────────────────────────────────────────────────────
+
+func TestSession_StreamingRender(t *testing.T) {
+	prov := &scriptedProvider{
+		responses: []llm.ChatResponse{
+			{ToolCalls: []llm.ToolCall{
+				{ID: "c1", Name: "current_time", Arguments: json.RawMessage(`{}`)},
+			}},
+			finalAnswer("It is noon."),
+		},
+	}
+	session, out := newTestSession(t, "what time is it?\n/quit\n", prov, nil)
+	_ = session.Run(context.Background())
+
+	output := out.String()
+	// Tool call line should appear before the answer.
+	if !strings.Contains(output, "→ current_time(") {
+		t.Errorf("expected tool-call line, got:\n%s", output)
+	}
+	if !strings.Contains(output, "← ") {
+		t.Errorf("expected tool-result line, got:\n%s", output)
+	}
+	if !strings.Contains(output, "It is noon.") {
+		t.Errorf("expected final answer, got:\n%s", output)
+	}
+
+	// /trace after the streamed answer should still see the tool call.
+	session2, out2 := newTestSession(t,
+		"what time is it?\n/trace\n/quit\n",
+		&scriptedProvider{
+			responses: []llm.ChatResponse{
+				{ToolCalls: []llm.ToolCall{
+					{ID: "c1", Name: "current_time", Arguments: json.RawMessage(`{}`)},
+				}},
+				finalAnswer("noon"),
+			},
+		}, nil)
+	_ = session2.Run(context.Background())
+	if !strings.Contains(out2.String(), "Last answer used 1 tool call") {
+		t.Errorf("trace missing after stream, got:\n%s", out2.String())
+	}
+}
+
 // ─── /trace ───────────────────────────────────────────────────────────────────
 
 func TestSession_TraceCommand(t *testing.T) {
