@@ -14,11 +14,9 @@ import (
 	"github.com/pavelpiliak/devrecall/internal/chat/freshness"
 	"github.com/pavelpiliak/devrecall/internal/collector/git"
 	"github.com/pavelpiliak/devrecall/internal/config"
-	"github.com/pavelpiliak/devrecall/internal/embedding"
 	"github.com/pavelpiliak/devrecall/internal/license"
 	"github.com/pavelpiliak/devrecall/internal/llm"
 	"github.com/pavelpiliak/devrecall/internal/privacy"
-	"github.com/pavelpiliak/devrecall/internal/rag"
 	"github.com/pavelpiliak/devrecall/internal/storage"
 	"github.com/pavelpiliak/devrecall/internal/summarizer"
 	"github.com/pavelpiliak/devrecall/pkg/models"
@@ -346,6 +344,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleChat answers a chat query using the agent loop. It is the
+// buffered cousin of handleChatStream — same prompt, same tool catalogue,
+// same freshness step — but the response is returned as a single JSON
+// blob (with the trace) instead of a Server-Sent Event stream.
+//
+// Clients that want incremental rendering should use POST /api/chat/stream.
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Message string        `json:"message"`
@@ -360,76 +364,39 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	llmProvider, err := llm.FromConfig(s.cfg, s.tokenStore)
+	loop, err := s.chatLoop()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "LLM not configured")
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 
-	embedder, err := embedding.FromConfig(s.cfg, s.tokenStore)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "embedding provider not configured")
-		return
-	}
-
-	retriever := rag.NewHybridRetriever(s.db, embedder)
-	results, err := retriever.Retrieve(r.Context(), req.Message, 10)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "retrieval failed: "+err.Error())
-		return
-	}
-
-	// Supplement with date-filtered activities if query mentions relative dates.
-	if start, end, ok := parseDateRange(req.Message); ok {
-		dateActivities, _ := s.db.ListActivities(storage.ActivityFilter{
-			After:  start,
-			Before: end,
-			Limit:  20,
-		})
-		// If no data for the requested period, auto-sync and retry.
-		if len(dateActivities) == 0 && len(results) == 0 {
-			if n := s.syncGit(r.Context()); n > 0 {
-				dateActivities, _ = s.db.ListActivities(storage.ActivityFilter{
-					After:  start,
-					Before: end,
-					Limit:  20,
-				})
-			}
-		}
-		// Merge date-filtered activities into RAG results (avoid duplicates).
-		existingIDs := make(map[string]bool)
-		for _, r := range results {
-			existingIDs[r.Activity.SourceID] = true
-		}
-		for _, a := range dateActivities {
-			if !existingIDs[a.SourceID] {
-				results = append(results, rag.Result{Activity: a, Score: 1.0})
-			}
-		}
-	}
-
-	// Build context from retrieved activities.
-	contextStr := formatRAGContext(results)
-
-	userMsg := req.Message
-	if contextStr != "" {
-		userMsg = fmt.Sprintf("Context from work history:\n%s\n\nUser question: %s", contextStr, req.Message)
-	}
+	// Pre-agent freshness sync. Buffered handler can't stream lifecycle
+	// events to the client mid-flight, so we just drain them and report
+	// the syncs that ran in the JSON response.
+	freshEvents := s.runChatFreshnessBuffered(r.Context(), false)
 
 	messages := make([]llm.Message, 0, 2+len(req.History))
-	messages = append(messages, llm.Message{Role: "system", Content: chatSystemPrompt})
+	messages = append(messages, llm.Message{Role: "system", Content: chatStreamSystemPrompt})
 	messages = append(messages, req.History...)
-	messages = append(messages, llm.Message{Role: "user", Content: userMsg})
+	messages = append(messages, llm.Message{Role: "user", Content: req.Message})
 
-	response, err := llmProvider.Chat(r.Context(), messages, llm.ChatOpts{})
+	result, err := loop.Run(r.Context(), messages)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "LLM failed: "+err.Error())
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error":     "agent: " + err.Error(),
+			"trace":     result.Trace,
+			"freshness": freshEvents,
+		})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"response":         response,
-		"sources_count":    len(results),
+		"response":      result.Content,
+		"steps":         result.Steps,
+		"trace":         result.Trace,
+		"freshness":     freshEvents,
+		// sources_count kept for backwards-compat with existing clients.
+		"sources_count": len(result.Trace),
 	})
 }
 
@@ -622,35 +589,6 @@ func (s *Server) configDir() string {
 
 // --- Helpers ---
 
-const chatSystemPrompt = `You are DevRecall, a developer work memory assistant. You answer questions about the user's work history based on retrieved activity context.
-
-Rules:
-- Answer based ONLY on the provided context. If context doesn't contain enough information, say so.
-- Be concise and specific — cite dates, repo names, ticket IDs, and people when available.
-- Use natural language, not bullet dumps (unless the user asks for a list).
-- If the user asks a follow-up, use conversation history to understand what they're referring to.
-- Never make up activities, commits, or people that aren't in the context.`
-
-func formatRAGContext(results []rag.Result) string {
-	if len(results) == 0 {
-		return ""
-	}
-	var b []byte
-	for i, r := range results {
-		a := r.Activity
-		b = append(b, fmt.Sprintf("[%d] %s | %s | %s | %s\n",
-			i+1, a.Timestamp.Format("2006-01-02 15:04"), a.Source, a.Type, a.Title)...)
-		if a.Content != "" {
-			content := a.Content
-			if len(content) > 300 {
-				content = content[:300] + "..."
-			}
-			b = append(b, "    "+content+"\n"...)
-		}
-	}
-	return string(b)
-}
-
 func (s *Server) promptLoader() *summarizer.PromptLoader {
 	dir, err := config.Dir()
 	if err != nil {
@@ -671,59 +609,6 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-// parseDateRange detects relative date references in a query and returns
-// the corresponding time range. Supports "yesterday", "today", "this week",
-// "last week", "last N days".
-func parseDateRange(query string) (start, end time.Time, ok bool) {
-	q := strings.ToLower(query)
-	now := time.Now()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-
-	switch {
-	case strings.Contains(q, "yesterday"):
-		start = today.AddDate(0, 0, -1)
-		end = today
-		ok = true
-	case strings.Contains(q, "today"):
-		start = today
-		end = today.AddDate(0, 0, 1)
-		ok = true
-	case strings.Contains(q, "this week"):
-		weekday := int(today.Weekday())
-		if weekday == 0 {
-			weekday = 7 // Sunday = 7
-		}
-		start = today.AddDate(0, 0, -(weekday - 1)) // Monday
-		end = today.AddDate(0, 0, 1)
-		ok = true
-	case strings.Contains(q, "last week"):
-		weekday := int(today.Weekday())
-		if weekday == 0 {
-			weekday = 7
-		}
-		thisMonday := today.AddDate(0, 0, -(weekday - 1))
-		start = thisMonday.AddDate(0, 0, -7)
-		end = thisMonday
-		ok = true
-	default:
-		// "last N days" / "past N days"
-		for _, prefix := range []string{"last ", "past "} {
-			if idx := strings.Index(q, prefix); idx >= 0 {
-				rest := q[idx+len(prefix):]
-				if spaceIdx := strings.Index(rest, " day"); spaceIdx > 0 {
-					if n, err := strconv.Atoi(strings.TrimSpace(rest[:spaceIdx])); err == nil && n > 0 {
-						start = today.AddDate(0, 0, -n)
-						end = today.AddDate(0, 0, 1)
-						ok = true
-						return
-					}
-				}
-			}
-		}
-	}
-	return
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

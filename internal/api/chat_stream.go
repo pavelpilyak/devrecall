@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -146,6 +147,18 @@ func (s *Server) runChatFreshness(r *http.Request, w http.ResponseWriter, flushe
 		fmt.Fprintf(w, "event: freshness\ndata: %s\n\n", payload)
 		flusher.Flush()
 	}
+}
+
+// runChatFreshnessBuffered runs the freshness checker for the buffered
+// (non-streaming) chat handler and returns the events instead of writing
+// them to a response. The non-streaming JSON handler reports them under
+// a "freshness" key so callers can still see what was synced.
+func (s *Server) runChatFreshnessBuffered(ctx context.Context, force bool) []freshness.Event {
+	checker, syncers := s.chatFreshness()
+	if checker == nil || len(syncers) == 0 {
+		return nil
+	}
+	return freshness.Collect(checker.Run(ctx, syncers, force))
 }
 
 // chatFreshness returns the freshness checker + syncers used by the

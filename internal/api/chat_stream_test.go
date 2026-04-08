@@ -260,6 +260,90 @@ func TestHandleChatStream_FreshnessEvents(t *testing.T) {
 	}
 }
 
+// TestHandleChat_AgentLoop verifies the buffered POST /api/chat handler
+// runs the agent loop (not the deleted RAG path) and returns the trace
+// + freshness events alongside the assistant text.
+func TestHandleChat_AgentLoop(t *testing.T) {
+	srv, db := setupTestServer(t)
+
+	prov := &fakeStreamProvider{
+		responses: []llm.ChatResponse{
+			{ToolCalls: []llm.ToolCall{
+				{ID: "c1", Name: "current_time", Arguments: json.RawMessage(`{}`)},
+			}},
+			{Content: "It is noon."},
+		},
+	}
+	installFakeLoop(srv, prov)
+
+	syncerCalls := 0
+	srv.freshnessFactory = func() (*freshness.Checker, map[string]freshness.Syncer) {
+		return freshness.New(db, freshness.Options{
+				Enabled:    true,
+				DefaultTTL: time.Hour,
+			}),
+			map[string]freshness.Syncer{
+				"git": func(_ context.Context) (int, error) {
+					syncerCalls++
+					return 2, nil
+				},
+			}
+	}
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, newRequest("POST", "/api/chat",
+		map[string]any{"message": "what time is it?"}))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Response  string `json:"response"`
+		Steps     int    `json:"steps"`
+		Trace     []struct {
+			ToolName string `json:"tool_name"`
+		} `json:"trace"`
+		Freshness []struct {
+			Source string `json:"source"`
+			Status string `json:"status"`
+			Added  int    `json:"added,omitempty"`
+		} `json:"freshness"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, w.Body.String())
+	}
+
+	if resp.Response != "It is noon." {
+		t.Errorf("response = %q", resp.Response)
+	}
+	if resp.Steps < 2 {
+		t.Errorf("steps = %d, want ≥2", resp.Steps)
+	}
+	if len(resp.Trace) != 1 || resp.Trace[0].ToolName != "current_time" {
+		t.Errorf("trace = %+v, want one current_time call", resp.Trace)
+	}
+	if syncerCalls != 1 {
+		t.Errorf("freshness syncer should run once, got %d", syncerCalls)
+	}
+	// Expect at least syncing+synced events from the freshness step.
+	gotSyncing, gotSynced := false, false
+	for _, ev := range resp.Freshness {
+		if ev.Source == "git" && ev.Status == "syncing" {
+			gotSyncing = true
+		}
+		if ev.Source == "git" && ev.Status == "synced" && ev.Added == 2 {
+			gotSynced = true
+		}
+	}
+	if !gotSyncing || !gotSynced {
+		t.Errorf("freshness events missing syncing/synced: %+v", resp.Freshness)
+	}
+}
+
 func TestHandleChatStream_MissingMessage(t *testing.T) {
 	srv, _ := setupTestServer(t)
 	mux := http.NewServeMux()
