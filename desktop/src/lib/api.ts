@@ -59,6 +59,19 @@ export interface ChatResponse {
   sources_count: number;
 }
 
+export interface LogResponse {
+  id: number;
+  timestamp: string;
+  title: string;
+}
+
+export interface LogRequest {
+  text: string;
+  at?: string;
+  tags?: string[];
+  people?: string[];
+}
+
 async function get<T>(path: string): Promise<T> {
   const resp = await fetch(`${BASE_URL}${path}`);
   if (!resp.ok) {
@@ -129,4 +142,6 @@ export const api = {
 
   activate: (key: string) =>
     post<{ message: string; license: LicenseInfo }>("/api/activate", { key }),
+
+  log: (req: LogRequest) => post<LogResponse>("/api/log", req),
 };

@@ -4,16 +4,22 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Emitter, Manager,
 };
+
+/// Tauri event name emitted when the user clicks "Log Event…" in the tray.
+/// The frontend listens for this and switches to the Log tab + focuses the
+/// text area for rapid entry.
+pub const LOG_QUICKADD_EVENT: &str = "open-log-quickadd";
 
 /// Set up the system tray icon and context menu.
 pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let sync_now = MenuItem::with_id(app, "sync_now", "Sync Now", true, None::<&str>)?;
+    let log_event = MenuItem::with_id(app, "log_event", "Log Event…", true, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Open DevRecall", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
-    let menu = Menu::with_items(app, &[&show, &sync_now, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &log_event, &sync_now, &quit])?;
 
     let icon = Image::from_bytes(include_bytes!("../icons/icon.png"))
         .map_err(|e| format!("Failed to load tray icon: {e}"))?;
@@ -28,6 +34,13 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
+            }
+            "log_event" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                let _ = app.emit(LOG_QUICKADD_EVENT, ());
             }
             "sync_now" => {
                 let app = app.clone();

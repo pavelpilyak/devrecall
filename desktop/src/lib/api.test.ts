@@ -199,3 +199,52 @@ describe("api.sync", () => {
     expect(result.message).toBe("sync acknowledged");
   });
 });
+
+describe("api.log", () => {
+  it("sends POST with text only", async () => {
+    mockFetch.mockResolvedValue(
+      mockJsonResponse({ id: 42, timestamp: "2026-04-08T10:00:00Z", title: "Talked to mobile team" })
+    );
+
+    const result = await api.log({ text: "Talked to mobile team" });
+
+    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:9147/api/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Talked to mobile team" }),
+    });
+    expect(result.id).toBe(42);
+    expect(result.title).toBe("Talked to mobile team");
+  });
+
+  it("sends POST with full payload", async () => {
+    mockFetch.mockResolvedValue(
+      mockJsonResponse({ id: 7, timestamp: "2026-04-01T09:30:00Z", title: "Decision call" })
+    );
+
+    await api.log({
+      text: "Decision call",
+      at: "2026-04-01 09:30",
+      tags: ["decision"],
+      people: ["anna@example.com"],
+    });
+
+    const call = mockFetch.mock.calls[0];
+    expect(call[0]).toBe("http://127.0.0.1:9147/api/log");
+    const body = JSON.parse(call[1].body);
+    expect(body).toEqual({
+      text: "Decision call",
+      at: "2026-04-01 09:30",
+      tags: ["decision"],
+      people: ["anna@example.com"],
+    });
+  });
+
+  it("throws on validation error", async () => {
+    mockFetch.mockResolvedValue(
+      mockJsonResponse({ error: "missing required field: text" }, 400)
+    );
+
+    await expect(api.log({ text: "" })).rejects.toThrow("missing required field: text");
+  });
+});

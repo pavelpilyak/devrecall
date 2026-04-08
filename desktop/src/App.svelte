@@ -6,9 +6,10 @@
   import Weekly from "./routes/Weekly.svelte";
   import Timeline from "./routes/Timeline.svelte";
   import Search from "./routes/Search.svelte";
+  import Log from "./routes/Log.svelte";
   import Settings from "./routes/Settings.svelte";
 
-  type Tab = "chat" | "standup" | "weekly" | "timeline" | "search" | "settings";
+  type Tab = "chat" | "standup" | "weekly" | "timeline" | "search" | "log" | "settings";
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "chat", label: "Chat" },
@@ -16,10 +17,12 @@
     { id: "weekly", label: "Weekly" },
     { id: "timeline", label: "Timeline" },
     { id: "search", label: "Search" },
+    { id: "log", label: "Log" },
     { id: "settings", label: "Settings" },
   ];
 
   let activeTab = $state<Tab>("chat");
+  let logView = $state<{ focus: () => void } | null>(null);
 
   onMount(() => {
     checkConnection();
@@ -32,9 +35,26 @@
     }
     window.addEventListener("keydown", onKeydown);
 
+    // Listen for the tray "Log Event…" menu item, which switches to the
+    // Log tab and focuses the text area for rapid entry.
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen("open-log-quickadd", () => {
+          activeTab = "log";
+          // Wait a tick so the textarea is mounted/visible before focusing.
+          setTimeout(() => logView?.focus(), 50);
+        });
+      } catch {
+        // Not running inside Tauri (e.g. plain `vite dev` in a browser) — ignore.
+      }
+    })();
+
     return () => {
       clearInterval(interval);
       window.removeEventListener("keydown", onKeydown);
+      unlisten?.();
     };
   });
 </script>
@@ -73,6 +93,7 @@
       <div class="absolute inset-0" class:hidden={activeTab !== "weekly"}><Weekly /></div>
       <div class="absolute inset-0" class:hidden={activeTab !== "timeline"}><Timeline /></div>
       <div class="absolute inset-0" class:hidden={activeTab !== "search"}><Search /></div>
+      <div class="absolute inset-0" class:hidden={activeTab !== "log"}><Log bind:this={logView} /></div>
       <div class="absolute inset-0" class:hidden={activeTab !== "settings"}><Settings /></div>
     </div>
   {/if}
