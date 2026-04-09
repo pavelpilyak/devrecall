@@ -7,16 +7,43 @@ use tokio::time::{sleep, Duration};
 
 use crate::ApiStatus;
 
-pub const API_PORT: u16 = 9147;
-const API_BASE: &str = "http://127.0.0.1:9147";
+pub const DEFAULT_API_PORT: u16 = 9147;
+
+/// Read the configured port from `~/.devrecall/config.json` (`server.port`),
+/// falling back to `DEFAULT_API_PORT` if the file is missing, unparseable,
+/// or the field is absent/zero.
+pub fn configured_port() -> u16 {
+    if let Some(home) = dirs_home() {
+        let path = home.join(".devrecall/config.json");
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&data) {
+                if let Some(port) = v.get("server").and_then(|s| s.get("port")).and_then(|p| p.as_u64()) {
+                    if port > 0 && port <= 65535 {
+                        return port as u16;
+                    }
+                }
+            }
+        }
+    }
+    DEFAULT_API_PORT
+}
+
+fn api_base(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
+}
 const HEALTH_RETRIES: u32 = 10;
 const HEALTH_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Check if the API is reachable.
-pub async fn check_api() -> Result<ApiStatus, Box<dyn std::error::Error>> {
-    let resp = reqwest::get(format!("{API_BASE}/api/status")).await?;
+/// Check if the API is reachable on the given port.
+pub async fn check_api_on(port: u16) -> Result<ApiStatus, Box<dyn std::error::Error>> {
+    let resp = reqwest::get(format!("{}/api/status", api_base(port))).await?;
     let status: ApiStatus = resp.json().await?;
     Ok(status)
+}
+
+/// Check if the API is reachable on the configured port.
+pub async fn check_api() -> Result<ApiStatus, Box<dyn std::error::Error>> {
+    check_api_on(configured_port()).await
 }
 
 /// Ensure the DevRecall API server is running.
@@ -24,9 +51,11 @@ pub async fn check_api() -> Result<ApiStatus, Box<dyn std::error::Error>> {
 pub async fn ensure_running(
     _app: &tauri::AppHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let port = configured_port();
+
     // Check if the server is already running.
-    if check_api().await.is_ok() {
-        eprintln!("DevRecall API already running on port {API_PORT}");
+    if check_api_on(port).await.is_ok() {
+        eprintln!("DevRecall API already running on port {port}");
         return Ok(());
     }
 
@@ -35,6 +64,7 @@ pub async fn ensure_running(
     eprintln!("Starting DevRecall API server: {}", binary.display());
 
     // Spawn `devrecall serve` as a background child process.
+    // The server reads the port from config.json itself; no need to pass --port.
     Command::new(&binary)
         .args(["serve"])
         .stdin(Stdio::null())
@@ -45,7 +75,7 @@ pub async fn ensure_running(
     // Wait for the server to become healthy.
     for i in 0..HEALTH_RETRIES {
         sleep(HEALTH_INTERVAL).await;
-        if check_api().await.is_ok() {
+        if check_api_on(port).await.is_ok() {
             eprintln!("DevRecall API ready after {}ms", (i + 1) * 500);
             return Ok(());
         }
@@ -119,13 +149,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn api_port_is_9147() {
-        assert_eq!(API_PORT, 9147);
+    fn default_api_port_is_9147() {
+        assert_eq!(DEFAULT_API_PORT, 9147);
     }
 
     #[test]
     fn api_base_uses_loopback() {
-        assert!(API_BASE.starts_with("http://127.0.0.1:"));
+        let base = api_base(DEFAULT_API_PORT);
+        assert!(base.starts_with("http://127.0.0.1:"));
+    }
+
+    #[test]
+    fn configured_port_returns_valid() {
+        let port = configured_port();
+        assert!(port > 0, "configured port should be > 0");
     }
 
     #[test]

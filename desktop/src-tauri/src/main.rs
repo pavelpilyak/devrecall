@@ -23,7 +23,7 @@ async fn check_api() -> Result<ApiStatus, String> {
 /// Tauri command: get the API base URL.
 #[tauri::command]
 fn api_url() -> String {
-    format!("http://127.0.0.1:{}", server::API_PORT)
+    format!("http://127.0.0.1:{}", server::configured_port())
 }
 
 fn main() {

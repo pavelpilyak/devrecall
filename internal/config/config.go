@@ -78,8 +78,15 @@ type Config struct {
 	Embedding    EmbeddingConfig  `json:"embedding,omitempty"`
 	Privacy      PrivacyConfig    `json:"privacy,omitempty"`
 	Chat         ChatConfig       `json:"chat,omitempty"`
+	Server       ServerConfig     `json:"server,omitempty"`
 	TokenStorage string           `json:"token_storage,omitempty"` // "keychain" or "file" (default: "file")
 	filePath     string
+}
+
+// ServerConfig controls the local HTTP API server.
+type ServerConfig struct {
+	// Port is the TCP port to listen on. 0 or omitted means 9147 (default).
+	Port int `json:"port,omitempty"`
 }
 
 // ChatConfig holds chat-loop runtime tweaks.

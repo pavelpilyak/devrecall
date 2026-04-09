@@ -45,7 +45,7 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             "sync_now" => {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    let url = format!("http://127.0.0.1:{}/api/sync", crate::server::API_PORT);
+                    let url = format!("http://127.0.0.1:{}/api/sync", crate::server::configured_port());
                     let _ = reqwest::Client::new().post(&url).send().await;
                     if let Some(tray) = app.tray_by_id("devrecall-tray") {
                         let _ = tray.set_tooltip(Some("DevRecall — synced just now"));

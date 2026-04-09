@@ -48,6 +48,8 @@ make relay-test         # Run relay tests (vitest)
 
 Build tags: `fts5` enables SQLite FTS5 full-text search, `GO` enables hugot's pure Go ONNX backend for embeddings.
 
+**Node.js:** This project uses nvm. Always prefix JS/TS commands (`npx`, `npm`, `yarn`, `node`, `pnpm`) with `source ~/.nvm/nvm.sh && nvm use &&` to ensure the correct Node version from `.nvmrc` is used.
+
 ## Testing
 
 - Every new feature or module should have tests. Test the meaningful behavior, not every line — focus on logic, edge cases, and integration points.
@@ -63,6 +65,7 @@ Build tags: `fts5` enables SQLite FTS5 full-text search, `GO` enables hugot's pu
 - **Identity resolution:** Email is the primary key for merging identities across Git, Slack, Calendar, Jira, Linear.
 - **LLM strategy:** Local Ollama for fast tasks, BYOK for quality tasks. Fallback chain: primary → secondary → local → template.
 - **Config location:** `~/.devrecall/config.json` for settings, `~/.devrecall/devrecall.db` for data.
+- **Server port:** Default 9147 ("DRCL" on phone keypad). Override via `server.port` in config.json or `--port` flag on `devrecall serve`.
 - **OAuth tokens:** Stored in `~/.devrecall/tokens/` (0600 permissions). OS keychain backend planned.
 
 ## Domain & Infrastructure

@@ -1,8 +1,21 @@
 /**
- * HTTP client for the DevRecall local API (localhost:9147).
+ * HTTP client for the DevRecall local API.
+ * Port defaults to 9147 but can be overridden via server.port in config.json.
  */
 
-const BASE_URL = "http://127.0.0.1:9147";
+import { invoke } from "@tauri-apps/api/core";
+
+let _baseUrl: string | null = null;
+
+async function baseUrl(): Promise<string> {
+  if (_baseUrl) return _baseUrl;
+  try {
+    _baseUrl = await invoke<string>("api_url");
+  } catch {
+    _baseUrl = "http://127.0.0.1:9147";
+  }
+  return _baseUrl;
+}
 
 export interface SourceStatus {
   name: string;
@@ -98,7 +111,8 @@ export type ChatStreamEvent =
   | { type: "error"; error: string };
 
 async function get<T>(path: string): Promise<T> {
-  const resp = await fetch(`${BASE_URL}${path}`);
+  const base = await baseUrl();
+  const resp = await fetch(`${base}${path}`);
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ error: resp.statusText }));
     throw new Error(err.error || resp.statusText);
@@ -107,7 +121,8 @@ async function get<T>(path: string): Promise<T> {
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const resp = await fetch(`${BASE_URL}${path}`, {
+  const base = await baseUrl();
+  const resp = await fetch(`${base}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
@@ -177,7 +192,8 @@ export const api = {
       signal?: AbortSignal;
     }
   ): Promise<void> => {
-    const resp = await fetch(`${BASE_URL}/api/chat/stream`, {
+    const base = await baseUrl();
+    const resp = await fetch(`${base}/api/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message, history: opts?.history }),

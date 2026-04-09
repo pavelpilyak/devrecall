@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// Mock @tauri-apps/api/core before importing api.
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn().mockResolvedValue("http://127.0.0.1:9147"),
+}));
+
 // Mock fetch globally before importing api.
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
