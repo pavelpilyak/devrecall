@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/pavelpiliak/devrecall/internal/collector/ratelimit"
 )
 
 const (
@@ -87,15 +89,16 @@ func (a *Anthropic) Chat(ctx context.Context, messages []Message, opts ChatOpts)
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/messages", bytes.NewReader(jsonBody))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", a.apiKey)
-	req.Header.Set("anthropic-version", anthropicAPIVersion)
-
-	resp, err := a.client.Do(req)
+	resp, err := ratelimit.Do(ctx, a.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/messages", bytes.NewReader(jsonBody))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", a.apiKey)
+		req.Header.Set("anthropic-version", anthropicAPIVersion)
+		return req, nil
+	})
 	if err != nil {
 		return "", fmt.Errorf("anthropic request failed: %w", err)
 	}
@@ -103,9 +106,6 @@ func (a *Anthropic) Chat(ctx context.Context, messages []Message, opts ChatOpts)
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		return "", fmt.Errorf("anthropic: invalid API key — check your key at console.anthropic.com")
-	}
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return "", fmt.Errorf("anthropic: rate limited — try again shortly")
 	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -290,15 +290,16 @@ func (a *Anthropic) ChatWithTools(ctx context.Context, messages []Message, tools
 		return ChatResponse{}, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/messages", bytes.NewReader(jsonBody))
-	if err != nil {
-		return ChatResponse{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", a.apiKey)
-	req.Header.Set("anthropic-version", anthropicAPIVersion)
-
-	resp, err := a.client.Do(req)
+	resp, err := ratelimit.Do(ctx, a.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/messages", bytes.NewReader(jsonBody))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", a.apiKey)
+		req.Header.Set("anthropic-version", anthropicAPIVersion)
+		return req, nil
+	})
 	if err != nil {
 		return ChatResponse{}, fmt.Errorf("anthropic request failed: %w", err)
 	}
@@ -306,9 +307,6 @@ func (a *Anthropic) ChatWithTools(ctx context.Context, messages []Message, tools
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		return ChatResponse{}, fmt.Errorf("anthropic: invalid API key — check your key at console.anthropic.com")
-	}
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return ChatResponse{}, fmt.Errorf("anthropic: rate limited — try again shortly")
 	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -352,16 +350,17 @@ func (a *Anthropic) ChatWithToolsStream(ctx context.Context, messages []Message,
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/messages", bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("x-api-key", a.apiKey)
-	req.Header.Set("anthropic-version", anthropicAPIVersion)
-
-	resp, err := a.client.Do(req)
+	resp, err := ratelimit.Do(ctx, a.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/messages", bytes.NewReader(jsonBody))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("x-api-key", a.apiKey)
+		req.Header.Set("anthropic-version", anthropicAPIVersion)
+		return req, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("anthropic stream request failed: %w", err)
 	}

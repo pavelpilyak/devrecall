@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/pavelpiliak/devrecall/internal/collector/ratelimit"
 )
 
 const defaultOllamaURL = "http://localhost:11434"
@@ -89,13 +91,14 @@ func (o *Ollama) Chat(ctx context.Context, messages []Message, opts ChatOpts) (s
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/api/chat", bytes.NewReader(jsonBody))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := o.client.Do(req)
+	resp, err := ratelimit.Do(ctx, o.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/api/chat", bytes.NewReader(jsonBody))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		return "", fmt.Errorf("ollama request failed (is Ollama running?): %w", err)
 	}
@@ -142,12 +145,14 @@ func (o *Ollama) modelSupportsTools(ctx context.Context, model string) bool {
 	o.toolCapMu.Unlock()
 
 	body, _ := json.Marshal(map[string]any{"model": model})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/api/show", bytes.NewReader(body))
-	if err != nil {
-		return false
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := o.client.Do(req)
+	resp, err := ratelimit.Do(ctx, o.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/api/show", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		return false
 	}
@@ -286,13 +291,14 @@ func (o *Ollama) ChatWithTools(ctx context.Context, messages []Message, tools []
 		return ChatResponse{}, fmt.Errorf("ollama model %q does not support tool calling — switch to a tool-capable model (qwen2.5, llama3.1+, mistral)", model)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/api/chat", bytes.NewReader(jsonBody))
-	if err != nil {
-		return ChatResponse{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := o.client.Do(req)
+	resp, err := ratelimit.Do(ctx, o.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/api/chat", bytes.NewReader(jsonBody))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		return ChatResponse{}, fmt.Errorf("ollama request failed (is Ollama running?): %w", err)
 	}
@@ -340,13 +346,14 @@ func (o *Ollama) ChatWithToolsStream(ctx context.Context, messages []Message, to
 		return nil, fmt.Errorf("ollama model %q does not support tool calling — switch to a tool-capable model (qwen2.5, llama3.1+, mistral)", model)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/api/chat", bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := o.client.Do(req)
+	resp, err := ratelimit.Do(ctx, o.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/api/chat", bytes.NewReader(jsonBody))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("ollama stream request failed: %w", err)
 	}
