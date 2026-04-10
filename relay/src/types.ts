@@ -1,6 +1,7 @@
 export interface Env {
   OAUTH_SESSIONS: KVNamespace;
   BACKUP_STORE: KVNamespace;
+  LICENSE_DB: D1Database;
   SLACK_CLIENT_ID: string;
   SLACK_CLIENT_SECRET: string;
   GOOGLE_CLIENT_ID: string;
@@ -11,6 +12,8 @@ export interface Env {
   ATLASSIAN_CLIENT_SECRET: string;
   LINEAR_CLIENT_ID: string;
   LINEAR_CLIENT_SECRET: string;
+  LICENSE_SIGNING_KEY: string;
+  LEMON_SQUEEZY_WEBHOOK_SECRET: string;
 }
 
 export interface SlackOAuthResponse {

@@ -8,6 +8,7 @@ import { handleGoogleRefresh } from "./handlers/refresh-google";
 import { handleAtlassianRefresh } from "./handlers/refresh-atlassian";
 import { handlePollToken } from "./handlers/poll-token";
 import { handleBackupPush, handleBackupPull, handleBackupList } from "./handlers/backup";
+import { handleLicenseActivate, handleLicenseValidate, handleLemonSqueezyWebhook } from "./handlers/license";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -55,6 +56,18 @@ export default {
 
     if (url.pathname === "/v1/backup/list" && request.method === "GET") {
       return handleBackupList(request, env);
+    }
+
+    if (url.pathname === "/v1/license/activate" && request.method === "POST") {
+      return handleLicenseActivate(request, env);
+    }
+
+    if (url.pathname === "/v1/license/validate" && request.method === "POST") {
+      return handleLicenseValidate(request, env);
+    }
+
+    if (url.pathname === "/webhook/lemonsqueezy" && request.method === "POST") {
+      return handleLemonSqueezyWebhook(request, env);
     }
 
     if (url.pathname === "/health" && request.method === "GET") {

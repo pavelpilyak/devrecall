@@ -14,6 +14,11 @@ id = "f59eb193690042a8a08f05acb9db5195"
 binding = "BACKUP_STORE"
 id = "cf27f44f52d04f86a84ff551afe2b09e"
 
+[[d1_databases]]
+binding = "LICENSE_DB"
+database_name = "devrecall-licenses"
+database_id = "1af1c5fa-25e8-40b4-920a-9be5782e5b02"
+
 # Secrets (set via `wrangler secret put`):
 #   SLACK_CLIENT_ID
 #   SLACK_CLIENT_SECRET
@@ -23,3 +28,5 @@ id = "cf27f44f52d04f86a84ff551afe2b09e"
 #   ATLASSIAN_CLIENT_SECRET
 #   LINEAR_CLIENT_ID
 #   LINEAR_CLIENT_SECRET
+#   LICENSE_SIGNING_KEY          (PEM-encoded RSA private key)
+#   LEMON_SQUEEZY_WEBHOOK_SECRET
