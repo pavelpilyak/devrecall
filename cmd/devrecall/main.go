@@ -29,6 +29,7 @@ import (
 	"github.com/pavelpiliak/devrecall/internal/chat"
 	"github.com/pavelpiliak/devrecall/internal/embedding"
 	"github.com/pavelpiliak/devrecall/internal/identity"
+	"github.com/pavelpiliak/devrecall/internal/license"
 	"github.com/pavelpiliak/devrecall/internal/llm"
 	"github.com/pavelpiliak/devrecall/internal/privacy"
 	"github.com/pavelpiliak/devrecall/internal/storage"
@@ -67,6 +68,8 @@ func main() {
 		newIdentityCmd(),
 		newServeCmd(),
 		newDaemonCmd(),
+		newActivateCmd(),
+		newDeactivateCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -2886,4 +2889,44 @@ func newDaemonCmd() *cobra.Command {
 
 	cmd.AddCommand(installCmd, uninstallCmd, statusCmd)
 	return cmd
+}
+
+func newActivateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "activate <license-key>",
+		Short: "Activate a Pro or Team license",
+		Long:  "Activate a license key to unlock Pro or Team features.\nFormat: DR-PRO-XXXX-XXXX-XXXX or DR-TEAM-XXXX-XXXX-XXXX",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir, err := config.Dir()
+			if err != nil {
+				return err
+			}
+			lic, err := license.Activate(dir, args[0])
+			if err != nil {
+				return err
+			}
+			plan := string(lic.Plan)
+			fmt.Printf("%s plan activated (1 device).\n", strings.ToUpper(plan[:1])+plan[1:])
+			return nil
+		},
+	}
+}
+
+func newDeactivateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "deactivate",
+		Short: "Remove the current license, reverting to free plan",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir, err := config.Dir()
+			if err != nil {
+				return err
+			}
+			if err := license.Deactivate(dir); err != nil {
+				return err
+			}
+			fmt.Println("License removed. Reverted to free plan.")
+			return nil
+		},
+	}
 }
