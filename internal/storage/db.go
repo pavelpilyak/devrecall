@@ -59,6 +59,8 @@ func (db *DB) migrate() error {
 	if _, err := db.Exec(vecSchema); err != nil {
 		return fmt.Errorf("vec schema: %w", err)
 	}
+	// Add last_error column to sync_state for existing databases.
+	db.Exec("ALTER TABLE sync_state ADD COLUMN last_error TEXT")
 	return nil
 }
 
@@ -96,7 +98,8 @@ CREATE TABLE IF NOT EXISTS activities (
 CREATE TABLE IF NOT EXISTS sync_state (
     source     TEXT PRIMARY KEY,
     cursor     TEXT,              -- last sync cursor/token per source
-    synced_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    synced_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    last_error TEXT               -- last sync error message (NULL = success)
 );
 
 CREATE TABLE IF NOT EXISTS summaries (

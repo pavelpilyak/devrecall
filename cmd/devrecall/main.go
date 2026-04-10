@@ -571,19 +571,21 @@ func runSync(ctx context.Context) error {
 			collector := git.New(repos, emails)
 			activities, err := collector.Collect(ctx)
 			if err != nil {
-				return fmt.Errorf("git sync failed: %w", err)
-			}
-			if len(activities) > 0 {
+				fmt.Fprintf(os.Stderr, "Git sync warning: %v\n", err)
+				db.SetSyncError("git", err.Error())
+			} else if len(activities) > 0 {
 				n, err := db.InsertActivities(activities)
 				if err != nil {
-					return fmt.Errorf("storing git activities: %w", err)
+					fmt.Fprintf(os.Stderr, "Storing git activities: %v\n", err)
+				} else {
+					totalStored += n
+					fmt.Fprintf(os.Stderr, "Git: %d activities stored (%d new)\n", len(activities), n)
 				}
-				totalStored += n
-				fmt.Fprintf(os.Stderr, "Git: %d activities stored (%d new)\n", len(activities), n)
+				db.SetSyncState("git", "")
 			} else {
 				fmt.Fprintf(os.Stderr, "Git: no new activities\n")
+				db.SetSyncState("git", "")
 			}
-			db.SetSyncState("git", "")
 		}
 	}
 
@@ -596,6 +598,7 @@ func runSync(ctx context.Context) error {
 			activities, err := sc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Slack sync warning: %v\n", err)
+				db.SetSyncError("slack", err.Error())
 			} else if len(activities) > 0 {
 				n, err := db.InsertActivities(activities)
 				if err != nil {
@@ -640,6 +643,7 @@ func runSync(ctx context.Context) error {
 					acts, newToken, err = cc.InitialSync(ctx, 7*24*time.Hour)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "Calendar sync failed: %v\n", err)
+						db.SetSyncError("calendar", err.Error())
 					} else {
 						activities = acts
 						db.SetSyncState("calendar", newToken)
@@ -652,6 +656,7 @@ func runSync(ctx context.Context) error {
 				acts, newToken, err := cc.InitialSync(ctx, 7*24*time.Hour)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Calendar sync failed: %v\n", err)
+					db.SetSyncError("calendar", err.Error())
 				} else {
 					activities = acts
 					db.SetSyncState("calendar", newToken)
@@ -689,6 +694,7 @@ func runSync(ctx context.Context) error {
 			activities, err := gc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "GitHub sync warning: %v\n", err)
+				db.SetSyncError("github", err.Error())
 			} else if len(activities) > 0 {
 				n, err := db.InsertActivities(activities)
 				if err != nil {
@@ -715,6 +721,7 @@ func runSync(ctx context.Context) error {
 			activities, err := gc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "GitLab sync warning: %v\n", err)
+				db.SetSyncError("gitlab", err.Error())
 			} else if len(activities) > 0 {
 				n, err := db.InsertActivities(activities)
 				if err != nil {
@@ -741,6 +748,7 @@ func runSync(ctx context.Context) error {
 			activities, err := bc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Bitbucket sync warning: %v\n", err)
+				db.SetSyncError("bitbucket", err.Error())
 			} else if len(activities) > 0 {
 				n, err := db.InsertActivities(activities)
 				if err != nil {
@@ -933,7 +941,12 @@ func runStatus() error {
 		}
 
 		ago := formatTimeAgo(time.Since(state.SyncedAt))
-		fmt.Printf("  %-12s  enabled · synced %s · %d activities\n", src.name, ago, count)
+		if state.LastError != "" {
+			fmt.Printf("  %-12s  enabled · last sync failed %s · %d activities\n", src.name, ago, count)
+			fmt.Printf("  %-12s  ⚠ %s\n", "", state.LastError)
+		} else {
+			fmt.Printf("  %-12s  enabled · synced %s · %d activities\n", src.name, ago, count)
+		}
 	}
 
 	fmt.Println()
