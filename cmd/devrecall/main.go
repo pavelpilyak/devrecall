@@ -30,6 +30,7 @@ import (
 	"github.com/pavelpiliak/devrecall/internal/embedding"
 	"github.com/pavelpiliak/devrecall/internal/identity"
 	"github.com/pavelpiliak/devrecall/internal/license"
+	"github.com/pavelpiliak/devrecall/internal/update"
 	"github.com/pavelpiliak/devrecall/internal/llm"
 	"github.com/pavelpiliak/devrecall/internal/privacy"
 	"github.com/pavelpiliak/devrecall/internal/storage"
@@ -70,12 +71,30 @@ func main() {
 		newDaemonCmd(),
 		newActivateCmd(),
 		newDeactivateCmd(),
+		newUpdateCmd(),
 	)
+
+	runPassiveUpdateCheck()
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// runPassiveUpdateCheck prints a one-line "update available" notice when a newer
+// release exists. Throttled to once per CheckInterval via cache file. Failures
+// are silent — never block the user's command.
+func runPassiveUpdateCheck() {
+	dir, err := config.Dir()
+	if err != nil {
+		return
+	}
+	rel, err := update.PassiveCheck(dir, version, "")
+	if err != nil || rel == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "ℹ Update available: %s (run `devrecall update`)\n", rel.Version)
 }
 
 func newSetupCmd() *cobra.Command {
@@ -781,6 +800,17 @@ func runSync(ctx context.Context) error {
 	// Quarterly auto-snapshot: check if any completed quarters lack a summary.
 	if err := runQuarterlyAutoSnapshot(ctx, db, cfg, tokenStore, dir); err != nil {
 		fmt.Fprintf(os.Stderr, "Quarterly snapshot warning: %v\n", err)
+	}
+
+	// Periodic license validation against relay server.
+	lic, _ := license.Load(dir)
+	if license.NeedsValidation(lic) {
+		fmt.Fprintf(os.Stderr, "Validating license...\n")
+		if err := license.ValidateRemote(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "License validation warning: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "License validated.\n")
+		}
 	}
 
 	return nil
@@ -2989,4 +3019,57 @@ func newDeactivateCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func newUpdateCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "update",
+		Short: "Check for and install the latest devrecall release",
+		Long:  "Checks GitHub Releases for a newer version, verifies its SHA-256 checksum, and atomically replaces the running binary.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Printf("Checking for updates...\n")
+			rel, err := update.Check()
+			if err != nil {
+				return fmt.Errorf("checking for updates: %w", err)
+			}
+			if !update.IsNewer(version, rel.Version) {
+				fmt.Printf("Already up to date (%s).\n", version)
+				return nil
+			}
+			fmt.Printf("%s available (current: %s)\n", rel.Version, version)
+			if rel.Changelog != "" {
+				fmt.Printf("Changelog:\n%s\n\n", rel.Changelog)
+			}
+
+			if !yes {
+				fmt.Print("Download and install? [y/N]: ")
+				var resp string
+				fmt.Scanln(&resp)
+				resp = strings.ToLower(strings.TrimSpace(resp))
+				if resp != "y" && resp != "yes" {
+					fmt.Println("Update cancelled.")
+					return nil
+				}
+			}
+
+			exe, err := os.Executable()
+			if err != nil {
+				return fmt.Errorf("locating current binary: %w", err)
+			}
+			// Resolve symlinks so we replace the real file, not a symlink target.
+			if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+				exe = resolved
+			}
+
+			fmt.Println("Downloading and verifying...")
+			if err := update.Apply(rel, exe); err != nil {
+				return fmt.Errorf("applying update: %w", err)
+			}
+			fmt.Printf("Updated to %s.\n", rel.Version)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip confirmation prompt")
+	return cmd
 }
