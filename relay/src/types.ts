@@ -14,6 +14,9 @@ export interface Env {
   LINEAR_CLIENT_SECRET: string;
   LICENSE_SIGNING_KEY: string;
   LEMON_SQUEEZY_WEBHOOK_SECRET: string;
+  LATEST_VERSION: string;
+  MIN_REQUIRED_VERSION: string;
+  UPDATE_MESSAGE: string;
 }
 
 export interface SlackOAuthResponse {

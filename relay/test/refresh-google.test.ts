@@ -19,6 +19,9 @@ function mockEnv(): Env {
     LINEAR_CLIENT_SECRET: "linear-secret",
     LICENSE_SIGNING_KEY: "",
     LEMON_SQUEEZY_WEBHOOK_SECRET: "",
+    LATEST_VERSION: "",
+    MIN_REQUIRED_VERSION: "",
+    UPDATE_MESSAGE: "",
   };
 }
 

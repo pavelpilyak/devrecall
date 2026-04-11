@@ -74,6 +74,7 @@ func main() {
 		newUpdateCmd(),
 	)
 
+	enforceMandatoryUpdate(os.Args)
 	runPassiveUpdateCheck()
 
 	if err := rootCmd.Execute(); err != nil {
@@ -95,6 +96,49 @@ func runPassiveUpdateCheck() {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "ℹ Update available: %s (run `devrecall update`)\n", rel.Version)
+}
+
+// shouldSkipMandatoryCheck reports whether the kill switch should be bypassed
+// for the given argv. The `update` command is the only escape hatch when a
+// version is killed, so it must always be allowed to run.
+func shouldSkipMandatoryCheck(args []string) bool {
+	for _, a := range args[1:] {
+		if a == "update" {
+			return true
+		}
+		// Stop scanning at the first non-flag argument so e.g. `devrecall sync update`
+		// is not treated as the update command.
+		if len(a) > 0 && a[0] != '-' {
+			return false
+		}
+	}
+	return false
+}
+
+// enforceMandatoryUpdate consults the relay version manifest. If the running
+// build is below the security minimum, the process aborts with exit code 2 so
+// the user is forced to upgrade. The `update` command itself is exempt — that
+// is the only escape hatch a stuck user has.
+func enforceMandatoryUpdate(args []string) {
+	if shouldSkipMandatoryCheck(args) {
+		return
+	}
+
+	dir, err := config.Dir()
+	if err != nil {
+		return
+	}
+	if err := update.MandatoryCheck(dir, version, ""); err != nil {
+		if update.IsUpdateRequired(err) {
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "╳ devrecall is out of date and cannot run.")
+			fmt.Fprintf(os.Stderr, "  %s\n", err.Error())
+			fmt.Fprintln(os.Stderr, "  Run `devrecall update` to install the latest version.")
+			fmt.Fprintln(os.Stderr, "")
+			os.Exit(2)
+		}
+		// Soft failure (network/server error) — don't block the user.
+	}
 }
 
 func newSetupCmd() *cobra.Command {

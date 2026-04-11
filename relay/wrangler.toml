@@ -19,6 +19,11 @@ binding = "LICENSE_DB"
 database_name = "devrecall-licenses"
 database_id = "1af1c5fa-25e8-40b4-920a-9be5782e5b02"
 
+[vars]
+LATEST_VERSION = "v0.0.0"
+MIN_REQUIRED_VERSION = "v0.0.0"
+UPDATE_MESSAGE = ""
+
 # Secrets (set via `wrangler secret put`):
 #   SLACK_CLIENT_ID
 #   SLACK_CLIENT_SECRET
