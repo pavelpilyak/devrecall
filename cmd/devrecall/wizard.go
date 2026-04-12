@@ -113,10 +113,14 @@ func (w *wizard) prompt(prompt string, defaultVal string) string {
 func (w *wizard) run() error {
 	w.printf("\nWelcome to DevRecall! Let's get you set up.\n\n")
 
-	// Step 0: Init config + DB.
-	cfg, err := config.Init()
+	// Step 0: Load existing config or create a fresh one.
+	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("initializing config: %w", err)
+		// No existing config — create a fresh one.
+		cfg, err = config.Init()
+		if err != nil {
+			return fmt.Errorf("initializing config: %w", err)
+		}
 	}
 	w.cfg = cfg
 
