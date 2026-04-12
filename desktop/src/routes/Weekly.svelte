@@ -1,8 +1,13 @@
 <script lang="ts">
   import { api, type WeeklyResponse } from "../lib/api";
+  import { save, load } from "../lib/persist";
+
+  type WeeklyCache = Record<number, WeeklyResponse>;
+  let cache = $state<WeeklyCache>(load<WeeklyCache>("weekly:cache") ?? {});
 
   let weeksBack = $state(0);
-  let report = $state<WeeklyResponse | null>(null);
+  const initialReport = cache[0] ?? null;
+  let report = $state<WeeklyResponse | null>(initialReport);
   let loading = $state(false);
   let error = $state("");
   let copied = $state(false);
@@ -13,6 +18,10 @@
     copied = false;
     try {
       report = await api.week(weeksBack);
+      if (report) {
+        cache[weeksBack] = report;
+        save("weekly:cache", cache);
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : "Failed to load weekly summary";
       report = null;
@@ -30,8 +39,8 @@
 
   function changeWeek(delta: number) {
     weeksBack = Math.max(0, weeksBack - delta);
-    report = null;
-    generated = false;
+    report = cache[weeksBack] ?? null;
+    generated = !!report;
   }
 
   function weekLabel(): string {
@@ -46,7 +55,7 @@
     return `${fmt(start)} – ${fmt(end)}`;
   }
 
-  let generated = $state(false);
+  let generated = $state(initialReport !== null);
 
   function generate() {
     generated = true;
@@ -131,7 +140,7 @@
         class="px-4 py-2 text-sm font-medium rounded-lg bg-devrecall-600 text-white
                hover:bg-devrecall-700 disabled:opacity-50 transition-colors"
       >
-        {loading ? "Generating..." : "Regenerate"}
+        {loading ? "Generating..." : "Generate Again"}
       </button>
     </div>
   {/if}

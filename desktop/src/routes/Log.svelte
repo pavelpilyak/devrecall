@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from "../lib/api";
   import { buildLogRequest } from "../lib/log";
+  import { lastSyncAt } from "../lib/stores";
 
   let text = $state("");
   let tags = $state("");
@@ -37,6 +38,8 @@
     try {
       const resp = await api.log(req);
       savedTitle = resp.title;
+      // Notify other tabs (e.g. Timeline) so they reload.
+      lastSyncAt.set(Date.now());
       // Reset form for the next entry.
       text = "";
       tags = "";

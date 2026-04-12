@@ -158,7 +158,7 @@
         {#each activities as activity}
           <div class="px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
             <div class="flex items-start gap-2">
-              <span class="shrink-0 text-xs px-1.5 py-0.5 rounded {sourceColor(activity.source)}">
+              <span class="shrink-0 w-16 text-center text-xs px-1.5 py-0.5 rounded {sourceColor(activity.source)}">
                 {activity.source}
               </span>
               <div class="min-w-0 flex-1">

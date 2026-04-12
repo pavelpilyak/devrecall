@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -290,11 +292,16 @@ func (s *Server) handleBrag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filename := fmt.Sprintf("brag-%s-to-%s.md",
+		after.Format("2006-01-02"), before.AddDate(0, 0, -1).Format("2006-01-02"))
+	filePath, _ := s.saveReport(report, filename)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"period_start":   after.Format("2006-01-02"),
 		"period_end":     before.AddDate(0, 0, -1).Format("2006-01-02"),
 		"report":         report,
 		"activity_count": len(activities),
+		"file_path":      filePath,
 	})
 }
 
@@ -333,11 +340,16 @@ func (s *Server) handlePerfReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filename := fmt.Sprintf("perf-review-%s-to-%s.md",
+		after.Format("2006-01-02"), before.AddDate(0, 0, -1).Format("2006-01-02"))
+	filePath, _ := s.saveReport(report, filename)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"period_start":   after.Format("2006-01-02"),
 		"period_end":     before.AddDate(0, 0, -1).Format("2006-01-02"),
 		"report":         report,
 		"activity_count": len(activities),
+		"file_path":      filePath,
 	})
 }
 
@@ -365,6 +377,23 @@ func (s *Server) parsePeriodParam(r *http.Request) (time.Time, time.Time, error)
 	now := time.Now().UTC()
 	first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
 	return first, first.AddDate(0, 1, 0), nil
+}
+
+// saveReport writes a report to ~/.devrecall/reports/ and returns the full path.
+func (s *Server) saveReport(text, filename string) (string, error) {
+	dir, err := config.Dir()
+	if err != nil {
+		return "", err
+	}
+	reportsDir := filepath.Join(dir, "reports")
+	if err := os.MkdirAll(reportsDir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(reportsDir, filename)
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func (s *Server) handleActivities(w http.ResponseWriter, r *http.Request) {

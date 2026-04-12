@@ -26,6 +26,38 @@ fn api_url() -> String {
     format!("http://127.0.0.1:{}", server::configured_port())
 }
 
+/// Tauri command: reveal a file in the OS file manager (Finder on macOS).
+#[tauri::command]
+fn reveal_file(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Open the parent directory.
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            std::process::Command::new("xdg-open")
+                .arg(parent)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg("/select,")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -35,6 +67,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             check_api,
             api_url,
+            reveal_file,
             hotkey::get_hotkey,
             hotkey::set_hotkey,
             notifications::get_notification_prefs,

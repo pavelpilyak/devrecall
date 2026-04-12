@@ -1,16 +1,26 @@
 <script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
   import { api, type ReviewResponse } from "../lib/api";
+  import { save, load } from "../lib/persist";
 
   type ReviewType = "brag" | "perf-review";
+
+  type ReviewCache = Record<string, ReviewResponse>;
+  let cache = $state<ReviewCache>(load<ReviewCache>("review:cache") ?? {});
+
+  function cacheKey(type: ReviewType, after: string, before: string): string {
+    return `${type}:${after}:${before}`;
+  }
 
   let reviewType = $state<ReviewType>("brag");
   let afterDate = $state(defaultAfter());
   let beforeDate = $state(todayStr());
-  let report = $state<ReviewResponse | null>(null);
+  const initialReport = cache[cacheKey("brag", defaultAfter(), todayStr())] ?? null;
+  let report = $state<ReviewResponse | null>(initialReport);
   let loading = $state(false);
   let error = $state("");
   let copied = $state(false);
-  let generated = $state(false);
+  let generated = $state(initialReport !== null);
 
   function todayStr(): string {
     return new Date().toISOString().slice(0, 10);
@@ -50,8 +60,8 @@
 
     afterDate = after.toISOString().slice(0, 10);
     beforeDate = before.toISOString().slice(0, 10);
-    report = null;
-    generated = false;
+    report = cache[cacheKey(reviewType, afterDate, beforeDate)] ?? null;
+    generated = !!report;
   }
 
   async function generate() {
@@ -64,6 +74,10 @@
         report = await api.brag(afterDate, beforeDate);
       } else {
         report = await api.perfReview(afterDate, beforeDate);
+      }
+      if (report) {
+        cache[cacheKey(reviewType, afterDate, beforeDate)] = report;
+        save("review:cache", cache);
       }
     } catch (e) {
       error = e instanceof Error ? e.message : "Failed to generate";
@@ -80,10 +94,19 @@
     setTimeout(() => { copied = false; }, 2000);
   }
 
+  async function openInFinder() {
+    if (!report?.file_path) return;
+    try {
+      await invoke("reveal_file", { path: report.file_path });
+    } catch {
+      // Fallback: ignore if not running in Tauri.
+    }
+  }
+
   function switchType(type: ReviewType) {
     reviewType = type;
-    report = null;
-    generated = false;
+    report = cache[cacheKey(type, afterDate, beforeDate)] ?? null;
+    generated = !!report;
   }
 </script>
 
@@ -186,13 +209,23 @@
       >
         {copied ? "Copied!" : "Copy to Clipboard"}
       </button>
+      {#if report?.file_path}
+        <button
+          onclick={openInFinder}
+          class="px-4 py-2 text-sm font-medium rounded-lg border border-zinc-300 dark:border-zinc-600
+                 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+          title="Show saved file in Finder"
+        >
+          Show in Finder
+        </button>
+      {/if}
       <button
         onclick={generate}
         disabled={loading}
         class="px-4 py-2 text-sm font-medium rounded-lg bg-devrecall-600 text-white
                hover:bg-devrecall-700 disabled:opacity-50 transition-colors"
       >
-        Regenerate
+        Generate Again
       </button>
     </div>
   {/if}

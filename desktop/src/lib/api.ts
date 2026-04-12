@@ -56,6 +56,7 @@ export interface ReviewResponse {
   period_end: string;
   report: string;
   activity_count: number;
+  file_path?: string;
 }
 
 export interface Activity {

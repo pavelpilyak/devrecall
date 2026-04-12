@@ -36,6 +36,9 @@
   });
   let notifSaving = $state(false);
 
+  // Last sync time
+  let lastSyncTime = $state<string | null>(null);
+
   // Update check
   let updateAvailable = $state<string | null>(null);
   let checkingUpdate = $state(false);
@@ -48,6 +51,13 @@
     try {
       const resp = await api.status();
       sources = resp.sources;
+      // Derive last sync time from the most recent source sync.
+      const syncTimes = resp.sources
+        .filter((s) => s.synced_at)
+        .map((s) => new Date(s.synced_at!).getTime());
+      if (syncTimes.length > 0) {
+        lastSyncTime = new Date(Math.max(...syncTimes)).toISOString();
+      }
       // Load current hotkey from Tauri backend.
       try {
         currentHotkey = await invoke<string>("get_hotkey");
@@ -82,6 +92,7 @@
     syncing = true;
     try {
       await api.sync();
+      lastSyncTime = new Date().toISOString();
       // Reload status after sync and notify other tabs.
       await loadStatus();
       lastSyncAt.set(Date.now());
@@ -223,6 +234,28 @@
 
 <div class="flex flex-col h-full overflow-y-auto">
   <div class="px-4 py-4 space-y-6">
+    <!-- Sync -->
+    <section>
+      <h2 class="text-sm font-semibold mb-3">Sync</h2>
+      <div class="flex items-center gap-3">
+        <button
+          onclick={triggerSync}
+          disabled={syncing}
+          class="px-4 py-2 text-sm font-medium rounded-lg bg-devrecall-600 text-white
+                 hover:bg-devrecall-700 disabled:opacity-50 transition-colors"
+        >
+          {syncing ? "Syncing..." : "Sync Now"}
+        </button>
+        {#if lastSyncTime}
+          <span class="text-xs text-zinc-500">
+            Last sync: {new Date(lastSyncTime).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+          </span>
+        {:else}
+          <span class="text-xs text-zinc-400">Never synced</span>
+        {/if}
+      </div>
+    </section>
+
     <!-- Sources -->
     <section>
       <h2 class="text-sm font-semibold mb-3">Sources</h2>
@@ -254,19 +287,6 @@
           {/each}
         </div>
       {/if}
-    </section>
-
-    <!-- Sync -->
-    <section>
-      <h2 class="text-sm font-semibold mb-3">Sync</h2>
-      <button
-        onclick={triggerSync}
-        disabled={syncing}
-        class="px-4 py-2 text-sm font-medium rounded-lg bg-devrecall-600 text-white
-               hover:bg-devrecall-700 disabled:opacity-50 transition-colors"
-      >
-        {syncing ? "Syncing..." : "Sync Now"}
-      </button>
     </section>
 
     <!-- Shortcuts -->

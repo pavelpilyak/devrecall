@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, type ChatStreamEvent } from "../lib/api";
+  import { save, load } from "../lib/persist";
 
   // A tool call rendered inside an assistant message bubble.
   type ToolCall = {
@@ -22,10 +23,11 @@
     tools?: ToolCall[];
     streaming?: boolean;
     status?: string;
+    timestamp?: string;
   };
 
   let message = $state("");
-  let chatHistory = $state<ChatMessage[]>([]);
+  let chatHistory = $state<ChatMessage[]>(load<ChatMessage[]>("chat:history") ?? []);
   let loading = $state(false);
   let error = $state("");
   let messagesEl: HTMLDivElement;
@@ -38,10 +40,11 @@
     error = "";
     loading = true;
 
+    const now = new Date().toISOString();
     chatHistory = [
       ...chatHistory,
-      { role: "user", content: userMessage },
-      { role: "assistant", content: "", tools: [], streaming: true, status: "Thinking…" },
+      { role: "user", content: userMessage, timestamp: now },
+      { role: "assistant", content: "", tools: [], streaming: true, status: "Thinking…", timestamp: now },
     ];
     scrollToBottom();
 
@@ -64,6 +67,7 @@
       }
       loading = false;
       scrollToBottom();
+      save("chat:history", chatHistory);
     }
   }
 
@@ -156,6 +160,7 @@
   function clearHistory() {
     chatHistory = [];
     error = "";
+    save("chat:history", chatHistory);
   }
 
   async function copyLastResponse() {
@@ -233,6 +238,11 @@
             {/if}
             <p class="whitespace-pre-wrap">{msg.content}{#if msg.streaming && msg.content}<span class="animate-pulse">▍</span>{/if}</p>
           </div>
+          {#if msg.timestamp}
+            <div class="text-[10px] text-zinc-400 mt-0.5 {msg.role === 'user' ? 'text-right' : ''}">
+              {new Date(msg.timestamp).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </div>
+          {/if}
         </div>
       {/each}
     {/if}

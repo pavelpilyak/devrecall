@@ -1,8 +1,13 @@
 <script lang="ts">
   import { api, type StandupResponse } from "../lib/api";
+  import { save, load } from "../lib/persist";
+
+  type StandupCache = Record<string, StandupResponse>;
+  let cache = $state<StandupCache>(load<StandupCache>("standup:cache") ?? {});
 
   let date = $state(yesterdayStr());
-  let report = $state<StandupResponse | null>(null);
+  const initialReport = cache[yesterdayStr()] ?? null;
+  let report = $state<StandupResponse | null>(initialReport);
   let loading = $state(false);
   let error = $state("");
   let copied = $state(false);
@@ -19,6 +24,10 @@
     copied = false;
     try {
       report = await api.standup(date);
+      if (report) {
+        cache[date] = report;
+        save("standup:cache", cache);
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : "Failed to load standup";
       report = null;
@@ -34,14 +43,14 @@
     setTimeout(() => { copied = false; }, 2000);
   }
 
-  let generated = $state(false);
+  let generated = $state(initialReport !== null);
 
   function changeDate(delta: number) {
     const d = new Date(date);
     d.setDate(d.getDate() + delta);
     date = d.toISOString().slice(0, 10);
-    report = null;
-    generated = false;
+    report = cache[date] ?? null;
+    generated = !!report;
   }
 
   function generate() {
@@ -132,7 +141,7 @@
         class="px-4 py-2 text-sm font-medium rounded-lg bg-devrecall-600 text-white
                hover:bg-devrecall-700 disabled:opacity-50 transition-colors"
       >
-        Regenerate
+        Generate Again
       </button>
     </div>
   {/if}
