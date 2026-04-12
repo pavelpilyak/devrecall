@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from "../lib/api";
   import { apiStatus } from "../lib/stores";
+  import Markdown from "./Markdown.svelte";
 
   let message = $state("");
   let chatHistory = $state<{ role: string; content: string }[]>([]);
@@ -101,7 +102,11 @@
           <div class="inline-block max-w-[85%] px-3 py-2 rounded-lg {msg.role === 'user'
             ? 'bg-devrecall-600 text-white'
             : 'bg-zinc-100 dark:bg-zinc-800'}">
-            <p class="whitespace-pre-wrap">{msg.content}</p>
+            {#if msg.role === "user"}
+              <p class="whitespace-pre-wrap">{msg.content}</p>
+            {:else}
+              <Markdown content={msg.content} class="text-sm" />
+            {/if}
           </div>
         </div>
       {/each}

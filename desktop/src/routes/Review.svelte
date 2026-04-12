@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { api, type ReviewResponse } from "../lib/api";
   import { save, load } from "../lib/persist";
+  import Markdown from "../components/Markdown.svelte";
 
   type ReviewType = "brag" | "perf-review";
 
@@ -183,7 +184,7 @@
           <p class="text-sm text-zinc-500">No activities found for this period.</p>
         </div>
       {:else}
-        <div class="text-sm whitespace-pre-wrap leading-relaxed">{report.report}</div>
+        <Markdown content={report.report} class="text-sm leading-relaxed" />
       {/if}
     {:else}
       <div class="flex items-center justify-center h-32">

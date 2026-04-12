@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type StandupResponse } from "../lib/api";
   import { save, load } from "../lib/persist";
+  import Markdown from "../components/Markdown.svelte";
 
   type StandupCache = Record<string, StandupResponse>;
   let cache = $state<StandupCache>(load<StandupCache>("standup:cache") ?? {});
@@ -109,7 +110,7 @@
           <p class="text-sm text-zinc-500">No activities found for {date}.</p>
         </div>
       {:else}
-        <div class="text-sm whitespace-pre-wrap leading-relaxed">{report.report}</div>
+        <Markdown content={report.report} class="text-sm leading-relaxed" />
       {/if}
     {:else}
       <div class="flex items-center justify-center h-32">

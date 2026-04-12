@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type ChatStreamEvent } from "../lib/api";
   import { save, load } from "../lib/persist";
+  import Markdown from "../components/Markdown.svelte";
 
   // A tool call rendered inside an assistant message bubble.
   type ToolCall = {
@@ -236,7 +237,11 @@
                 {msg.status}
               </p>
             {/if}
-            <p class="whitespace-pre-wrap">{msg.content}{#if msg.streaming && msg.content}<span class="animate-pulse">▍</span>{/if}</p>
+            {#if msg.role === "user"}
+              <p class="whitespace-pre-wrap">{msg.content}</p>
+            {:else}
+              <Markdown content={msg.content} class="text-sm" />{#if msg.streaming && msg.content}<span class="animate-pulse">▍</span>{/if}
+            {/if}
           </div>
           {#if msg.timestamp}
             <div class="text-[10px] text-zinc-400 mt-0.5 {msg.role === 'user' ? 'text-right' : ''}">

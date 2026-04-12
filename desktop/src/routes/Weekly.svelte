@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type WeeklyResponse } from "../lib/api";
   import { save, load } from "../lib/persist";
+  import Markdown from "../components/Markdown.svelte";
 
   type WeeklyCache = Record<number, WeeklyResponse>;
   let cache = $state<WeeklyCache>(load<WeeklyCache>("weekly:cache") ?? {});
@@ -108,7 +109,7 @@
           <p class="text-sm text-zinc-500">No activities found for this week.</p>
         </div>
       {:else}
-        <div class="text-sm whitespace-pre-wrap leading-relaxed">{report.report}</div>
+        <Markdown content={report.report} class="text-sm leading-relaxed" />
       {/if}
     {:else}
       <div class="flex items-center justify-center h-32">
