@@ -13,8 +13,9 @@ const (
 	SourceGitLab    Source = "gitlab"
 	SourceBitbucket Source = "bitbucket"
 	SourceJira      Source = "jira"
-	SourceLinear   Source = "linear"
-	SourceManual    Source = "manual"
+	SourceLinear      Source = "linear"
+	SourceConfluence  Source = "confluence"
+	SourceManual      Source = "manual"
 )
 
 // ActivityType categorizes what kind of work event this is.
@@ -30,6 +31,7 @@ const (
 	TypeMergeRequest ActivityType = "merge_request"
 	TypeIssue        ActivityType = "issue"
 	TypeNote         ActivityType = "note"
+	TypeDocument     ActivityType = "document"
 )
 
 // Activity is a single work event collected from any source.

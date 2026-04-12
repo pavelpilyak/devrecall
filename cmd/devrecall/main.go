@@ -24,6 +24,7 @@ import (
 	calcollector "github.com/pavelpiliak/devrecall/internal/collector/calendar"
 	ghcollector "github.com/pavelpiliak/devrecall/internal/collector/github"
 	glcollector "github.com/pavelpiliak/devrecall/internal/collector/gitlab"
+	confluencecollector "github.com/pavelpiliak/devrecall/internal/collector/confluence"
 	slackcollector "github.com/pavelpiliak/devrecall/internal/collector/slack"
 	"github.com/pavelpiliak/devrecall/internal/config"
 	"github.com/pavelpiliak/devrecall/internal/chat"
@@ -834,6 +835,47 @@ func runSync(ctx context.Context) error {
 		}
 	}
 
+	// Sync Confluence (reuses Atlassian/Jira auth).
+	if cfg.Confluence.Enabled && requireFeature(dir, license.FeatureJira, "Confluence integration") {
+		var atlToken auth.AtlassianToken
+		tokenKey := cfg.Jira.Email // reuse Jira token key
+		if tokenKey == "" {
+			tokenKey = "default"
+		}
+		if err := tokenStore.Load("jira", tokenKey, &atlToken); err == nil {
+			fmt.Fprintf(os.Stderr, "Collecting Confluence pages...\n")
+			var cc *confluencecollector.Collector
+			if cfg.Jira.AuthMode == "api-token" && cfg.Jira.Email != "" {
+				cc = confluencecollector.NewWithAPIToken(cfg.Jira.Email, atlToken.AccessToken, cfg.Jira.BaseURL+"/wiki")
+			} else if len(atlToken.CloudSites) > 0 {
+				cc = confluencecollector.New(atlToken.AccessToken, atlToken.CloudSites[0].ID)
+			} else {
+				fmt.Fprintf(os.Stderr, "Confluence: no cloud site found in Jira token\n")
+				cc = nil
+			}
+			if cc != nil {
+				activities, err := cc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Confluence sync warning: %v\n", err)
+					db.SetSyncError("confluence", err.Error())
+				} else if len(activities) > 0 {
+					n, err := db.InsertActivities(activities)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Storing Confluence activities: %v\n", err)
+					} else {
+						totalStored += n
+						fmt.Fprintf(os.Stderr, "Confluence: %d activities stored (%d new)\n", len(activities), n)
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "Confluence: no new pages\n")
+				}
+				db.SetSyncState("confluence", "")
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "Confluence: Jira token not found (run 'devrecall auth jira')\n")
+		}
+	}
+
 	fmt.Fprintf(os.Stderr, "\nSync complete. %d new activities stored.\n", totalStored)
 
 	// Embed unembedded activities for vector search.
@@ -993,6 +1035,7 @@ func runStatus() error {
 		{"gitlab", cfg.GitLab.Enabled},
 		{"bitbucket", cfg.Bitbucket.Enabled},
 		{"jira", cfg.Jira.Enabled},
+		{"confluence", cfg.Confluence.Enabled},
 		{"linear", cfg.Linear.Enabled},
 	}
 

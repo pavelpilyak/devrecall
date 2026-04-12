@@ -3,7 +3,7 @@
   import { api, type Activity } from "../lib/api";
   import { lastSyncAt } from "../lib/stores";
 
-  const sources = ["", "git", "slack", "calendar", "github", "gitlab", "bitbucket", "jira", "linear"];
+  const sources = ["", "git", "slack", "calendar", "github", "gitlab", "bitbucket", "jira", "confluence", "linear"];
   const types = ["", "commit", "message", "meeting", "ticket", "review", "pull_request", "merge_request", "issue"];
 
   let activities = $state<Activity[]>([]);
@@ -75,6 +75,7 @@
       gitlab: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
       bitbucket: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400",
       jira: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+      confluence: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400",
       linear: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400",
     };
     return colors[source] || "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";

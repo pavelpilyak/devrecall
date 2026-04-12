@@ -73,6 +73,7 @@ type Config struct {
 	GitLab       GitLabConfig     `json:"gitlab"`
 	Bitbucket    BitbucketConfig  `json:"bitbucket"`
 	Jira         JiraConfig       `json:"jira"`
+	Confluence   ConfluenceConfig `json:"confluence"`
 	Linear       LinearConfig     `json:"linear"`
 	LLM          LLMConfig        `json:"llm"`
 	Embedding    EmbeddingConfig  `json:"embedding,omitempty"`
@@ -153,6 +154,11 @@ type JiraConfig struct {
 	BaseURL  string `json:"base_url,omitempty"`  // Jira instance URL (e.g., "https://mycompany.atlassian.net")
 	AuthMode string `json:"auth_mode,omitempty"` // "oauth" or "api-token"
 	Email    string `json:"email,omitempty"`      // required for api-token auth
+}
+
+type ConfluenceConfig struct {
+	Enabled bool `json:"enabled"`
+	// Uses the same Atlassian auth as Jira (shared OAuth token or API token).
 }
 
 type LinearConfig struct {

@@ -130,6 +130,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		{"gitlab", s.cfg.GitLab.Enabled},
 		{"bitbucket", s.cfg.Bitbucket.Enabled},
 		{"jira", s.cfg.Jira.Enabled},
+		{"confluence", s.cfg.Confluence.Enabled},
 		{"linear", s.cfg.Linear.Enabled},
 	}
 
