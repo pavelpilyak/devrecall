@@ -5,6 +5,8 @@ use std::process::Stdio;
 use tokio::process::Command;
 use tokio::time::{sleep, Duration};
 
+use tauri::Emitter;
+
 use crate::ApiStatus;
 
 pub const DEFAULT_API_PORT: u16 = 9147;
@@ -65,7 +67,7 @@ pub async fn ensure_running(
 
     // Spawn `devrecall serve` as a background child process.
     // The server reads the port from config.json itself; no need to pass --port.
-    Command::new(&binary)
+    let mut child = Command::new(&binary)
         .args(["serve"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -75,6 +77,27 @@ pub async fn ensure_running(
     // Wait for the server to become healthy.
     for i in 0..HEALTH_RETRIES {
         sleep(HEALTH_INTERVAL).await;
+
+        // If the child exited early, capture stderr for the error message.
+        if let Ok(Some(status)) = child.try_wait() {
+            if !status.success() {
+                let mut stderr_msg = String::new();
+                if let Some(mut stderr) = child.stderr.take() {
+                    use tokio::io::AsyncReadExt;
+                    let _ = stderr.read_to_string(&mut stderr_msg).await;
+                }
+                let msg = stderr_msg.trim().to_string();
+                let err_msg = if msg.is_empty() {
+                    "DevRecall API server exited unexpectedly".to_string()
+                } else {
+                    msg
+                };
+                // Emit event so the frontend can show the error.
+                let _ = _app.emit("server-error", &err_msg);
+                return Err(err_msg.into());
+            }
+        }
+
         if check_api_on(port).await.is_ok() {
             eprintln!("DevRecall API ready after {}ms", (i + 1) * 500);
             return Ok(());

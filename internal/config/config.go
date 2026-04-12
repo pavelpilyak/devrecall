@@ -237,7 +237,7 @@ func Load() (*Config, error) {
 
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
+		return nil, fmt.Errorf("invalid config — please check %s: %w", path, err)
 	}
 	cfg.filePath = path
 	return &cfg, nil

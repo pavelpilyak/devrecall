@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { connected, checkConnection } from "./lib/stores";
+  import { connected, checkConnection, serverError } from "./lib/stores";
   import { isPro } from "./lib/license";
   import AppPaywall from "./components/AppPaywall.svelte";
   import Chat from "./routes/Chat.svelte";
@@ -32,6 +32,19 @@
     checkConnection();
     const interval = setInterval(checkConnection, 30_000);
 
+    // Listen for server startup errors (e.g. broken config.json).
+    let unlistenServerErr: (() => void) | undefined;
+    (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlistenServerErr = await listen<string>("server-error", (event) => {
+          serverError.set(event.payload);
+        });
+      } catch {
+        // Not running inside Tauri.
+      }
+    })();
+
     function onKeydown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         window.close();
@@ -59,6 +72,7 @@
       clearInterval(interval);
       window.removeEventListener("keydown", onKeydown);
       unlisten?.();
+      unlistenServerErr?.();
     };
   });
 </script>
@@ -68,10 +82,17 @@
     <div class="flex-1 flex items-center justify-center p-8">
       <div class="text-center space-y-3">
         <div class="text-4xl">&#128268;</div>
-        <h2 class="text-lg font-semibold">Connecting to DevRecall...</h2>
-        <p class="text-sm text-zinc-500 dark:text-zinc-400">
-          Make sure <code class="bg-zinc-100 dark:bg-zinc-800 px-1 rounded">devrecall serve</code> is running.
-        </p>
+        {#if $serverError}
+          <h2 class="text-lg font-semibold text-red-600 dark:text-red-400">Server failed to start</h2>
+          <p class="text-sm text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg px-4 py-2 text-left max-w-sm mx-auto font-mono whitespace-pre-wrap">
+            {$serverError}
+          </p>
+        {:else}
+          <h2 class="text-lg font-semibold">Connecting to DevRecall...</h2>
+          <p class="text-sm text-zinc-500 dark:text-zinc-400">
+            Make sure <code class="bg-zinc-100 dark:bg-zinc-800 px-1 rounded">devrecall serve</code> is running.
+          </p>
+        {/if}
       </div>
     </div>
   {:else if !$isPro}

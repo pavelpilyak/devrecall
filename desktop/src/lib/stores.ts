@@ -11,6 +11,9 @@ export const apiStatus = writable<StatusResponse | null>(null);
 /** Bumped after each successful sync so data-displaying tabs can reload. */
 export const lastSyncAt = writable(0);
 
+/** Server startup error (e.g. broken config.json). */
+export const serverError = writable("");
+
 /** Check connection to the API and update stores. */
 export async function checkConnection() {
   try {
