@@ -8,6 +8,9 @@ export const connected = writable(false);
 /** Latest API status response. */
 export const apiStatus = writable<StatusResponse | null>(null);
 
+/** Bumped after each successful sync so data-displaying tabs can reload. */
+export const lastSyncAt = writable(0);
+
 /** Check connection to the API and update stores. */
 export async function checkConnection() {
   try {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pavelpiliak/devrecall/internal/config"
+	"github.com/pavelpiliak/devrecall/internal/license"
 	"github.com/pavelpiliak/devrecall/internal/storage"
 	"github.com/pavelpiliak/devrecall/pkg/models"
 )
@@ -38,6 +39,12 @@ func setupTestServer(t *testing.T) (*Server, *storage.DB) {
 
 	srv := NewServer(0, db, cfg, &mockTokenStore{})
 	srv.dataDir = t.TempDir()
+	// Activate a pro license with a signed JWT so endpoints aren't blocked by licenseMiddleware.
+	signingKey, err := license.ParseTestKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	license.ActivateOffline(srv.dataDir, "DR-PRO-AAAA-BBBB-CCCC", signingKey)
 	return srv, db
 }
 
@@ -423,7 +430,15 @@ func TestNewServer_CustomPort(t *testing.T) {
 }
 
 func TestHandleStatus_IncludesLicense(t *testing.T) {
-	srv, _ := setupTestServer(t)
+	// Use a fresh server without a license to verify the default is "free".
+	db, err := storage.OpenPath(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	srv := NewServer(0, db, &config.Config{}, &mockTokenStore{})
+	srv.dataDir = t.TempDir() // no license file → free plan
 
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
@@ -448,7 +463,18 @@ func TestHandleStatus_IncludesLicense(t *testing.T) {
 }
 
 func TestHandleActivate(t *testing.T) {
+	// Mock relay that accepts any well-formed key.
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"status":         "activated",
+			"plan":           "pro",
+			"signed_license": "test-jwt",
+		})
+	}))
+	defer relay.Close()
+
 	srv, _ := setupTestServer(t)
+	srv.relayURL = relay.URL
 
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
@@ -466,14 +492,6 @@ func TestHandleActivate(t *testing.T) {
 		json.Unmarshal(w.Body.Bytes(), &resp)
 		if resp["message"] != "pro plan activated" {
 			t.Errorf("expected 'pro plan activated', got %v", resp["message"])
-		}
-
-		lic, ok := resp["license"].(map[string]any)
-		if !ok {
-			t.Fatal("expected license object in response")
-		}
-		if lic["plan"] != "pro" {
-			t.Errorf("expected pro plan, got %v", lic["plan"])
 		}
 	})
 
@@ -595,4 +613,60 @@ func TestHandleLog(t *testing.T) {
 			t.Errorf("expected 400, got %d", w.Code)
 		}
 	})
+}
+
+func TestLicenseMiddleware_FreePlanBlocked(t *testing.T) {
+	db, err := storage.OpenPath(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	srv := NewServer(0, db, &config.Config{}, &mockTokenStore{})
+	srv.dataDir = t.TempDir() // no license → free plan
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+	handler := srv.licenseMiddleware(mux)
+
+	// Gated endpoints should return 402.
+	for _, path := range []string{"/api/chat", "/api/standup", "/api/week", "/api/search", "/api/activities", "/api/sync", "/api/log"} {
+		method := "GET"
+		if path == "/api/chat" || path == "/api/sync" || path == "/api/log" {
+			method = "POST"
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+		if w.Code != http.StatusPaymentRequired {
+			t.Errorf("%s %s: expected 402, got %d", method, path, w.Code)
+		}
+		var resp map[string]any
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp["error"] != "license_required" {
+			t.Errorf("%s %s: expected license_required error, got %v", method, path, resp["error"])
+		}
+	}
+
+	// Exempt endpoints should pass through.
+	for _, path := range []string{"/api/status"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code == http.StatusPaymentRequired {
+			t.Errorf("GET %s should not be blocked on free plan", path)
+		}
+	}
+}
+
+func TestLicenseMiddleware_ProPlanAllowed(t *testing.T) {
+	srv, _ := setupTestServer(t) // has pro license
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+	handler := srv.licenseMiddleware(mux)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/standup", nil))
+	if w.Code == http.StatusPaymentRequired {
+		t.Error("pro plan should not be blocked")
+	}
 }

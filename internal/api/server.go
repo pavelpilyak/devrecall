@@ -42,6 +42,9 @@ type Server struct {
 	// chat-stream handler. Tests inject deterministic syncers through
 	// this hook; in production it's BuildFreshnessChecker / BuildFreshnessSyncers.
 	freshnessFactory func() (*freshness.Checker, map[string]freshness.Syncer)
+
+	// relayURL overrides the license relay URL. Empty means use the default.
+	relayURL string
 }
 
 // NewServer creates a local API server on the given port (0 = default 9147).
@@ -64,7 +67,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.srv = &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", s.port),
-		Handler: corsMiddleware(mux),
+		Handler: corsMiddleware(s.licenseMiddleware(mux)),
 	}
 
 	go func() {
@@ -274,7 +277,8 @@ func (s *Server) handleActivities(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid before date (expected YYYY-MM-DD)")
 			return
 		}
-		filter.Before = t
+		// Add a day so the "before" date is inclusive of the whole day.
+		filter.Before = t.AddDate(0, 0, 1)
 	}
 
 	filter.Limit = 50
@@ -559,7 +563,13 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 
 	dir := s.configDir()
 
-	lic, err := license.Activate(dir, req.Key)
+	var lic *license.License
+	var err error
+	if s.relayURL != "" {
+		lic, err = license.ActivateWithURL(dir, req.Key, s.relayURL)
+	} else {
+		lic, err = license.Activate(dir, req.Key)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -595,6 +605,34 @@ func (s *Server) promptLoader() *summarizer.PromptLoader {
 		return summarizer.NewPromptLoader("")
 	}
 	return summarizer.NewPromptLoader(dir + "/prompts")
+}
+
+// licenseMiddleware gates the desktop app behind a paid license. Endpoints
+// needed for activation and status are always allowed so the user can still
+// purchase and activate from within the app. Everything else returns 402
+// Payment Required with a JSON message on the free plan.
+func (s *Server) licenseMiddleware(next http.Handler) http.Handler {
+	// Paths that must work without a license so the user can activate.
+	exempt := map[string]bool{
+		"/api/status":   true,
+		"/api/activate": true,
+		"/health":       true,
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if exempt[r.URL.Path] {
+			next.ServeHTTP(w, r)
+			return
+		}
+		info := s.getLicenseInfo()
+		if license.Plan(info.Plan) == license.PlanFree {
+			writeJSON(w, http.StatusPaymentRequired, map[string]any{
+				"error":   "license_required",
+				"message": "The desktop app requires a Pro or Team license. Run `devrecall activate <key>` or purchase at https://devrecall.dev.",
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // corsMiddleware adds CORS headers for local development (Tauri dev server on localhost:5173).

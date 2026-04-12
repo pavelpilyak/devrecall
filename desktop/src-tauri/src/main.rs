@@ -75,6 +75,15 @@ fn main() {
                 api.prevent_close();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running DevRecall");
+        .build(tauri::generate_context!())
+        .expect("error while building DevRecall")
+        .run(|app, event| {
+            // Re-show window when user clicks the dock icon on macOS.
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        });
 }

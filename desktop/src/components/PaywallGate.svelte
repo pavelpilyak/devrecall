@@ -90,7 +90,7 @@
             <input
               type="text"
               bind:value={licenseKey}
-              placeholder="DR-PRO-XXXX-XXXX-XXXX"
+              placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
               class="flex-1 px-3 py-2 text-sm rounded-lg border border-zinc-300
                      dark:border-zinc-600 bg-white dark:bg-zinc-800
                      focus:outline-none focus:ring-2 focus:ring-devrecall-500"

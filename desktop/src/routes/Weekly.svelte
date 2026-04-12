@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { api, type WeeklyResponse } from "../lib/api";
 
   let weeksBack = $state(0);
@@ -31,18 +30,28 @@
 
   function changeWeek(delta: number) {
     weeksBack = Math.max(0, weeksBack - delta);
-    loadWeekly();
+    report = null;
+    generated = false;
   }
 
   function weekLabel(): string {
     if (weeksBack === 0) return "This week";
     if (weeksBack === 1) return "Last week";
-    return `${weeksBack} weeks ago`;
+    const now = new Date();
+    const start = new Date(now);
+    start.setDate(start.getDate() - start.getDay() + 1 - weeksBack * 7); // Monday
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6); // Sunday
+    const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return `${fmt(start)} – ${fmt(end)}`;
   }
 
-  onMount(() => {
+  let generated = $state(false);
+
+  function generate() {
+    generated = true;
     loadWeekly();
-  });
+  }
 </script>
 
 <div class="flex flex-col h-full">
@@ -92,26 +101,38 @@
       {:else}
         <div class="text-sm whitespace-pre-wrap leading-relaxed">{report.report}</div>
       {/if}
+    {:else}
+      <div class="flex items-center justify-center h-32">
+        <button
+          onclick={generate}
+          class="px-6 py-2.5 text-sm font-medium rounded-lg bg-devrecall-600 text-white
+                 hover:bg-devrecall-700 transition-colors"
+        >
+          Generate Summary
+        </button>
+      </div>
     {/if}
   </div>
 
   <!-- Actions footer -->
-  <div class="border-t border-zinc-200 dark:border-zinc-700 px-4 py-3 flex gap-2">
-    <button
-      onclick={copyReport}
-      disabled={!report || report.activity_count === 0}
-      class="flex-1 px-4 py-2 text-sm font-medium rounded-lg border border-zinc-300 dark:border-zinc-600
-             hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-    >
-      {copied ? "Copied!" : "Copy to Clipboard"}
-    </button>
-    <button
-      onclick={loadWeekly}
-      disabled={loading}
-      class="px-4 py-2 text-sm font-medium rounded-lg bg-devrecall-600 text-white
-             hover:bg-devrecall-700 disabled:opacity-50 transition-colors"
-    >
-      Refresh
-    </button>
-  </div>
+  {#if generated}
+    <div class="border-t border-zinc-200 dark:border-zinc-700 px-4 py-3 flex gap-2">
+      <button
+        onclick={copyReport}
+        disabled={!report || report.activity_count === 0}
+        class="flex-1 px-4 py-2 text-sm font-medium rounded-lg border border-zinc-300 dark:border-zinc-600
+               hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        {copied ? "Copied!" : "Copy to Clipboard"}
+      </button>
+      <button
+        onclick={generate}
+        disabled={loading}
+        class="px-4 py-2 text-sm font-medium rounded-lg bg-devrecall-600 text-white
+               hover:bg-devrecall-700 disabled:opacity-50 transition-colors"
+      >
+        {loading ? "Generating..." : "Regenerate"}
+      </button>
+    </div>
+  {/if}
 </div>

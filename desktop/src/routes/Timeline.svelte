@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Activity } from "../lib/api";
+  import { lastSyncAt } from "../lib/stores";
 
   const sources = ["", "git", "slack", "calendar", "github", "gitlab", "bitbucket", "jira", "linear"];
   const types = ["", "commit", "message", "meeting", "ticket", "review", "pull_request", "merge_request", "issue"];
@@ -55,6 +56,16 @@
     });
   }
 
+  function repoName(activity: Activity): string | null {
+    if (activity.source !== "git" || !activity.metadata) return null;
+    try {
+      const meta = JSON.parse(activity.metadata);
+      return meta.repo || null;
+    } catch {
+      return null;
+    }
+  }
+
   function sourceColor(source: string): string {
     const colors: Record<string, string> = {
       git: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
@@ -71,6 +82,11 @@
 
   onMount(() => {
     loadActivities();
+    // Reload when a sync completes (triggered from Settings).
+    const unsub = lastSyncAt.subscribe((ts) => {
+      if (ts > 0) loadActivities();
+    });
+    return unsub;
   });
 </script>
 
@@ -156,6 +172,9 @@
                   {formatTime(activity.timestamp)}
                   {#if activity.type}
                     &middot; {activity.type}
+                  {/if}
+                  {#if repoName(activity)}
+                    &middot; {repoName(activity)}
                   {/if}
                 </div>
               </div>

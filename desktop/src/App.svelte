@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { connected, checkConnection } from "./lib/stores";
+  import { isPro } from "./lib/license";
+  import AppPaywall from "./components/AppPaywall.svelte";
   import Chat from "./routes/Chat.svelte";
   import Standup from "./routes/Standup.svelte";
   import Weekly from "./routes/Weekly.svelte";
@@ -70,6 +72,9 @@
         </p>
       </div>
     </div>
+  {:else if !$isPro}
+    <!-- License required — show paywall -->
+    <AppPaywall />
   {:else}
     <!-- Tab bar -->
     <nav class="flex border-b border-zinc-200 dark:border-zinc-700 px-1 pt-1 overflow-x-auto">
