@@ -97,6 +97,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sync", s.handleSync)
 	mux.HandleFunc("POST /api/activate", s.handleActivate)
 	mux.HandleFunc("POST /api/log", s.handleLog)
+	mux.HandleFunc("GET /api/brag", s.handleBrag)
+	mux.HandleFunc("GET /api/perf-review", s.handlePerfReview)
 }
 
 // --- Handlers ---
@@ -251,6 +253,118 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		"report":         report,
 		"activity_count": len(activities),
 	})
+}
+
+func (s *Server) handleBrag(w http.ResponseWriter, r *http.Request) {
+	after, before, err := s.parsePeriodParam(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	activities, err := s.db.ListActivities(storage.ActivityFilter{After: after, Before: before})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "querying activities: "+err.Error())
+		return
+	}
+
+	activities = privacy.Apply(activities, s.cfg.Privacy)
+	activities = summarizer.DeduplicateActivities(activities)
+
+	var childSummaries []models.Summary
+	for _, pt := range []string{"daily", "weekly", "monthly"} {
+		sums, _ := s.db.ListSummariesInRange(pt, after, before)
+		childSummaries = append(childSummaries, sums...)
+	}
+
+	var sum summarizer.Summarizer
+	if p, llmErr := llm.FromConfig(s.cfg, s.tokenStore); llmErr == nil {
+		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader())
+	} else {
+		sum = summarizer.NewTemplateSummarizer()
+	}
+
+	report, err := sum.BragDoc(activities, childSummaries)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "generating brag doc: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"period_start":   after.Format("2006-01-02"),
+		"period_end":     before.AddDate(0, 0, -1).Format("2006-01-02"),
+		"report":         report,
+		"activity_count": len(activities),
+	})
+}
+
+func (s *Server) handlePerfReview(w http.ResponseWriter, r *http.Request) {
+	after, before, err := s.parsePeriodParam(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	activities, err := s.db.ListActivities(storage.ActivityFilter{After: after, Before: before})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "querying activities: "+err.Error())
+		return
+	}
+
+	activities = privacy.Apply(activities, s.cfg.Privacy)
+	activities = summarizer.DeduplicateActivities(activities)
+
+	var childSummaries []models.Summary
+	for _, pt := range []string{"daily", "weekly", "monthly"} {
+		sums, _ := s.db.ListSummariesInRange(pt, after, before)
+		childSummaries = append(childSummaries, sums...)
+	}
+
+	var sum summarizer.Summarizer
+	if p, llmErr := llm.FromConfig(s.cfg, s.tokenStore); llmErr == nil {
+		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader())
+	} else {
+		sum = summarizer.NewTemplateSummarizer()
+	}
+
+	report, err := sum.PerfReview(activities, childSummaries)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "generating perf review: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"period_start":   after.Format("2006-01-02"),
+		"period_end":     before.AddDate(0, 0, -1).Format("2006-01-02"),
+		"report":         report,
+		"activity_count": len(activities),
+	})
+}
+
+// parsePeriodParam extracts after/before from ?period= or ?after=&before= query params.
+func (s *Server) parsePeriodParam(r *http.Request) (time.Time, time.Time, error) {
+	q := r.URL.Query()
+
+	if after := q.Get("after"); after != "" {
+		a, err := time.Parse("2006-01-02", after)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid after date (expected YYYY-MM-DD)")
+		}
+		b := time.Now().UTC()
+		if before := q.Get("before"); before != "" {
+			b, err = time.Parse("2006-01-02", before)
+			if err != nil {
+				return time.Time{}, time.Time{}, fmt.Errorf("invalid before date (expected YYYY-MM-DD)")
+			}
+			b = b.AddDate(0, 0, 1) // inclusive
+		}
+		return a, b, nil
+	}
+
+	// Default: last month.
+	now := time.Now().UTC()
+	first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+	return first, first.AddDate(0, 1, 0), nil
 }
 
 func (s *Server) handleActivities(w http.ResponseWriter, r *http.Request) {

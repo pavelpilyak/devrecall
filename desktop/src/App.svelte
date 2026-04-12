@@ -9,14 +9,16 @@
   import Timeline from "./routes/Timeline.svelte";
   import Search from "./routes/Search.svelte";
   import Log from "./routes/Log.svelte";
+  import Review from "./routes/Review.svelte";
   import Settings from "./routes/Settings.svelte";
 
-  type Tab = "chat" | "standup" | "weekly" | "timeline" | "search" | "log" | "settings";
+  type Tab = "chat" | "standup" | "weekly" | "review" | "timeline" | "search" | "log" | "settings";
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "chat", label: "Chat" },
     { id: "standup", label: "Standup" },
     { id: "weekly", label: "Weekly" },
+    { id: "review", label: "Review" },
     { id: "timeline", label: "Timeline" },
     { id: "search", label: "Search" },
     { id: "log", label: "Log" },
@@ -97,6 +99,7 @@
       <div class="absolute inset-0" class:hidden={activeTab !== "standup"}><Standup /></div>
       <div class="absolute inset-0" class:hidden={activeTab !== "weekly"}><Weekly /></div>
       <div class="absolute inset-0" class:hidden={activeTab !== "timeline"}><Timeline /></div>
+      <div class="absolute inset-0" class:hidden={activeTab !== "review"}><Review /></div>
       <div class="absolute inset-0" class:hidden={activeTab !== "search"}><Search /></div>
       <div class="absolute inset-0" class:hidden={activeTab !== "log"}><Log bind:this={logView} /></div>
       <div class="absolute inset-0" class:hidden={activeTab !== "settings"}><Settings /></div>

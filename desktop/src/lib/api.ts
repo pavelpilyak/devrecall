@@ -51,6 +51,13 @@ export interface WeeklyResponse {
   activity_count: number;
 }
 
+export interface ReviewResponse {
+  period_start: string;
+  period_end: string;
+  report: string;
+  activity_count: number;
+}
+
 export interface Activity {
   id: number;
   source: string;
@@ -251,4 +258,10 @@ export const api = {
     post<{ message: string; license: LicenseInfo }>("/api/activate", { key }),
 
   log: (req: LogRequest) => post<LogResponse>("/api/log", req),
+
+  brag: (after: string, before: string) =>
+    get<ReviewResponse>(`/api/brag?after=${after}&before=${before}`),
+
+  perfReview: (after: string, before: string) =>
+    get<ReviewResponse>(`/api/perf-review?after=${after}&before=${before}`),
 };
