@@ -29,13 +29,13 @@ type Ollama struct {
 
 // NewOllama creates a provider for a local Ollama instance.
 // If baseURL is empty, defaults to http://localhost:11434.
-// If model is empty, defaults to "llama3.2".
+// If model is empty, defaults to "gemma4".
 func NewOllama(baseURL, model string) *Ollama {
 	if baseURL == "" {
 		baseURL = defaultOllamaURL
 	}
 	if model == "" {
-		model = "llama4"
+		model = "gemma4"
 	}
 	return &Ollama{
 		baseURL:    baseURL,

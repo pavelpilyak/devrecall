@@ -220,7 +220,7 @@ func Init() (*Config, error) {
 		},
 		LLM: LLMConfig{
 			Provider: "ollama",
-			Model:    "llama3.2",
+			Model:    "gemma4",
 		},
 		filePath: filepath.Join(dir, configFile),
 	}

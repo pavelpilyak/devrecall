@@ -32,8 +32,8 @@ func TestInitCreatesConfigFile(t *testing.T) {
 	if cfg.LLM.Provider != "ollama" {
 		t.Errorf("LLM.Provider = %q, want %q", cfg.LLM.Provider, "ollama")
 	}
-	if cfg.LLM.Model != "llama3.2" {
-		t.Errorf("LLM.Model = %q, want %q", cfg.LLM.Model, "llama3.2")
+	if cfg.LLM.Model != "gemma4" {
+		t.Errorf("LLM.Model = %q, want %q", cfg.LLM.Model, "gemma4")
 	}
 }
 

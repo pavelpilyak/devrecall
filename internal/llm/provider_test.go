@@ -278,7 +278,7 @@ func TestOllama_Defaults(t *testing.T) {
 	if p.baseURL != defaultOllamaURL {
 		t.Errorf("baseURL = %q, want %q", p.baseURL, defaultOllamaURL)
 	}
-	if p.model != "llama4" {
+	if p.model != "gemma4" {
 		t.Errorf("model = %q", p.model)
 	}
 }

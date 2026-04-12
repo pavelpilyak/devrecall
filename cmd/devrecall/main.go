@@ -558,7 +558,7 @@ func defaultModelForProvider(provider string) string {
 	case "anthropic":
 		return "claude-sonnet-4-6"
 	case "ollama":
-		return "llama4"
+		return "gemma4"
 	default:
 		return ""
 	}
@@ -2732,7 +2732,7 @@ func newAuthStatusCmd() *cobra.Command {
 			case "ollama", "":
 				model := cfg.LLM.Model
 				if model == "" {
-					model = "llama3.2"
+					model = "gemma4"
 				}
 				fmt.Printf("  LLM:      ollama (model: %s)\n", model)
 			case "openai":
