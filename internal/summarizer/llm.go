@@ -22,6 +22,7 @@ Rules:
 - Keep each bullet point to 1-2 sentences
 - Highlight key decisions from Slack threads, but attribute them correctly
 - Don't include commit SHAs or raw file counts — focus on what was accomplished
+- When activities include [link](url) references, preserve them inline so the reader can click through to the source (PR, Slack thread, calendar event, ticket, etc.)
 - For meetings: include the meeting name, duration, and type (1:1, standup, ceremony, etc.) when useful
 - Skip focus time blocks — they're not relevant for standup
 - Skip declined meetings — they weren't attended
@@ -38,6 +39,7 @@ Rules:
 - Start with a brief 2-3 sentence overview of the week
 - Group work by themes/projects, not by day
 - Include key accomplishments and decisions made
+- When activities include [link](url) references, preserve them inline so the reader can click through to the source
 - Include a meeting time breakdown at the end: total hours in meetings, broken down by meeting type (1:1, standup, ceremony, etc.)
 - Skip focus time blocks and declined meetings
 - Mention collaboration highlights (who you worked with most)
@@ -170,6 +172,7 @@ Format the document in Markdown with these sections:
 
 Rules:
 - Be specific: cite dates, repo names, ticket IDs, and people when available.
+- When activities include [link](url) references, preserve them inline so the reader can click through to PRs, tickets, Slack threads, etc.
 - Focus on impact and outcomes, not just activity volume.
 - Use professional language suitable for sharing with management.
 - If data is limited, work with what's available — don't pad or fabricate.
@@ -257,6 +260,7 @@ Format the document in Markdown with these sections:
 
 Rules:
 - Be specific and evidence-based — cite dates, repos, tickets, and people.
+- When activities include [link](url) references, preserve them inline so the reader can click through to PRs, tickets, Slack threads, etc.
 - Frame contributions in terms of impact, not just output.
 - Use professional language suitable for manager review or self-assessment.
 - Distinguish between individual contributions and team outcomes you influenced.
@@ -297,10 +301,50 @@ type slackFullMeta struct {
 	ChannelName string             `json:"channel_name"`
 	ReplyCount  int                `json:"reply_count,omitempty"`
 	Summary     *slackThreadSummary `json:"summary,omitempty"`
+	Permalink   string             `json:"permalink,omitempty"`
 	ThreadMsgs  []struct {
 		User string `json:"user"`
 		Text string `json:"text"`
 	} `json:"thread_msgs,omitempty"`
+}
+
+// extractURL pulls a source link from an activity's metadata JSON.
+// Most sources store a "url" field; Slack uses "permalink"; Calendar URLs are
+// constructed from event_id + calendar_id.
+func extractURL(a models.Activity) string {
+	if a.Metadata == "" {
+		return ""
+	}
+
+	// Fast path: most sources use a "url" field.
+	var generic struct {
+		URL       string `json:"url"`
+		Permalink string `json:"permalink"`
+		EventID   string `json:"event_id"`
+	}
+	if err := json.Unmarshal([]byte(a.Metadata), &generic); err != nil {
+		return ""
+	}
+
+	if generic.URL != "" {
+		return generic.URL
+	}
+	if generic.Permalink != "" {
+		return generic.Permalink
+	}
+	// Google Calendar: construct URL from event ID.
+	if generic.EventID != "" {
+		return "https://calendar.google.com/calendar/event?eid=" + generic.EventID
+	}
+	return ""
+}
+
+// formatLink returns " [link](url)" if url is non-empty, otherwise "".
+func formatLink(url string) string {
+	if url == "" {
+		return ""
+	}
+	return fmt.Sprintf(" [link](%s)", url)
 }
 
 // buildActivitiesPrompt formats activities into a structured prompt for the LLM.
@@ -351,6 +395,7 @@ func buildActivitiesPrompt(activities []models.Activity, selfUIDs map[string]boo
 			case models.SourceCalendar:
 				var meta calendarMeta
 				json.Unmarshal([]byte(a.Metadata), &meta)
+				link := extractURL(a)
 				details := formatDuration(meta.DurationMin)
 				if meta.MeetingType != "" {
 					details += ", " + meta.MeetingType
@@ -370,18 +415,19 @@ func buildActivitiesPrompt(activities []models.Activity, selfUIDs map[string]boo
 				// Show scheduled time for today's meetings.
 				if d.date == todayStr && meta.Start != "" && !meta.IsAllDay {
 					if st, err := time.Parse(time.RFC3339, meta.Start); err == nil {
-						fmt.Fprintf(&b, "- [Calendar meeting] %s — %s (%s)\n", st.Local().Format("15:04"), a.Title, details)
+						fmt.Fprintf(&b, "- [Calendar meeting] %s — %s (%s)%s\n", st.Local().Format("15:04"), a.Title, details, formatLink(link))
 						break
 					}
 				}
-				fmt.Fprintf(&b, "- [Calendar meeting] %s (%s)\n", a.Title, details)
+				fmt.Fprintf(&b, "- [Calendar meeting] %s (%s)%s\n", a.Title, details, formatLink(link))
 
 			case models.SourceSlack:
 				var meta slackFullMeta
 				json.Unmarshal([]byte(a.Metadata), &meta)
+				link := formatLink(meta.Permalink)
 				if len(meta.ThreadMsgs) > 1 {
 					// Thread with messages — give the LLM the full conversation.
-					fmt.Fprintf(&b, "- [Slack thread] #%s (%d messages):\n", meta.ChannelName, len(meta.ThreadMsgs))
+					fmt.Fprintf(&b, "- [Slack thread] #%s (%d messages):%s\n", meta.ChannelName, len(meta.ThreadMsgs), link)
 					for _, m := range meta.ThreadMsgs {
 						label := m.User
 						if selfUIDs[m.User] {
@@ -390,13 +436,14 @@ func buildActivitiesPrompt(activities []models.Activity, selfUIDs map[string]boo
 						fmt.Fprintf(&b, "    %s: %s\n", label, m.Text)
 					}
 				} else if a.Content != "" {
-					fmt.Fprintf(&b, "- [Slack message] #%s: %s\n", meta.ChannelName, a.Content)
+					fmt.Fprintf(&b, "- [Slack message] #%s: %s%s\n", meta.ChannelName, a.Content, link)
 				} else {
-					fmt.Fprintf(&b, "- [Slack message] #%s: %s\n", meta.ChannelName, a.Title)
+					fmt.Fprintf(&b, "- [Slack message] #%s: %s%s\n", meta.ChannelName, a.Title, link)
 				}
 
 			default:
-				fmt.Fprintf(&b, "- [%s] %s\n", a.Source, a.Title)
+				link := formatLink(extractURL(a))
+				fmt.Fprintf(&b, "- [%s] %s%s\n", a.Source, a.Title, link)
 			}
 		}
 		b.WriteString("\n")

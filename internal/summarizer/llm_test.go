@@ -354,3 +354,133 @@ func TestLLMWeeklySummary_Empty(t *testing.T) {
 	}
 }
 
+func TestExtractURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		activity models.Activity
+		want     string
+	}{
+		{
+			name: "github PR with url field",
+			activity: models.Activity{
+				Source:   models.SourceGitHub,
+				Metadata: `{"repo":"org/repo","pr_number":42,"url":"https://github.com/org/repo/pull/42"}`,
+			},
+			want: "https://github.com/org/repo/pull/42",
+		},
+		{
+			name: "slack with permalink",
+			activity: models.Activity{
+				Source:   models.SourceSlack,
+				Metadata: `{"channel_name":"backend","permalink":"https://team.slack.com/archives/C01/p123"}`,
+			},
+			want: "https://team.slack.com/archives/C01/p123",
+		},
+		{
+			name: "calendar with event_id",
+			activity: models.Activity{
+				Source:   models.SourceCalendar,
+				Metadata: `{"event_id":"abc123","calendar_id":"me@gmail.com"}`,
+			},
+			want: "https://calendar.google.com/calendar/event?eid=abc123",
+		},
+		{
+			name: "jira with url",
+			activity: models.Activity{
+				Source:   models.SourceJira,
+				Metadata: `{"issue_key":"PROJ-123","url":"https://jira.example.com/browse/PROJ-123"}`,
+			},
+			want: "https://jira.example.com/browse/PROJ-123",
+		},
+		{
+			name: "git commit without url",
+			activity: models.Activity{
+				Source:   models.SourceGit,
+				Metadata: `{"repo":"my-repo","sha":"abc123"}`,
+			},
+			want: "",
+		},
+		{
+			name: "empty metadata",
+			activity: models.Activity{
+				Source:   models.SourceGit,
+				Metadata: "",
+			},
+			want: "",
+		},
+		{
+			name: "invalid JSON",
+			activity: models.Activity{
+				Source:   models.SourceGit,
+				Metadata: "not json",
+			},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractURL(tt.activity)
+			if got != tt.want {
+				t.Errorf("extractURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatLink(t *testing.T) {
+	if got := formatLink(""); got != "" {
+		t.Errorf("formatLink(\"\") = %q, want empty", got)
+	}
+	if got := formatLink("https://example.com"); got != " [link](https://example.com)" {
+		t.Errorf("formatLink() = %q, want ' [link](https://example.com)'", got)
+	}
+}
+
+func TestBuildActivitiesPrompt_IncludesLinks(t *testing.T) {
+	ts := time.Date(2026, 3, 27, 14, 0, 0, 0, time.UTC)
+
+	// GitHub PR with URL.
+	prMeta, _ := json.Marshal(map[string]any{
+		"repo": "org/repo", "pr_number": 42,
+		"url": "https://github.com/org/repo/pull/42",
+	})
+
+	// Slack thread with permalink.
+	slackMeta, _ := json.Marshal(slackFullMeta{
+		ChannelName: "backend",
+		Permalink:   "https://team.slack.com/archives/C01/p123",
+		ThreadMsgs: []struct {
+			User string `json:"user"`
+			Text string `json:"text"`
+		}{
+			{User: "U001", Text: "hello"},
+			{User: "U002", Text: "hi"},
+		},
+	})
+
+	// Jira ticket with URL.
+	jiraMeta, _ := json.Marshal(map[string]any{
+		"issue_key": "PROJ-42",
+		"url":       "https://jira.example.com/browse/PROJ-42",
+	})
+
+	activities := []models.Activity{
+		{Source: models.SourceGitHub, Type: models.TypePullRequest, Title: "Fix auth", Metadata: string(prMeta), Timestamp: ts},
+		{Source: models.SourceSlack, Type: models.TypeMessage, Title: "Thread", Metadata: string(slackMeta), Timestamp: ts},
+		{Source: models.SourceJira, Type: models.TypeTicket, Title: "PROJ-42 Auth bug", Metadata: string(jiraMeta), Timestamp: ts},
+	}
+
+	prompt := buildActivitiesPrompt(activities, nil)
+
+	if !strings.Contains(prompt, "[link](https://github.com/org/repo/pull/42)") {
+		t.Errorf("expected GitHub link in prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "[link](https://team.slack.com/archives/C01/p123)") {
+		t.Errorf("expected Slack permalink in prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "[link](https://jira.example.com/browse/PROJ-42)") {
+		t.Errorf("expected Jira link in prompt:\n%s", prompt)
+	}
+}
+

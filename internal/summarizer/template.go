@@ -27,6 +27,7 @@ type ticketActivityMeta struct {
 	ToStatus   string `json:"to_status"`
 	Sprint     string `json:"sprint,omitempty"` // Jira sprint name
 	Cycle      string `json:"cycle,omitempty"`  // Linear cycle name
+	URL        string `json:"url,omitempty"`
 }
 
 // slackMeta mirrors the JSON metadata stored by the Slack collector.
@@ -34,6 +35,7 @@ type slackMeta struct {
 	ChannelName string             `json:"channel_name"`
 	ReplyCount  int                `json:"reply_count,omitempty"`
 	Summary     *slackThreadSummary `json:"summary,omitempty"`
+	Permalink   string             `json:"permalink,omitempty"`
 }
 
 // slackThreadSummary mirrors the ThreadSummary from the Slack collector.
@@ -50,6 +52,8 @@ type calendarMeta struct {
 	Attendees      []attendee  `json:"attendees,omitempty"`
 	ResponseStatus string      `json:"response_status"`
 	IsAllDay       bool        `json:"is_all_day,omitempty"`
+	EventID        string      `json:"event_id,omitempty"`
+	CalendarID     string      `json:"calendar_id,omitempty"`
 }
 
 type attendee struct {
