@@ -19,6 +19,37 @@ const (
 	perPage             = 50
 )
 
+// jiraTime handles Jira's non-RFC3339 timestamp format that uses a zone
+// offset without a colon (e.g., "2026-04-18T17:40:54.510+0200").
+type jiraTime struct{ time.Time }
+
+var jiraTimeLayouts = []string{
+	"2006-01-02T15:04:05.999-0700",
+	"2006-01-02T15:04:05-0700",
+	time.RFC3339Nano,
+	time.RFC3339,
+}
+
+func (t *jiraTime) UnmarshalJSON(data []byte) error {
+	s := string(data)
+	if s == "null" || s == `""` {
+		return nil
+	}
+	s = s[1 : len(s)-1] // strip quotes
+	var firstErr error
+	for _, layout := range jiraTimeLayouts {
+		parsed, err := time.Parse(layout, s)
+		if err == nil {
+			t.Time = parsed
+			return nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 // Collector fetches Jira issues, status transitions, and comments.
 type Collector struct {
 	token    string // OAuth access token or API token
@@ -123,7 +154,7 @@ func (c *Collector) CollectSince(ctx context.Context, since time.Time) ([]models
 				Type:      models.TypeTicket,
 				Title:     fmt.Sprintf("%s: %s", issue.Key, issue.Fields.Summary),
 				Metadata:  string(metaJSON),
-				Timestamp: issue.Fields.Updated,
+				Timestamp: issue.Fields.Updated.Time,
 			})
 		}
 	}
@@ -134,10 +165,11 @@ func (c *Collector) CollectSince(ctx context.Context, since time.Time) ([]models
 // --- Jira API types ---
 
 type jiraSearchResult struct {
-	StartAt    int          `json:"startAt"`
-	MaxResults int          `json:"maxResults"`
-	Total      int          `json:"total"`
-	Issues     []jiraIssue  `json:"issues"`
+	// New POST /rest/api/3/search/jql response (Atlassian migration CHANGE-2046).
+	// StartAt/MaxResults/Total are absent in the new endpoint; pagination uses NextPageToken.
+	Issues        []jiraIssue `json:"issues"`
+	NextPageToken string      `json:"nextPageToken,omitempty"`
+	IsLast        bool        `json:"isLast,omitempty"`
 }
 
 type jiraIssue struct {
@@ -152,8 +184,8 @@ type jiraFields struct {
 	Priority jiraPriority `json:"priority"`
 	Labels   []string     `json:"labels"`
 	Project  jiraProject  `json:"project"`
-	Updated  time.Time    `json:"updated"`
-	Created  time.Time    `json:"created"`
+	Updated  jiraTime     `json:"updated"`
+	Created  jiraTime     `json:"created"`
 	Sprint   *jiraSprint  `json:"sprint"`
 }
 
@@ -186,7 +218,7 @@ type jiraChangelog struct {
 type jiraChangeItem struct {
 	ID      string              `json:"id"`
 	Author  jiraChangeAuthor    `json:"author"`
-	Created time.Time           `json:"created"`
+	Created jiraTime            `json:"created"`
 	Items   []jiraChangeDetail  `json:"items"`
 }
 
@@ -211,8 +243,8 @@ type jiraComment struct {
 	ID      string            `json:"id"`
 	Author  jiraCommentAuthor `json:"author"`
 	Body    any               `json:"body"` // ADF or string
-	Created time.Time         `json:"created"`
-	Updated time.Time         `json:"updated"`
+	Created jiraTime          `json:"created"`
+	Updated jiraTime          `json:"updated"`
 }
 
 type jiraCommentAuthor struct {
@@ -267,28 +299,32 @@ func (c *Collector) searchIssues(ctx context.Context, since time.Time) ([]jiraIs
 		since.Format("2006-01-02 15:04"),
 	)
 
+	// Uses /rest/api/3/search/jql (replaces deprecated /rest/api/3/search per
+	// CHANGE-2046). Cursor-based pagination via nextPageToken; no total returned.
 	var all []jiraIssue
-	startAt := 0
+	nextPageToken := ""
 
 	for {
 		params := url.Values{
 			"jql":        {jql},
 			"fields":     {"summary,status,priority,labels,project,updated,created,sprint"},
 			"maxResults": {strconv.Itoa(perPage)},
-			"startAt":    {strconv.Itoa(startAt)},
+		}
+		if nextPageToken != "" {
+			params.Set("nextPageToken", nextPageToken)
 		}
 
 		var result jiraSearchResult
-		if err := c.apiGet(ctx, "/rest/api/3/search", params, &result); err != nil {
+		if err := c.apiGet(ctx, "/rest/api/3/search/jql", params, &result); err != nil {
 			return nil, err
 		}
 
 		all = append(all, result.Issues...)
 
-		if len(all) >= result.Total || len(result.Issues) < perPage {
+		if result.NextPageToken == "" || result.IsLast || len(result.Issues) == 0 {
 			break
 		}
-		startAt += len(result.Issues)
+		nextPageToken = result.NextPageToken
 	}
 
 	return all, nil
@@ -304,7 +340,7 @@ func (c *Collector) collectStatusTransitions(ctx context.Context, issue jiraIssu
 	var activities []models.Activity
 
 	for _, change := range changelog.Values {
-		if change.Created.Before(since) {
+		if change.Created.Time.Before(since) {
 			continue
 		}
 		// Only include our own transitions.
@@ -341,7 +377,7 @@ func (c *Collector) collectStatusTransitions(ctx context.Context, issue jiraIssu
 				Content: fmt.Sprintf("Moved %s from '%s' to '%s'",
 					issue.Key, item.FromString, item.ToString),
 				Metadata:  string(metaJSON),
-				Timestamp: change.Created,
+				Timestamp: change.Created.Time,
 			})
 		}
 	}
@@ -358,7 +394,7 @@ func (c *Collector) collectComments(ctx context.Context, issue jiraIssue, since 
 	var activities []models.Activity
 
 	for _, comment := range result.Comments {
-		if comment.Created.Before(since) {
+		if comment.Created.Time.Before(since) {
 			continue
 		}
 		// Only include our own comments.
@@ -382,7 +418,7 @@ func (c *Collector) collectComments(ctx context.Context, issue jiraIssue, since 
 			Title:     fmt.Sprintf("Commented on %s: %s", issue.Key, issue.Fields.Summary),
 			Content:   bodyText,
 			Metadata:  string(metaJSON),
-			Timestamp: comment.Created,
+			Timestamp: comment.Created.Time,
 		})
 	}
 

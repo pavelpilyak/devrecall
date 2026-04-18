@@ -154,6 +154,7 @@ func seedJira(opts *Options) error {
 				"issuetype": map[string]string{"name": iss.issueType},
 				"priority":  map[string]string{"name": iss.priority},
 				"labels":    iss.labels,
+				"assignee":  map[string]string{"accountId": myself.AccountID},
 			},
 		}, &created)
 		if err != nil {

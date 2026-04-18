@@ -13,9 +13,12 @@ const (
 )
 
 // BitbucketToken represents a validated Bitbucket app password with user info.
+// Username is the Basic Auth principal (email for scoped API tokens, nickname for legacy app
+// passwords). UUID identifies the user in PR author/reviewer payloads regardless of auth mode.
 type BitbucketToken struct {
 	Username    string `json:"username"`
 	AppPassword string `json:"app_password"`
+	UUID        string `json:"uuid,omitempty"`
 }
 
 // BitbucketAuthConfig holds parameters for Bitbucket app password validation.
@@ -60,13 +63,18 @@ func ValidateBitbucketAppPassword(ctx context.Context, username, appPassword str
 
 	var user struct {
 		Username string `json:"username"`
+		UUID     string `json:"uuid"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return nil, fmt.Errorf("decoding user response: %w", err)
 	}
 
+	// Preserve the caller-provided principal as-is: scoped API tokens require the
+	// email for Basic Auth, while legacy app passwords use the nickname. Using
+	// user.Username from the response would break scoped-token auth on reload.
 	return &BitbucketToken{
-		Username:    user.Username,
+		Username:    username,
 		AppPassword: appPassword,
+		UUID:        user.UUID,
 	}, nil
 }

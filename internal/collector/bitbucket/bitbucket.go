@@ -18,19 +18,26 @@ const (
 )
 
 // Collector fetches PRs authored and PRs reviewed from the Bitbucket API.
+//
+// username is the Basic Auth principal (email for scoped API tokens, nickname for legacy
+// app passwords). userUUID is the Bitbucket account UUID used to match the authenticated
+// user against PR author/reviewer payloads — it is the only identifier that works across
+// both auth modes.
 type Collector struct {
 	username    string
 	appPassword string
+	userUUID    string
 	workspace   string
 	baseURL     string
 	client      *http.Client
 }
 
 // New creates a Bitbucket collector with the default API base URL.
-func New(username, appPassword, workspace string) *Collector {
+func New(username, appPassword, userUUID, workspace string) *Collector {
 	return &Collector{
 		username:    username,
 		appPassword: appPassword,
+		userUUID:    userUUID,
 		workspace:   workspace,
 		baseURL:     defaultBaseURL,
 		client:      &http.Client{Timeout: 30 * time.Second},
@@ -38,10 +45,11 @@ func New(username, appPassword, workspace string) *Collector {
 }
 
 // NewWithClient creates a collector with a custom HTTP client and base URL (for testing).
-func NewWithClient(username, appPassword, workspace, baseURL string, client *http.Client) *Collector {
+func NewWithClient(username, appPassword, userUUID, workspace, baseURL string, client *http.Client) *Collector {
 	return &Collector{
 		username:    username,
 		appPassword: appPassword,
+		userUUID:    userUUID,
 		workspace:   workspace,
 		baseURL:     baseURL,
 		client:      client,
@@ -226,10 +234,10 @@ func (c *Collector) prsToActivities(ctx context.Context, prs []bbPullRequest, re
 	var activities []models.Activity
 
 	for _, pr := range prs {
-		isAuthor := pr.Author.Nickname == c.username || pr.Author.UUID == c.username
+		isAuthor := c.matchesUser(pr.Author)
 		isReviewer := false
 		for _, r := range pr.Reviewers {
-			if r.Nickname == c.username || r.UUID == c.username {
+			if c.matchesUser(r) {
 				isReviewer = true
 				break
 			}
@@ -294,6 +302,19 @@ func (c *Collector) prsToActivities(ctx context.Context, prs []bbPullRequest, re
 	}
 
 	return activities
+}
+
+// matchesUser reports whether the given PR participant is the authenticated user.
+// Matches UUID first (stable across auth modes), then falls back to nickname for
+// legacy app-password deployments where UUID may be missing.
+func (c *Collector) matchesUser(u bbUser) bool {
+	if c.userUUID != "" && u.UUID == c.userUUID {
+		return true
+	}
+	if c.userUUID == "" && c.username != "" && u.Nickname == c.username {
+		return true
+	}
+	return false
 }
 
 func (c *Collector) getPRCommits(ctx context.Context, repoFullName string, prID int) ([]bbCommit, error) {

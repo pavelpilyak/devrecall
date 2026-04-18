@@ -25,6 +25,8 @@ import (
 	ghcollector "github.com/pavelpiliak/devrecall/internal/collector/github"
 	glcollector "github.com/pavelpiliak/devrecall/internal/collector/gitlab"
 	confluencecollector "github.com/pavelpiliak/devrecall/internal/collector/confluence"
+	jiracollector "github.com/pavelpiliak/devrecall/internal/collector/jira"
+	linearcollector "github.com/pavelpiliak/devrecall/internal/collector/linear"
 	slackcollector "github.com/pavelpiliak/devrecall/internal/collector/slack"
 	"github.com/pavelpiliak/devrecall/internal/config"
 	"github.com/pavelpiliak/devrecall/internal/chat"
@@ -365,7 +367,7 @@ func runStandup(dateFlag string) error {
 			fmt.Fprintf(os.Stderr, "Bitbucket: token not found: %v (run 'devrecall auth bitbucket')\n", err)
 		} else {
 			fmt.Fprintf(os.Stderr, "Collecting Bitbucket activity...\n")
-			bc := bbcollector.New(bbToken.Username, bbToken.AppPassword, cfg.Bitbucket.Workspace)
+			bc := bbcollector.New(bbToken.Username, bbToken.AppPassword, bbToken.UUID, cfg.Bitbucket.Workspace)
 			bbActivities, err := bc.CollectSince(context.Background(), dayStart)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Bitbucket sync failed: %v\n", err)
@@ -373,6 +375,53 @@ func runStandup(dateFlag string) error {
 				fmt.Fprintf(os.Stderr, "Storing %d Bitbucket activities...\n", len(bbActivities))
 				if _, err := db.InsertActivities(bbActivities); err != nil {
 					fmt.Fprintf(os.Stderr, "Storing Bitbucket activities: %v\n", err)
+				}
+			}
+		}
+	}
+
+	// Sync Jira if configured.
+	if cfg.Jira.Enabled && cfg.Jira.Email != "" && requireFeature(dir, license.FeatureJira, "Jira integration") {
+		var atlToken auth.AtlassianToken
+		if err := tokenStore.Load("jira", cfg.Jira.Email, &atlToken); err != nil {
+			fmt.Fprintf(os.Stderr, "Jira: token not found: %v (run 'devrecall auth jira')\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Collecting Jira activity...\n")
+			var jc *jiracollector.Collector
+			if cfg.Jira.AuthMode == "api-token" && cfg.Jira.BaseURL != "" {
+				jc = jiracollector.NewWithAPIToken(cfg.Jira.Email, atlToken.AccessToken, cfg.Jira.BaseURL)
+			} else if len(atlToken.CloudSites) > 0 {
+				jc = jiracollector.New(atlToken.AccessToken, atlToken.CloudSites[0].ID)
+			}
+			if jc != nil {
+				jaActivities, err := jc.CollectSince(context.Background(), dayStart)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Jira sync failed: %v\n", err)
+				} else if len(jaActivities) > 0 {
+					fmt.Fprintf(os.Stderr, "Storing %d Jira activities...\n", len(jaActivities))
+					if _, err := db.InsertActivities(jaActivities); err != nil {
+						fmt.Fprintf(os.Stderr, "Storing Jira activities: %v\n", err)
+					}
+				}
+			}
+		}
+	}
+
+	// Sync Linear if configured.
+	if cfg.Linear.Enabled && cfg.Linear.Email != "" && requireFeature(dir, license.FeatureLinear, "Linear integration") {
+		var lt auth.LinearToken
+		if err := tokenStore.Load("linear", cfg.Linear.Email, &lt); err != nil {
+			fmt.Fprintf(os.Stderr, "Linear: token not found: %v (run 'devrecall auth linear')\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Collecting Linear activity...\n")
+			lc := linearcollector.New(lt.AccessToken)
+			liActivities, err := lc.CollectSince(context.Background(), dayStart)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Linear sync failed: %v\n", err)
+			} else if len(liActivities) > 0 {
+				fmt.Fprintf(os.Stderr, "Storing %d Linear activities...\n", len(liActivities))
+				if _, err := db.InsertActivities(liActivities); err != nil {
+					fmt.Fprintf(os.Stderr, "Storing Linear activities: %v\n", err)
 				}
 			}
 		}
@@ -813,7 +862,7 @@ func runSync(ctx context.Context) error {
 		var bbToken auth.BitbucketToken
 		if err := tokenStore.Load("bitbucket", cfg.Bitbucket.Username, &bbToken); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting Bitbucket activity...\n")
-			bc := bbcollector.New(bbToken.Username, bbToken.AppPassword, cfg.Bitbucket.Workspace)
+			bc := bbcollector.New(bbToken.Username, bbToken.AppPassword, bbToken.UUID, cfg.Bitbucket.Workspace)
 			activities, err := bc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Bitbucket sync warning: %v\n", err)
@@ -832,6 +881,69 @@ func runSync(ctx context.Context) error {
 			db.SetSyncState("bitbucket", "")
 		} else {
 			fmt.Fprintf(os.Stderr, "Bitbucket: token not found (run 'devrecall auth bitbucket')\n")
+		}
+	}
+
+	// Sync Jira.
+	if cfg.Jira.Enabled && cfg.Jira.Email != "" && requireFeature(dir, license.FeatureJira, "Jira integration") {
+		var atlToken auth.AtlassianToken
+		if err := tokenStore.Load("jira", cfg.Jira.Email, &atlToken); err == nil {
+			fmt.Fprintf(os.Stderr, "Collecting Jira activity...\n")
+			var jc *jiracollector.Collector
+			if cfg.Jira.AuthMode == "api-token" && cfg.Jira.BaseURL != "" {
+				jc = jiracollector.NewWithAPIToken(cfg.Jira.Email, atlToken.AccessToken, cfg.Jira.BaseURL)
+			} else if len(atlToken.CloudSites) > 0 {
+				jc = jiracollector.New(atlToken.AccessToken, atlToken.CloudSites[0].ID)
+			} else {
+				fmt.Fprintf(os.Stderr, "Jira: no base URL or cloud site in token\n")
+			}
+			if jc != nil {
+				activities, err := jc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Jira sync warning: %v\n", err)
+					db.SetSyncError("jira", err.Error())
+				} else if len(activities) > 0 {
+					n, err := db.InsertActivities(activities)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Storing Jira activities: %v\n", err)
+					} else {
+						totalStored += n
+						fmt.Fprintf(os.Stderr, "Jira: %d activities stored (%d new)\n", len(activities), n)
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "Jira: no new activities\n")
+				}
+				db.SetSyncState("jira", "")
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "Jira: token not found (run 'devrecall auth jira')\n")
+		}
+	}
+
+	// Sync Linear.
+	if cfg.Linear.Enabled && cfg.Linear.Email != "" && requireFeature(dir, license.FeatureLinear, "Linear integration") {
+		var lt auth.LinearToken
+		if err := tokenStore.Load("linear", cfg.Linear.Email, &lt); err == nil {
+			fmt.Fprintf(os.Stderr, "Collecting Linear activity...\n")
+			lc := linearcollector.New(lt.AccessToken)
+			activities, err := lc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Linear sync warning: %v\n", err)
+				db.SetSyncError("linear", err.Error())
+			} else if len(activities) > 0 {
+				n, err := db.InsertActivities(activities)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Storing Linear activities: %v\n", err)
+				} else {
+					totalStored += n
+					fmt.Fprintf(os.Stderr, "Linear: %d activities stored (%d new)\n", len(activities), n)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "Linear: no new activities\n")
+			}
+			db.SetSyncState("linear", "")
+		} else {
+			fmt.Fprintf(os.Stderr, "Linear: token not found (run 'devrecall auth linear')\n")
 		}
 	}
 
@@ -2317,6 +2429,9 @@ func newAuthCmd() *cobra.Command {
 	cmd.AddCommand(newAuthGitHubCmd())
 	cmd.AddCommand(newAuthGitLabCmd())
 	cmd.AddCommand(newAuthBitbucketCmd())
+	cmd.AddCommand(newAuthJiraCmd())
+	cmd.AddCommand(newAuthConfluenceCmd())
+	cmd.AddCommand(newAuthLinearCmd())
 	cmd.AddCommand(newAuthOpenAICmd())
 	cmd.AddCommand(newAuthAnthropicCmd())
 	cmd.AddCommand(newAuthStatusCmd())
@@ -2625,6 +2740,178 @@ func newAuthBitbucketCmd() *cobra.Command {
 	}
 }
 
+func newAuthJiraCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "jira",
+		Short: "Connect your Jira account via API token",
+		Long:  "Authenticates with Jira using your email and an API token. Create one at id.atlassian.com/manage-profile/security/api-tokens.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			scanner := bufio.NewScanner(os.Stdin)
+
+			fmt.Print("Enter your Jira base URL (e.g. https://mycompany.atlassian.net): ")
+			if !scanner.Scan() {
+				return fmt.Errorf("no input received")
+			}
+			baseURL := strings.TrimRight(strings.TrimSpace(scanner.Text()), "/")
+			if baseURL == "" {
+				return fmt.Errorf("base URL cannot be empty")
+			}
+
+			fmt.Print("Enter your Atlassian account email: ")
+			if !scanner.Scan() {
+				return fmt.Errorf("no input received")
+			}
+			email := strings.TrimSpace(scanner.Text())
+			if email == "" {
+				return fmt.Errorf("email cannot be empty")
+			}
+
+			fmt.Print("Enter your Jira API token: ")
+			if !scanner.Scan() {
+				return fmt.Errorf("no input received")
+			}
+			apiToken := strings.TrimSpace(scanner.Text())
+			if apiToken == "" {
+				return fmt.Errorf("API token cannot be empty")
+			}
+
+			fmt.Println("Validating credentials...")
+			token, err := auth.ValidateJiraAPIToken(cmd.Context(), email, apiToken, baseURL, auth.DefaultJiraAPITokenConfig())
+			if err != nil {
+				return fmt.Errorf("invalid credentials: %w", err)
+			}
+
+			dir, err := config.Dir()
+			if err != nil {
+				return err
+			}
+			store, err := auth.NewTokenStore(cfg.TokenStorage, dir)
+			if err != nil {
+				return err
+			}
+			if err := store.Save("jira", email, token); err != nil {
+				return fmt.Errorf("saving token: %w", err)
+			}
+
+			cfg.Jira.Enabled = true
+			cfg.Jira.BaseURL = baseURL
+			cfg.Jira.AuthMode = "api-token"
+			cfg.Jira.Email = email
+			if err := cfg.Save(); err != nil {
+				return fmt.Errorf("saving config: %w", err)
+			}
+
+			fmt.Printf("\nJira connected! Account: %s @ %s\n", token.Email, baseURL)
+			fmt.Println("Token stored securely. Run 'devrecall sync' to fetch Jira activity.")
+			return nil
+		},
+	}
+}
+
+func newAuthConfluenceCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "confluence",
+		Short: "Enable Confluence (reuses Jira API token)",
+		Long:  "Confluence shares the Atlassian API token stored by 'devrecall auth jira'. This command only flips the enabled flag in config.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			if !cfg.Jira.Enabled || cfg.Jira.Email == "" {
+				return fmt.Errorf("Jira is not connected — run 'devrecall auth jira' first (Confluence reuses the Atlassian token)")
+			}
+
+			dir, err := config.Dir()
+			if err != nil {
+				return err
+			}
+			store, err := auth.NewTokenStore(cfg.TokenStorage, dir)
+			if err != nil {
+				return err
+			}
+			var atlToken auth.AtlassianToken
+			if err := store.Load("jira", cfg.Jira.Email, &atlToken); err != nil {
+				return fmt.Errorf("loading Jira token: %w (run 'devrecall auth jira' first)", err)
+			}
+
+			cfg.Confluence.Enabled = true
+			if err := cfg.Save(); err != nil {
+				return fmt.Errorf("saving config: %w", err)
+			}
+
+			fmt.Println("Confluence enabled. Run 'devrecall sync' to fetch Confluence pages.")
+			return nil
+		},
+	}
+}
+
+func newAuthLinearCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "linear",
+		Short: "Connect your Linear account via API key",
+		Long:  "Authenticates with Linear using a personal API key. Create one at linear.app/settings/api.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			scanner := bufio.NewScanner(os.Stdin)
+			fmt.Print("Enter your Linear API key: ")
+			if !scanner.Scan() {
+				return fmt.Errorf("no input received")
+			}
+			apiKey := strings.TrimSpace(scanner.Text())
+			if apiKey == "" {
+				return fmt.Errorf("API key cannot be empty")
+			}
+
+			fmt.Println("Validating credentials...")
+			token, err := auth.ValidateLinearAPIKey(cmd.Context(), apiKey, auth.DefaultLinearAPIKeyConfig())
+			if err != nil {
+				return fmt.Errorf("invalid credentials: %w", err)
+			}
+
+			tokenKey := token.Email
+			if tokenKey == "" {
+				tokenKey = token.UserID
+			}
+			if tokenKey == "" {
+				tokenKey = "default"
+			}
+
+			dir, err := config.Dir()
+			if err != nil {
+				return err
+			}
+			store, err := auth.NewTokenStore(cfg.TokenStorage, dir)
+			if err != nil {
+				return err
+			}
+			if err := store.Save("linear", tokenKey, token); err != nil {
+				return fmt.Errorf("saving token: %w", err)
+			}
+
+			cfg.Linear.Enabled = true
+			cfg.Linear.AuthMode = "api-key"
+			cfg.Linear.Email = tokenKey
+			if err := cfg.Save(); err != nil {
+				return fmt.Errorf("saving config: %w", err)
+			}
+
+			fmt.Printf("\nLinear connected! User: %s <%s>\n", token.UserName, token.Email)
+			fmt.Println("Token stored securely. Run 'devrecall sync' to fetch Linear activity.")
+			return nil
+		},
+	}
+}
+
 func newAuthOpenAICmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "openai",
@@ -2801,9 +3088,52 @@ func newAuthStatusCmd() *cobra.Command {
 				fmt.Println("  Bitbucket: not connected")
 			}
 
-			// Future services.
-			fmt.Println("  Jira:     not connected")
-			fmt.Println("  Linear:   not connected")
+			// Jira
+			if cfg.Jira.Enabled && cfg.Jira.Email != "" {
+				var atlToken auth.AtlassianToken
+				if err := store.Load("jira", cfg.Jira.Email, &atlToken); err == nil {
+					fmt.Printf("  Jira:     connected (%s @ %s)\n", cfg.Jira.Email, cfg.Jira.BaseURL)
+				} else {
+					fmt.Println("  Jira:     configured but token missing (run 'devrecall auth jira')")
+				}
+			} else {
+				fmt.Println("  Jira:     not connected")
+			}
+
+			// Confluence (reuses Jira/Atlassian token)
+			if cfg.Confluence.Enabled {
+				if cfg.Jira.Email != "" {
+					var atlToken auth.AtlassianToken
+					if err := store.Load("jira", cfg.Jira.Email, &atlToken); err == nil {
+						fmt.Printf("  Confluence: connected (shared with Jira: %s)\n", cfg.Jira.Email)
+					} else {
+						fmt.Println("  Confluence: enabled but Jira token missing (run 'devrecall auth jira')")
+					}
+				} else {
+					fmt.Println("  Confluence: enabled but Jira not connected (run 'devrecall auth jira')")
+				}
+			} else {
+				fmt.Println("  Confluence: not connected")
+			}
+
+			// Linear
+			if cfg.Linear.Enabled && cfg.Linear.Email != "" {
+				var lt auth.LinearToken
+				if err := store.Load("linear", cfg.Linear.Email, &lt); err == nil {
+					label := lt.Email
+					if label == "" {
+						label = lt.UserName
+					}
+					if label == "" {
+						label = cfg.Linear.Email
+					}
+					fmt.Printf("  Linear:   connected (%s)\n", label)
+				} else {
+					fmt.Println("  Linear:   configured but token missing (run 'devrecall auth linear')")
+				}
+			} else {
+				fmt.Println("  Linear:   not connected")
+			}
 
 			return nil
 		},

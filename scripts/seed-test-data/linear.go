@@ -18,6 +18,25 @@ func seedLinear(opts *Options) error {
 		return nil
 	}
 
+	// 0. Get viewer ID (to assign issues to current user)
+	var viewerResp struct {
+		Data struct {
+			Viewer struct {
+				ID string `json:"id"`
+			} `json:"viewer"`
+		} `json:"data"`
+	}
+	var viewerID string
+	if !opts.DryRun {
+		if err := api.post("/graphql", map[string]any{
+			"query": `query { viewer { id } }`,
+		}, &viewerResp); err != nil {
+			return fmt.Errorf("get viewer: %w", err)
+		}
+		viewerID = viewerResp.Data.Viewer.ID
+		fmt.Printf("  Authenticated as viewer: %s\n", viewerID)
+	}
+
 	// 1. Get team ID from key
 	var teamResp struct {
 		Data struct {
@@ -182,6 +201,9 @@ func seedLinear(opts *Options) error {
 			"description": iss.desc,
 			"teamId":      teamID,
 			"priority":    iss.priority,
+		}
+		if viewerID != "" {
+			input["assigneeId"] = viewerID
 		}
 		if len(issueLabelIDs) > 0 {
 			input["labelIds"] = issueLabelIDs

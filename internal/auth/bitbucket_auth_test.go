@@ -21,7 +21,7 @@ func TestValidateBitbucketAppPassword_Success(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"username": "bbuser"})
+		json.NewEncoder(w).Encode(map[string]string{"username": "bbuser", "uuid": "{abc-123}"})
 	}))
 	defer api.Close()
 
@@ -39,6 +39,9 @@ func TestValidateBitbucketAppPassword_Success(t *testing.T) {
 	}
 	if token.AppPassword != "app-pass-123" {
 		t.Errorf("AppPassword = %q, want %q", token.AppPassword, "app-pass-123")
+	}
+	if token.UUID != "{abc-123}" {
+		t.Errorf("UUID = %q, want %q", token.UUID, "{abc-123}")
 	}
 }
 

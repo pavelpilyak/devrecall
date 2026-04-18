@@ -34,9 +34,8 @@ func TestName(t *testing.T) {
 
 func TestCollectSince_IssueWithStatusTransition(t *testing.T) {
 	_, c := newTestServer(t, map[string]http.HandlerFunc{
-		"/rest/api/3/search": func(w http.ResponseWriter, r *http.Request) {
+		"/rest/api/3/search/jql": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(jiraSearchResult{
-				Total: 1,
 				Issues: []jiraIssue{
 					{
 						ID:  "10001",
@@ -47,7 +46,7 @@ func TestCollectSince_IssueWithStatusTransition(t *testing.T) {
 							Priority: jiraPriority{Name: "High"},
 							Labels:   []string{"backend", "payments"},
 							Project:  jiraProject{Key: "PROJ", Name: "Project"},
-							Updated:  time.Date(2026, 4, 4, 14, 0, 0, 0, time.UTC),
+							Updated:  jiraTime{time.Date(2026, 4, 4, 14, 0, 0, 0, time.UTC)},
 							Sprint:   &jiraSprint{ID: 42, Name: "Sprint 42", State: "active"},
 						},
 					},
@@ -61,7 +60,7 @@ func TestCollectSince_IssueWithStatusTransition(t *testing.T) {
 					{
 						ID:      "10456",
 						Author:  jiraChangeAuthor{AccountID: "user-123"},
-						Created: time.Date(2026, 4, 4, 14, 0, 0, 0, time.UTC),
+						Created: jiraTime{time.Date(2026, 4, 4, 14, 0, 0, 0, time.UTC)},
 						Items: []jiraChangeDetail{
 							{
 								Field:      "status",
@@ -125,9 +124,8 @@ func TestCollectSince_IssueWithStatusTransition(t *testing.T) {
 
 func TestCollectSince_Comment(t *testing.T) {
 	_, c := newTestServer(t, map[string]http.HandlerFunc{
-		"/rest/api/3/search": func(w http.ResponseWriter, r *http.Request) {
+		"/rest/api/3/search/jql": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(jiraSearchResult{
-				Total: 1,
 				Issues: []jiraIssue{
 					{
 						ID:  "10001",
@@ -137,7 +135,7 @@ func TestCollectSince_Comment(t *testing.T) {
 							Status:   jiraStatus{Name: "Done"},
 							Priority: jiraPriority{Name: "Medium"},
 							Project:  jiraProject{Key: "PROJ"},
-							Updated:  time.Date(2026, 4, 4, 16, 0, 0, 0, time.UTC),
+							Updated:  jiraTime{time.Date(2026, 4, 4, 16, 0, 0, 0, time.UTC)},
 						},
 					},
 				},
@@ -154,7 +152,7 @@ func TestCollectSince_Comment(t *testing.T) {
 						ID:      "10789",
 						Author:  jiraCommentAuthor{AccountID: "user-123"},
 						Body:    "Updated the retry backoff to use exponential delay.",
-						Created: time.Date(2026, 4, 4, 15, 30, 0, 0, time.UTC),
+						Created: jiraTime{time.Date(2026, 4, 4, 15, 30, 0, 0, time.UTC)},
 					},
 				},
 			})
@@ -196,9 +194,8 @@ func TestCollectSince_Comment(t *testing.T) {
 
 func TestCollectSince_IssueWithNoActivity(t *testing.T) {
 	_, c := newTestServer(t, map[string]http.HandlerFunc{
-		"/rest/api/3/search": func(w http.ResponseWriter, r *http.Request) {
+		"/rest/api/3/search/jql": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(jiraSearchResult{
-				Total: 1,
 				Issues: []jiraIssue{
 					{
 						ID:  "10001",
@@ -208,7 +205,7 @@ func TestCollectSince_IssueWithNoActivity(t *testing.T) {
 							Status:   jiraStatus{Name: "Open"},
 							Priority: jiraPriority{Name: "Low"},
 							Project:  jiraProject{Key: "PROJ"},
-							Updated:  time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC),
+							Updated:  jiraTime{time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC)},
 						},
 					},
 				},
@@ -244,9 +241,8 @@ func TestCollectSince_IssueWithNoActivity(t *testing.T) {
 
 func TestCollectSince_FiltersOtherUsersActivity(t *testing.T) {
 	_, c := newTestServer(t, map[string]http.HandlerFunc{
-		"/rest/api/3/search": func(w http.ResponseWriter, r *http.Request) {
+		"/rest/api/3/search/jql": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(jiraSearchResult{
-				Total: 1,
 				Issues: []jiraIssue{
 					{
 						ID:  "10001",
@@ -256,7 +252,7 @@ func TestCollectSince_FiltersOtherUsersActivity(t *testing.T) {
 							Status:   jiraStatus{Name: "Done"},
 							Priority: jiraPriority{Name: "Medium"},
 							Project:  jiraProject{Key: "PROJ"},
-							Updated:  time.Date(2026, 4, 4, 12, 0, 0, 0, time.UTC),
+							Updated:  jiraTime{time.Date(2026, 4, 4, 12, 0, 0, 0, time.UTC)},
 						},
 					},
 				},
@@ -269,7 +265,7 @@ func TestCollectSince_FiltersOtherUsersActivity(t *testing.T) {
 					{
 						ID:      "999",
 						Author:  jiraChangeAuthor{AccountID: "other-user"},
-						Created: time.Date(2026, 4, 4, 11, 0, 0, 0, time.UTC),
+						Created: jiraTime{time.Date(2026, 4, 4, 11, 0, 0, 0, time.UTC)},
 						Items:   []jiraChangeDetail{{Field: "status", FromString: "Open", ToString: "Done"}},
 					},
 				},
@@ -283,7 +279,7 @@ func TestCollectSince_FiltersOtherUsersActivity(t *testing.T) {
 						ID:      "888",
 						Author:  jiraCommentAuthor{AccountID: "other-user"},
 						Body:    "Someone else's comment",
-						Created: time.Date(2026, 4, 4, 11, 30, 0, 0, time.UTC),
+						Created: jiraTime{time.Date(2026, 4, 4, 11, 30, 0, 0, time.UTC)},
 					},
 				},
 			})
@@ -309,32 +305,32 @@ func TestCollectSince_FiltersOtherUsersActivity(t *testing.T) {
 func TestCollectSince_Pagination(t *testing.T) {
 	callCount := 0
 	_, c := newTestServer(t, map[string]http.HandlerFunc{
-		"/rest/api/3/search": func(w http.ResponseWriter, r *http.Request) {
+		"/rest/api/3/search/jql": func(w http.ResponseWriter, r *http.Request) {
 			callCount++
-			startAt := r.URL.Query().Get("startAt")
+			pageToken := r.URL.Query().Get("nextPageToken")
 
-			if startAt == "" || startAt == "0" {
-				// First page: return perPage items.
+			if pageToken == "" {
+				// First page: return perPage items + nextPageToken for the second page.
 				issues := make([]jiraIssue, perPage)
 				for i := range issues {
 					issues[i] = jiraIssue{
-						ID:  "1000" + startAt,
-						Key: "PROJ-" + r.URL.Query().Get("startAt") + "-" + string(rune('A'+i)),
+						ID:  "1000",
+						Key: "PROJ-P1-" + string(rune('A'+i)),
 						Fields: jiraFields{
 							Summary:  "Issue",
 							Status:   jiraStatus{Name: "Open"},
 							Priority: jiraPriority{Name: "Medium"},
 							Project:  jiraProject{Key: "PROJ"},
-							Updated:  time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC),
+							Updated:  jiraTime{time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC)},
 						},
 					}
 				}
 				json.NewEncoder(w).Encode(jiraSearchResult{
-					Total:  perPage + 3,
-					Issues: issues,
+					Issues:        issues,
+					NextPageToken: "page2",
 				})
 			} else {
-				// Second page: 3 remaining items.
+				// Second page: 3 remaining items, isLast=true.
 				issues := make([]jiraIssue, 3)
 				for i := range issues {
 					issues[i] = jiraIssue{
@@ -345,13 +341,13 @@ func TestCollectSince_Pagination(t *testing.T) {
 							Status:   jiraStatus{Name: "Open"},
 							Priority: jiraPriority{Name: "Low"},
 							Project:  jiraProject{Key: "PROJ"},
-							Updated:  time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC),
+							Updated:  jiraTime{time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC)},
 						},
 					}
 				}
 				json.NewEncoder(w).Encode(jiraSearchResult{
-					Total:  perPage + 3,
 					Issues: issues,
+					IsLast: true,
 				})
 			}
 		},
@@ -378,8 +374,8 @@ func TestCollectSince_Pagination(t *testing.T) {
 
 func TestCollectSince_EmptyResults(t *testing.T) {
 	_, c := newTestServer(t, map[string]http.HandlerFunc{
-		"/rest/api/3/search": func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode(jiraSearchResult{Total: 0})
+		"/rest/api/3/search/jql": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(jiraSearchResult{IsLast: true})
 		},
 	})
 
@@ -397,7 +393,7 @@ func TestCollectSince_RateLimited(t *testing.T) {
 		"/rest/api/3/myself": func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(jiraMyself{AccountID: "user-123"})
 		},
-		"/rest/api/3/search": func(w http.ResponseWriter, r *http.Request) {
+		"/rest/api/3/search/jql": func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Retry-After", "30")
 			w.WriteHeader(http.StatusTooManyRequests)
 		},
@@ -417,7 +413,7 @@ func TestCollectSince_RateLimited(t *testing.T) {
 
 func TestCollectSince_APIError(t *testing.T) {
 	_, c := newTestServer(t, map[string]http.HandlerFunc{
-		"/rest/api/3/search": func(w http.ResponseWriter, r *http.Request) {
+		"/rest/api/3/search/jql": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(`{"message":"internal error"}`))
 		},

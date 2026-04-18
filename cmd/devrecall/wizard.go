@@ -328,12 +328,12 @@ func (w *wizard) stepBitbucket() {
 		return
 	}
 
-	username := w.prompt("Bitbucket username:", "")
+	username := w.prompt("Bitbucket email (use username only for legacy app passwords):", "")
 	if username == "" {
-		w.printf("    ✗ Username cannot be empty\n\n")
+		w.printf("    ✗ Email/username cannot be empty\n\n")
 		return
 	}
-	appPass := w.prompt("Bitbucket app password:", "")
+	appPass := w.prompt("Bitbucket app password or API token:", "")
 	if appPass == "" {
 		w.printf("    ✗ App password cannot be empty\n\n")
 		return

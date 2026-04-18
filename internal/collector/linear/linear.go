@@ -233,7 +233,7 @@ func (c *Collector) ensureUserID(ctx context.Context) error {
 }
 
 const issuesQuery = `
-query($since: DateTime!, $first: Int!, $after: String) {
+query($since: DateTimeOrDuration!, $first: Int!, $after: String) {
   issues(
     filter: {
       assignee: { isMe: { eq: true } }

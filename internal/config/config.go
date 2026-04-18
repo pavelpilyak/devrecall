@@ -164,6 +164,7 @@ type ConfluenceConfig struct {
 type LinearConfig struct {
 	Enabled  bool   `json:"enabled"`
 	AuthMode string `json:"auth_mode,omitempty"` // "oauth" or "api-key"
+	Email    string `json:"email,omitempty"`     // token store key
 }
 
 type LLMConfig struct {

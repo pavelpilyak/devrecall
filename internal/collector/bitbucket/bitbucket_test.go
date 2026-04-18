@@ -20,12 +20,12 @@ func newTestServer(t *testing.T, handlers map[string]http.HandlerFunc) (*httptes
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	c := NewWithClient("testuser", "app-password", "myworkspace", srv.URL, srv.Client())
+	c := NewWithClient("testuser", "app-password", "", "myworkspace", srv.URL, srv.Client())
 	return srv, c
 }
 
 func TestName(t *testing.T) {
-	c := New("user", "pass", "ws")
+	c := New("user", "pass", "", "ws")
 	if c.Name() != models.SourceBitbucket {
 		t.Errorf("Name() = %q, want %q", c.Name(), models.SourceBitbucket)
 	}
@@ -266,7 +266,7 @@ func TestPagination(t *testing.T) {
 	srvURL = srv.URL
 	t.Cleanup(srv.Close)
 
-	c := NewWithClient("testuser", "app-password", "myworkspace", srv.URL, srv.Client())
+	c := NewWithClient("testuser", "app-password", "", "myworkspace", srv.URL, srv.Client())
 
 	activities, err := c.CollectSince(context.Background(), time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC))
 	if err != nil {
