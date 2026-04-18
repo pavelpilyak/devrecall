@@ -7,6 +7,7 @@ import { handleLinearOAuthCallback } from "./handlers/oauth-callback-linear";
 import { handleGoogleRefresh } from "./handlers/refresh-google";
 import { handleAtlassianRefresh } from "./handlers/refresh-atlassian";
 import { handlePollToken } from "./handlers/poll-token";
+import { handleOAuthSessionStart } from "./handlers/session-start";
 import { handleBackupPush, handleBackupPull, handleBackupList } from "./handlers/backup";
 import { handleLicenseActivate, handleLicenseValidate, handleLemonSqueezyWebhook } from "./handlers/license";
 import { handleVersion } from "./handlers/version";
@@ -43,8 +44,12 @@ export default {
       return handleAtlassianRefresh(request, env);
     }
 
+    if (url.pathname === "/oauth/session/start" && request.method === "POST") {
+      return handleOAuthSessionStart(request, env);
+    }
+
     if (url.pathname === "/oauth/poll" && request.method === "GET") {
-      return handlePollToken(url, env);
+      return handlePollToken(request, url, env);
     }
 
     if (url.pathname === "/v1/backup/push" && request.method === "POST") {

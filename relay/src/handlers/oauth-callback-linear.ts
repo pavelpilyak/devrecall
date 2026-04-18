@@ -3,10 +3,10 @@ import {
   LinearTokenResponse,
   StoredLinearToken,
 } from "../types";
+import { bindProviderToken, isStateRegistered } from "./session-start";
 
 const LINEAR_TOKEN_URL = "https://api.linear.app/oauth/token";
 const LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql";
-const TOKEN_TTL_SECONDS = 60;
 
 export async function handleLinearOAuthCallback(
   url: URL,
@@ -19,6 +19,14 @@ export async function handleLinearOAuthCallback(
     return htmlResponse(
       "Authorization Failed",
       "Missing authorization code or state parameter.",
+      400
+    );
+  }
+
+  if (!(await isStateRegistered(state, env))) {
+    return htmlResponse(
+      "Authorization Failed",
+      "This authorization link is not recognized. Please start a new `devrecall` command from your terminal and try again.",
       400
     );
   }
@@ -82,11 +90,14 @@ export async function handleLinearOAuthCallback(
     email,
   };
 
-  await env.OAUTH_SESSIONS.put(
-    `session:${state}`,
-    JSON.stringify(storedToken),
-    { expirationTtl: TOKEN_TTL_SECONDS }
-  );
+  const bound = await bindProviderToken(state, storedToken, env);
+  if (!bound) {
+    return htmlResponse(
+      "Authorization Failed",
+      "This authorization link is not recognized. Please start a new `devrecall` command from your terminal and try again.",
+      400
+    );
+  }
 
   return htmlResponse(
     "Authorization Successful",

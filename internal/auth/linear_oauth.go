@@ -57,13 +57,18 @@ func LinearOAuth(ctx context.Context, cfg LinearOAuthConfig) (*LinearToken, erro
 		return nil, fmt.Errorf("generating session ID: %w", err)
 	}
 
+	pickupSecret, err := startOAuthSession(ctx, cfg.HTTPClient, cfg.RelayBaseURL, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
 	authURL := buildLinearAuthURL(cfg, sessionID)
 
 	if err := cfg.OpenBrowser(authURL); err != nil {
 		return nil, fmt.Errorf("opening browser: %w\n\nManually open this URL:\n%s", err, authURL)
 	}
 
-	return pollForLinearToken(ctx, cfg, sessionID)
+	return pollForLinearToken(ctx, cfg, sessionID, pickupSecret)
 }
 
 func buildLinearAuthURL(cfg LinearOAuthConfig, state string) string {
@@ -78,7 +83,7 @@ func buildLinearAuthURL(cfg LinearOAuthConfig, state string) string {
 	return linearAuthURL + "?" + params.Encode()
 }
 
-func pollForLinearToken(ctx context.Context, cfg LinearOAuthConfig, sessionID string) (*LinearToken, error) {
+func pollForLinearToken(ctx context.Context, cfg LinearOAuthConfig, sessionID, pickupSecret string) (*LinearToken, error) {
 	pollURL := cfg.RelayBaseURL + "/oauth/poll?session_id=" + url.QueryEscape(sessionID)
 	deadline := time.After(pollTimeout)
 
@@ -95,6 +100,7 @@ func pollForLinearToken(ctx context.Context, cfg LinearOAuthConfig, sessionID st
 		if err != nil {
 			return nil, err
 		}
+		req.Header.Set("Authorization", "Bearer "+pickupSecret)
 
 		resp, err := cfg.HTTPClient.Do(req)
 		if err != nil {

@@ -70,13 +70,18 @@ func GoogleOAuth(ctx context.Context, cfg GoogleOAuthConfig) (*GoogleToken, erro
 		return nil, fmt.Errorf("generating session ID: %w", err)
 	}
 
+	pickupSecret, err := startOAuthSession(ctx, cfg.HTTPClient, cfg.RelayBaseURL, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
 	authURL := buildGoogleAuthURL(cfg, sessionID)
 
 	if err := cfg.OpenBrowser(authURL); err != nil {
 		return nil, fmt.Errorf("opening browser: %w\n\nManually open this URL:\n%s", err, authURL)
 	}
 
-	return pollForGoogleToken(ctx, cfg, sessionID)
+	return pollForGoogleToken(ctx, cfg, sessionID, pickupSecret)
 }
 
 func buildGoogleAuthURL(cfg GoogleOAuthConfig, state string) string {
@@ -92,7 +97,7 @@ func buildGoogleAuthURL(cfg GoogleOAuthConfig, state string) string {
 	return googleAuthURL + "?" + params.Encode()
 }
 
-func pollForGoogleToken(ctx context.Context, cfg GoogleOAuthConfig, sessionID string) (*GoogleToken, error) {
+func pollForGoogleToken(ctx context.Context, cfg GoogleOAuthConfig, sessionID, pickupSecret string) (*GoogleToken, error) {
 	pollURL := cfg.RelayBaseURL + "/oauth/poll?session_id=" + url.QueryEscape(sessionID)
 	deadline := time.After(pollTimeout)
 
@@ -109,6 +114,7 @@ func pollForGoogleToken(ctx context.Context, cfg GoogleOAuthConfig, sessionID st
 		if err != nil {
 			return nil, err
 		}
+		req.Header.Set("Authorization", "Bearer "+pickupSecret)
 
 		resp, err := cfg.HTTPClient.Do(req)
 		if err != nil {

@@ -4,11 +4,11 @@ import {
   AtlassianCloudSite,
   StoredAtlassianToken,
 } from "../types";
+import { bindProviderToken, isStateRegistered } from "./session-start";
 
 const ATLASSIAN_TOKEN_URL = "https://auth.atlassian.com/oauth/token";
 const ATLASSIAN_ACCESSIBLE_RESOURCES_URL =
   "https://api.atlassian.com/oauth/token/accessible-resources";
-const TOKEN_TTL_SECONDS = 60;
 
 export async function handleAtlassianOAuthCallback(
   url: URL,
@@ -21,6 +21,14 @@ export async function handleAtlassianOAuthCallback(
     return htmlResponse(
       "Authorization Failed",
       "Missing authorization code or state parameter.",
+      400
+    );
+  }
+
+  if (!(await isStateRegistered(state, env))) {
+    return htmlResponse(
+      "Authorization Failed",
+      "This authorization link is not recognized. Please start a new `devrecall` command from your terminal and try again.",
       400
     );
   }
@@ -86,11 +94,14 @@ export async function handleAtlassianOAuthCallback(
     })),
   };
 
-  await env.OAUTH_SESSIONS.put(
-    `session:${state}`,
-    JSON.stringify(storedToken),
-    { expirationTtl: TOKEN_TTL_SECONDS }
-  );
+  const bound = await bindProviderToken(state, storedToken, env);
+  if (!bound) {
+    return htmlResponse(
+      "Authorization Failed",
+      "This authorization link is not recognized. Please start a new `devrecall` command from your terminal and try again.",
+      400
+    );
+  }
 
   return htmlResponse(
     "Authorization Successful",

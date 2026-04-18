@@ -80,13 +80,18 @@ func AtlassianOAuth(ctx context.Context, cfg JiraOAuthConfig) (*AtlassianToken, 
 		return nil, fmt.Errorf("generating session ID: %w", err)
 	}
 
+	pickupSecret, err := startOAuthSession(ctx, cfg.HTTPClient, cfg.RelayBaseURL, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
 	authURL := buildAtlassianAuthURL(cfg, sessionID)
 
 	if err := cfg.OpenBrowser(authURL); err != nil {
 		return nil, fmt.Errorf("opening browser: %w\n\nManually open this URL:\n%s", err, authURL)
 	}
 
-	return pollForAtlassianToken(ctx, cfg, sessionID)
+	return pollForAtlassianToken(ctx, cfg, sessionID, pickupSecret)
 }
 
 func buildAtlassianAuthURL(cfg JiraOAuthConfig, state string) string {
@@ -102,7 +107,7 @@ func buildAtlassianAuthURL(cfg JiraOAuthConfig, state string) string {
 	return atlassianAuthURL + "?" + params.Encode()
 }
 
-func pollForAtlassianToken(ctx context.Context, cfg JiraOAuthConfig, sessionID string) (*AtlassianToken, error) {
+func pollForAtlassianToken(ctx context.Context, cfg JiraOAuthConfig, sessionID, pickupSecret string) (*AtlassianToken, error) {
 	pollURL := cfg.RelayBaseURL + "/oauth/poll?session_id=" + url.QueryEscape(sessionID)
 	deadline := time.After(pollTimeout)
 
@@ -119,6 +124,7 @@ func pollForAtlassianToken(ctx context.Context, cfg JiraOAuthConfig, sessionID s
 		if err != nil {
 			return nil, err
 		}
+		req.Header.Set("Authorization", "Bearer "+pickupSecret)
 
 		resp, err := cfg.HTTPClient.Do(req)
 		if err != nil {

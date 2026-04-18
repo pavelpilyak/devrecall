@@ -6,6 +6,16 @@ import {
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import worker from "../src/index";
 
+const DUMMY_PICKUP_HASH =
+  "a".repeat(64); // hex SHA-256 placeholder — poll tests handle the real hash
+
+async function seedPending(state: string, pickupHash: string = DUMMY_PICKUP_HASH) {
+  await env.OAUTH_SESSIONS.put(
+    `pending:${state}`,
+    JSON.stringify({ pickup_hash: pickupHash })
+  );
+}
+
 describe("OAuth callback handler", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -63,8 +73,9 @@ describe("OAuth callback handler", () => {
       return originalFetch(input, init);
     });
 
+    await seedPending("session-123456789abcdef");
     const request = new Request(
-      "https://relay.devrecall.dev/oauth/slack/callback?code=valid-code&state=session-123"
+      "https://relay.devrecall.dev/oauth/slack/callback?code=valid-code&state=session-123456789abcdef"
     );
     const ctx = createExecutionContext();
     const response = await worker.fetch(request, env, ctx);
@@ -74,12 +85,51 @@ describe("OAuth callback handler", () => {
     const text = await response.text();
     expect(text).toContain("Successful");
 
-    // Verify the token was stored in KV.
-    const stored = await env.OAUTH_SESSIONS.get("session:session-123");
+    // Verify the token was bound to the session in KV. Storage shape is now
+    // { token, pickup_hash } — the token is nested.
+    const stored = await env.OAUTH_SESSIONS.get("session:session-123456789abcdef");
     expect(stored).not.toBeNull();
     const parsed = JSON.parse(stored!);
-    expect(parsed.access_token).toBe("xoxp-test-token");
-    expect(parsed.team_id).toBe("T456");
+    expect(parsed.token.access_token).toBe("xoxp-test-token");
+    expect(parsed.token.team_id).toBe("T456");
+    expect(parsed.pickup_hash).toBe(DUMMY_PICKUP_HASH);
+
+    // The pending entry should have been consumed.
+    const pending = await env.OAUTH_SESSIONS.get("pending:session-123456789abcdef");
+    expect(pending).toBeNull();
+  });
+
+  it("rejects callback when state was never pre-registered", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          authed_user: {
+            id: "U999",
+            access_token: "xoxp-phish",
+            token_type: "user",
+            scope: "channels:history",
+          },
+          team: { id: "T999", name: "Phishy" },
+        }),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    });
+
+    const request = new Request(
+      "https://relay.devrecall.dev/oauth/slack/callback?code=valid-code&state=attacker-picked-state"
+    );
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(request, env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(response.status).toBe(400);
+    const text = await response.text();
+    expect(text).toContain("not recognized");
+
+    // Nothing should have been written under session:*.
+    const stored = await env.OAUTH_SESSIONS.get("session:attacker-picked-state");
+    expect(stored).toBeNull();
   });
 
   it("returns error HTML when Slack returns an error", async () => {
@@ -90,6 +140,7 @@ describe("OAuth callback handler", () => {
       );
     });
 
+    await seedPending("session-456");
     const request = new Request(
       "https://relay.devrecall.dev/oauth/slack/callback?code=bad-code&state=session-456"
     );

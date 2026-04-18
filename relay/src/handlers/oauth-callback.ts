@@ -1,7 +1,7 @@
 import { Env, SlackOAuthResponse, StoredToken } from "../types";
+import { bindProviderToken, isStateRegistered } from "./session-start";
 
 const SLACK_OAUTH_URL = "https://slack.com/api/oauth.v2.access";
-const TOKEN_TTL_SECONDS = 60;
 
 export async function handleOAuthCallback(
   url: URL,
@@ -14,6 +14,14 @@ export async function handleOAuthCallback(
     return htmlResponse(
       "Authorization Failed",
       "Missing authorization code or state parameter.",
+      400
+    );
+  }
+
+  if (!(await isStateRegistered(state, env))) {
+    return htmlResponse(
+      "Authorization Failed",
+      "This authorization link is not recognized. Please start a new `devrecall` command from your terminal and try again.",
       400
     );
   }
@@ -49,9 +57,14 @@ export async function handleOAuthCallback(
     scope: data.authed_user.scope,
   };
 
-  await env.OAUTH_SESSIONS.put(`session:${state}`, JSON.stringify(token), {
-    expirationTtl: TOKEN_TTL_SECONDS,
-  });
+  const bound = await bindProviderToken(state, token, env);
+  if (!bound) {
+    return htmlResponse(
+      "Authorization Failed",
+      "This authorization link is not recognized. Please start a new `devrecall` command from your terminal and try again.",
+      400
+    );
+  }
 
   return htmlResponse(
     "Authorization Successful",

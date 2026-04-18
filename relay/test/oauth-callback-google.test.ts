@@ -6,6 +6,15 @@ import {
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import worker from "../src/index";
 
+const DUMMY_PICKUP_HASH = "b".repeat(64);
+
+async function seedPending(state: string) {
+  await env.OAUTH_SESSIONS.put(
+    `pending:${state}`,
+    JSON.stringify({ pickup_hash: DUMMY_PICKUP_HASH })
+  );
+}
+
 describe("Google OAuth callback handler", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -73,8 +82,9 @@ describe("Google OAuth callback handler", () => {
       return originalFetch(input, init);
     });
 
+    await seedPending("session-789abcdef0123456");
     const request = new Request(
-      "https://relay.devrecall.dev/oauth/google/callback?code=valid-code&state=session-789"
+      "https://relay.devrecall.dev/oauth/google/callback?code=valid-code&state=session-789abcdef0123456"
     );
     const ctx = createExecutionContext();
     const response = await worker.fetch(request, env, ctx);
@@ -84,14 +94,14 @@ describe("Google OAuth callback handler", () => {
     const text = await response.text();
     expect(text).toContain("Successful");
 
-    // Verify the token was stored in KV.
-    const stored = await env.OAUTH_SESSIONS.get("session:session-789");
+    const stored = await env.OAUTH_SESSIONS.get("session:session-789abcdef0123456");
     expect(stored).not.toBeNull();
     const parsed = JSON.parse(stored!);
-    expect(parsed.access_token).toBe("ya29.test-access-token");
-    expect(parsed.refresh_token).toBe("1//test-refresh-token");
-    expect(parsed.email).toBe("test@example.com");
-    expect(parsed.expires_in).toBe(3600);
+    expect(parsed.token.access_token).toBe("ya29.test-access-token");
+    expect(parsed.token.refresh_token).toBe("1//test-refresh-token");
+    expect(parsed.token.email).toBe("test@example.com");
+    expect(parsed.token.expires_in).toBe(3600);
+    expect(parsed.pickup_hash).toBe(DUMMY_PICKUP_HASH);
   });
 
   it("returns error HTML when Google returns an error", async () => {
@@ -105,6 +115,7 @@ describe("Google OAuth callback handler", () => {
       );
     });
 
+    await seedPending("session-000");
     const request = new Request(
       "https://relay.devrecall.dev/oauth/google/callback?code=bad-code&state=session-000"
     );

@@ -25,6 +25,10 @@ func TestAtlassianOAuth_SuccessfulFlow(t *testing.T) {
 	}
 
 	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/oauth/session/start" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		if r.URL.Path != "/oauth/poll" {
 			http.NotFound(w, r)
 			return
@@ -86,6 +90,10 @@ func TestAtlassianOAuth_PollsUntilReady(t *testing.T) {
 
 	var pollCount atomic.Int32
 	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/oauth/session/start" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		if r.URL.Path != "/oauth/poll" {
 			http.NotFound(w, r)
 			return

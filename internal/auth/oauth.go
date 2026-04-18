@@ -1,8 +1,11 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -60,13 +63,18 @@ func SlackOAuth(ctx context.Context, cfg SlackOAuthConfig) (*SlackToken, error) 
 		return nil, fmt.Errorf("generating session ID: %w", err)
 	}
 
+	pickupSecret, err := startOAuthSession(ctx, cfg.HTTPClient, cfg.RelayBaseURL, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
 	authURL := buildSlackAuthURL(cfg, sessionID)
 
 	if err := cfg.OpenBrowser(authURL); err != nil {
 		return nil, fmt.Errorf("opening browser: %w\n\nManually open this URL:\n%s", err, authURL)
 	}
 
-	return pollForToken(ctx, cfg, sessionID)
+	return pollForToken(ctx, cfg, sessionID, pickupSecret)
 }
 
 func buildSlackAuthURL(cfg SlackOAuthConfig, state string) string {
@@ -79,7 +87,7 @@ func buildSlackAuthURL(cfg SlackOAuthConfig, state string) string {
 	return slackAuthURL + "?" + params.Encode()
 }
 
-func pollForToken(ctx context.Context, cfg SlackOAuthConfig, sessionID string) (*SlackToken, error) {
+func pollForToken(ctx context.Context, cfg SlackOAuthConfig, sessionID, pickupSecret string) (*SlackToken, error) {
 	pollURL := cfg.RelayBaseURL + "/oauth/poll?session_id=" + url.QueryEscape(sessionID)
 	deadline := time.After(pollTimeout)
 
@@ -96,6 +104,7 @@ func pollForToken(ctx context.Context, cfg SlackOAuthConfig, sessionID string) (
 		if err != nil {
 			return nil, err
 		}
+		req.Header.Set("Authorization", "Bearer "+pickupSecret)
 
 		resp, err := cfg.HTTPClient.Do(req)
 		if err != nil {
@@ -130,6 +139,51 @@ func generateSessionID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// generatePickupSecret returns a random 32-byte secret (base64url-encoded,
+// no padding) and its SHA-256 digest as lowercase hex. The secret is
+// presented on `/oauth/poll` to prove the caller initiated the flow; only
+// the digest is sent to the relay at session start.
+func generatePickupSecret() (secret, hashHex string, err error) {
+	b := make([]byte, 32)
+	if _, err = rand.Read(b); err != nil {
+		return "", "", err
+	}
+	secret = base64.RawURLEncoding.EncodeToString(b)
+	sum := sha256.Sum256([]byte(secret))
+	hashHex = hex.EncodeToString(sum[:])
+	return secret, hashHex, nil
+}
+
+// startOAuthSession pre-registers a session with the relay so that (a) the
+// relay will reject callbacks with attacker-chosen `state` values, and
+// (b) the poll request can require proof-of-possession of the pickup secret.
+// Returns the pickup secret that the caller must present on poll.
+func startOAuthSession(ctx context.Context, client *http.Client, relayBaseURL, state string) (string, error) {
+	secret, hashHex, err := generatePickupSecret()
+	if err != nil {
+		return "", fmt.Errorf("generating pickup secret: %w", err)
+	}
+	body, _ := json.Marshal(map[string]string{
+		"state":       state,
+		"pickup_hash": hashHex,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		relayBaseURL+"/oauth/session/start", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("registering OAuth session: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("relay rejected session registration: status %d", resp.StatusCode)
+	}
+	return secret, nil
 }
 
 func openBrowser(rawURL string) error {

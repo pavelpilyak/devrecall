@@ -55,13 +55,18 @@ func GitHubOAuth(ctx context.Context, cfg GitHubOAuthConfig) (*GitHubToken, erro
 		return nil, fmt.Errorf("generating session ID: %w", err)
 	}
 
+	pickupSecret, err := startOAuthSession(ctx, cfg.HTTPClient, cfg.RelayBaseURL, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
 	authURL := buildGitHubAuthURL(cfg, sessionID)
 
 	if err := cfg.OpenBrowser(authURL); err != nil {
 		return nil, fmt.Errorf("opening browser: %w\n\nManually open this URL:\n%s", err, authURL)
 	}
 
-	return pollForGitHubToken(ctx, cfg, sessionID)
+	return pollForGitHubToken(ctx, cfg, sessionID, pickupSecret)
 }
 
 func buildGitHubAuthURL(cfg GitHubOAuthConfig, state string) string {
@@ -74,7 +79,7 @@ func buildGitHubAuthURL(cfg GitHubOAuthConfig, state string) string {
 	return githubAuthURL + "?" + params.Encode()
 }
 
-func pollForGitHubToken(ctx context.Context, cfg GitHubOAuthConfig, sessionID string) (*GitHubToken, error) {
+func pollForGitHubToken(ctx context.Context, cfg GitHubOAuthConfig, sessionID, pickupSecret string) (*GitHubToken, error) {
 	pollURL := cfg.RelayBaseURL + "/oauth/poll?session_id=" + url.QueryEscape(sessionID)
 	deadline := time.After(pollTimeout)
 
@@ -91,6 +96,7 @@ func pollForGitHubToken(ctx context.Context, cfg GitHubOAuthConfig, sessionID st
 		if err != nil {
 			return nil, err
 		}
+		req.Header.Set("Authorization", "Bearer "+pickupSecret)
 
 		resp, err := cfg.HTTPClient.Do(req)
 		if err != nil {
