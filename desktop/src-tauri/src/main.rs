@@ -1,8 +1,6 @@
 // Prevents additional console window on Windows in release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod hotkey;
-mod notifications;
 mod server;
 mod tray;
 
@@ -24,6 +22,33 @@ async fn check_api() -> Result<ApiStatus, String> {
 #[tauri::command]
 fn api_url() -> String {
     format!("http://127.0.0.1:{}", server::configured_port())
+}
+
+/// Tauri command: open a file with the system's default app (text editor for JSON, etc).
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Tauri command: reveal a file in the OS file manager (Finder on macOS).
@@ -60,30 +85,17 @@ fn reveal_file(path: String) -> Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             check_api,
             api_url,
             reveal_file,
-            hotkey::get_hotkey,
-            hotkey::set_hotkey,
-            notifications::get_notification_prefs,
-            notifications::set_notification_prefs,
+            open_path,
         ])
         .setup(|app| {
             // Build tray menu.
             tray::setup(app)?;
-
-            // Register global hotkey (Cmd+Shift+D).
-            if let Err(e) = hotkey::register(app.handle()) {
-                eprintln!("Failed to register global hotkey: {e}");
-            }
-
-            // Start notification scheduler.
-            notifications::start_scheduler(app.handle());
 
             // Spawn or attach to the DevRecall API server.
             let app_handle = app.handle().clone();

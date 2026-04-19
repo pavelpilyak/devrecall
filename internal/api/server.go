@@ -98,6 +98,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
 	mux.HandleFunc("POST /api/sync", s.handleSync)
 	mux.HandleFunc("POST /api/activate", s.handleActivate)
+	mux.HandleFunc("POST /api/llm/config", s.handleLLMConfig)
+	mux.HandleFunc("POST /api/llm/key", s.handleLLMKey)
+	mux.HandleFunc("POST /api/llm/test", s.handleLLMTest)
 	mux.HandleFunc("POST /api/log", s.handleLog)
 	mux.HandleFunc("GET /api/brag", s.handleBrag)
 	mux.HandleFunc("GET /api/perf-review", s.handlePerfReview)
@@ -154,6 +157,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"status":  "ok",
 		"sources": result,
 		"license": licInfo,
+		"llm": map[string]any{
+			"provider": s.cfg.LLM.Provider,
+			"model":    s.cfg.LLM.Model,
+		},
+		"config_path": s.cfg.Path(),
 	})
 }
 
@@ -725,6 +733,104 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleLLMConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+		BaseURL  string `json:"base_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	switch req.Provider {
+	case "ollama", "openai", "anthropic":
+	default:
+		writeError(w, http.StatusBadRequest, "provider must be one of: ollama, openai, anthropic")
+		return
+	}
+
+	s.cfg.LLM.Provider = req.Provider
+	s.cfg.LLM.Model = strings.TrimSpace(req.Model)
+	s.cfg.LLM.BaseURL = strings.TrimSpace(req.BaseURL)
+	if err := s.cfg.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, "saving config: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": "LLM config saved"})
+}
+
+func (s *Server) handleLLMKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider string `json:"provider"`
+		APIKey   string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Provider != "openai" && req.Provider != "anthropic" {
+		writeError(w, http.StatusBadRequest, "key only required for openai or anthropic")
+		return
+	}
+	if strings.TrimSpace(req.APIKey) == "" {
+		writeError(w, http.StatusBadRequest, "api_key is required")
+		return
+	}
+	if err := s.tokenStore.Save("llm", req.Provider, llm.APIKeyToken{APIKey: strings.TrimSpace(req.APIKey)}); err != nil {
+		writeError(w, http.StatusInternalServerError, "saving key: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": "API key saved"})
+}
+
+func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
+	// Optional overrides let the Settings UI test form values without
+	// persisting them. When fields are absent, we fall back to the saved
+	// config so other callers (CLI, scripts) can just POST an empty body.
+	var req struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+		BaseURL  string `json:"base_url"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	cfg := *s.cfg
+	if req.Provider != "" {
+		switch req.Provider {
+		case "ollama", "openai", "anthropic":
+		default:
+			writeError(w, http.StatusBadRequest, "provider must be one of: ollama, openai, anthropic")
+			return
+		}
+		cfg.LLM = config.LLMConfig{
+			Provider: req.Provider,
+			Model:    strings.TrimSpace(req.Model),
+			BaseURL:  strings.TrimSpace(req.BaseURL),
+		}
+	}
+
+	provider, err := llm.FromConfig(&cfg, s.tokenStore)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	resp, err := provider.Chat(ctx, []llm.Message{
+		{Role: "user", Content: "ping"},
+	}, llm.ChatOpts{MaxTokens: 8})
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":  "LLM responded",
+		"provider": provider.Name(),
+		"sample":   resp,
+	})
+}
+
 func (s *Server) getLicenseInfo() license.Info {
 	dir := s.configDir()
 	return license.GetInfo(dir)
@@ -758,9 +864,12 @@ func (s *Server) promptLoader() *summarizer.PromptLoader {
 func (s *Server) licenseMiddleware(next http.Handler) http.Handler {
 	// Paths that must work without a license so the user can activate.
 	exempt := map[string]bool{
-		"/api/status":   true,
-		"/api/activate": true,
-		"/health":       true,
+		"/api/status":     true,
+		"/api/activate":   true,
+		"/api/llm/config": true,
+		"/api/llm/key":    true,
+		"/api/llm/test":   true,
+		"/health":         true,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if exempt[r.URL.Path] {

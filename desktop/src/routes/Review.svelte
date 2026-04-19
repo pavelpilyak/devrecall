@@ -2,7 +2,11 @@
   import { invoke } from "@tauri-apps/api/core";
   import { api, type ReviewResponse } from "../lib/api";
   import { save, load } from "../lib/persist";
-  import Markdown from "../components/Markdown.svelte";
+  import PanelHeader from "../components/ui/PanelHeader.svelte";
+  import Btn from "../components/ui/Btn.svelte";
+  import Icon from "../components/ui/Icon.svelte";
+  import DateTimeField from "../components/ui/DateTimeField.svelte";
+  import ReportView from "../components/ReportView.svelte";
 
   type ReviewType = "brag" | "perf-review";
 
@@ -39,22 +43,20 @@
     let before: Date;
 
     switch (preset) {
-      case "last-month": {
+      case "last-month":
         after = new Date(now.getFullYear(), now.getMonth() - 1, 1);
         before = new Date(now.getFullYear(), now.getMonth(), 0);
         break;
-      }
       case "last-quarter": {
         const q = Math.floor(now.getMonth() / 3);
         after = new Date(now.getFullYear(), (q - 1) * 3, 1);
         before = new Date(now.getFullYear(), q * 3, 0);
         break;
       }
-      case "last-6-months": {
+      case "last-6-months":
         after = new Date(now.getFullYear(), now.getMonth() - 6, 1);
         before = new Date(now.getFullYear(), now.getMonth(), 0);
         break;
-      }
       default:
         return;
     }
@@ -63,6 +65,7 @@
     beforeDate = before.toISOString().slice(0, 10);
     report = cache[cacheKey(reviewType, afterDate, beforeDate)] ?? null;
     generated = !!report;
+    error = "";
   }
 
   async function generate() {
@@ -100,7 +103,7 @@
     try {
       await invoke("reveal_file", { path: report.file_path });
     } catch {
-      // Fallback: ignore if not running in Tauri.
+      // Not in Tauri.
     }
   }
 
@@ -108,126 +111,213 @@
     reviewType = type;
     report = cache[cacheKey(type, afterDate, beforeDate)] ?? null;
     generated = !!report;
+    error = "";
   }
+
+  const TAB_META: Record<ReviewType, { label: string; meta: string; eyebrow: string }> = {
+    "brag": { label: "Brag doc", meta: "career wins", eyebrow: "Brag doc" },
+    "perf-review": { label: "Perf review", meta: "self-review", eyebrow: "Perf review" },
+  };
+
+  const titleText = $derived.by(() => {
+    const label = reviewType === "brag" ? "Brag doc" : "Perf review";
+    return `${label} · ${afterDate} → ${beforeDate}`;
+  });
+  const metaText = $derived.by(() => {
+    if (!report) return `${afterDate} → ${beforeDate}`;
+    return `${afterDate} → ${beforeDate} · ${report.activity_count} activities`;
+  });
 </script>
 
-<div class="flex flex-col h-full">
-  <!-- Header -->
-  <div class="px-4 py-3 border-b border-zinc-200 dark:border-zinc-700 space-y-2">
-    <!-- Type toggle -->
-    <div class="flex gap-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg p-0.5">
-      <button
-        onclick={() => switchType("brag")}
-        class="flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors
-               {reviewType === 'brag'
-                 ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                 : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'}"
-      >
-        Brag Doc
-      </button>
-      <button
-        onclick={() => switchType("perf-review")}
-        class="flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors
-               {reviewType === 'perf-review'
-                 ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                 : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'}"
-      >
-        Perf Review
-      </button>
-    </div>
+<div class="route-body">
+  <PanelHeader title="Review">
+    {#snippet actions()}
+      <Btn size="sm" variant="ghost" disabled={!report || report.activity_count === 0} onclick={copyReport}>
+        {#snippet children()}
+          <Icon name="copy" size={12} />
+          <span>{copied ? "Copied" : "Copy"}</span>
+        {/snippet}
+      </Btn>
+      {#if report?.file_path}
+        <Btn size="sm" variant="ghost" onclick={openInFinder}>
+          {#snippet children()}
+            <Icon name="folder" size={12} />
+            <span>Reveal</span>
+          {/snippet}
+        </Btn>
+      {/if}
+      <Btn size="sm" variant="primary" disabled={loading} onclick={generate}>
+        {#snippet children()}
+          <Icon name={loading ? "loader" : "sparkles"} size={12} />
+          <span>{loading ? "Generating…" : generated ? "Regenerate" : "Generate"}</span>
+        {/snippet}
+      </Btn>
+    {/snippet}
+  </PanelHeader>
 
-    <!-- Date range + presets -->
-    <div class="flex gap-2 items-center flex-wrap">
-      <input
-        type="date"
+  <div class="tabs">
+    {#each (["brag", "perf-review"] as ReviewType[]) as t}
+      <button
+        class="tab"
+        class:active={reviewType === t}
+        onclick={() => switchType(t)}
+      >
+        {TAB_META[t].label}
+        <span class="tab-meta">{TAB_META[t].meta}</span>
+      </button>
+    {/each}
+    <div class="tabs-spacer"></div>
+  </div>
+
+  <div class="controls">
+    <div class="range">
+      <DateTimeField
         bind:value={afterDate}
-        class="text-xs px-2 py-1.5 rounded-md border border-zinc-300 dark:border-zinc-600
-               bg-white dark:bg-zinc-800"
+        mode="date"
+        onchange={() => { report = cache[cacheKey(reviewType, afterDate, beforeDate)] ?? null; generated = !!report; }}
       />
-      <span class="text-xs text-zinc-400">to</span>
-      <input
-        type="date"
+      <span class="range-arrow">→</span>
+      <DateTimeField
         bind:value={beforeDate}
-        class="text-xs px-2 py-1.5 rounded-md border border-zinc-300 dark:border-zinc-600
-               bg-white dark:bg-zinc-800"
+        mode="date"
+        onchange={() => { report = cache[cacheKey(reviewType, afterDate, beforeDate)] ?? null; generated = !!report; }}
       />
     </div>
-    <div class="flex gap-1.5">
-      {#each [["last-month", "Last month"], ["last-quarter", "Last quarter"], ["last-6-months", "Last 6 months"]] as [value, label]}
-        <button
-          onclick={() => setPreset(value)}
-          class="text-xs px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700
-                 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800
-                 transition-colors"
-        >
-          {label}
-        </button>
+    <div class="presets">
+      {#each [["last-month", "Last month"], ["last-quarter", "Last quarter"], ["last-6-months", "Last 6 months"]] as [value, label] (value)}
+        <button class="preset" onclick={() => setPreset(value)}>{label}</button>
       {/each}
     </div>
   </div>
 
-  <!-- Report content -->
-  <div class="flex-1 overflow-y-auto px-4 py-3">
-    {#if loading}
-      <div class="flex items-center justify-center h-32">
-        <p class="text-sm text-zinc-500">
-          Generating {reviewType === "brag" ? "brag doc" : "perf review"}...
-        </p>
-      </div>
-    {:else if error}
-      <div class="text-sm text-red-500 px-3 py-2 bg-red-50 dark:bg-red-900/20 rounded-lg">
-        {error}
-      </div>
-    {:else if report}
-      {#if report.activity_count === 0}
-        <div class="flex items-center justify-center h-32">
-          <p class="text-sm text-zinc-500">No activities found for this period.</p>
+  <div class="scroll">
+    {#if !generated}
+      <div class="cta">
+        <div class="cta-eyebrow">{TAB_META[reviewType].eyebrow}</div>
+        <h1 class="cta-title">{titleText}</h1>
+        <div class="cta-meta">{afterDate} → {beforeDate}</div>
+        <div class="cta-btn">
+          <Btn variant="primary" onclick={generate}>
+            {#snippet children()}
+              <Icon name="sparkles" size={14} />
+              <span>Generate {reviewType === "brag" ? "brag doc" : "perf review"}</span>
+            {/snippet}
+          </Btn>
         </div>
-      {:else}
-        <Markdown content={report.report} class="text-sm leading-relaxed" />
-      {/if}
-    {:else}
-      <div class="flex items-center justify-center h-32">
-        <button
-          onclick={generate}
-          class="px-6 py-2.5 text-sm font-medium rounded-lg bg-devrecall-600 text-white
-                 hover:bg-devrecall-700 transition-colors"
-        >
-          Generate {reviewType === "brag" ? "Brag Doc" : "Perf Review"}
-        </button>
       </div>
+    {:else}
+      <ReportView
+        eyebrow={TAB_META[reviewType].eyebrow}
+        title={titleText}
+        meta={metaText}
+        loading={loading}
+        error={error}
+        empty={!!report && report.activity_count === 0}
+        emptyLabel="No activities found for this period."
+        content={report?.report ?? ""}
+      />
     {/if}
   </div>
-
-  <!-- Actions footer -->
-  {#if generated}
-    <div class="border-t border-zinc-200 dark:border-zinc-700 px-4 py-3 flex gap-2">
-      <button
-        onclick={copyReport}
-        disabled={!report || report.activity_count === 0}
-        class="flex-1 px-4 py-2 text-sm font-medium rounded-lg border border-zinc-300 dark:border-zinc-600
-               hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        {copied ? "Copied!" : "Copy to Clipboard"}
-      </button>
-      {#if report?.file_path}
-        <button
-          onclick={openInFinder}
-          class="px-4 py-2 text-sm font-medium rounded-lg border border-zinc-300 dark:border-zinc-600
-                 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-          title="Show saved file in Finder"
-        >
-          Show in Finder
-        </button>
-      {/if}
-      <button
-        onclick={generate}
-        disabled={loading}
-        class="px-4 py-2 text-sm font-medium rounded-lg bg-devrecall-600 text-white
-               hover:bg-devrecall-700 disabled:opacity-50 transition-colors"
-      >
-        Generate Again
-      </button>
-    </div>
-  {/if}
 </div>
+
+<style>
+  .route-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .scroll {
+    flex: 1;
+    overflow: auto;
+    background: var(--ink-1);
+  }
+  .tabs {
+    display: flex;
+    gap: 2px;
+    padding: 8px 20px 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--ink-1);
+  }
+  .tab {
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    color: var(--fg-3);
+    font-size: 13px;
+    cursor: pointer;
+    position: relative;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    font-family: var(--font-sans);
+    transition: color var(--dur-1) var(--ease-std);
+  }
+  .tab.active {
+    color: var(--fg-1);
+    border-bottom-color: var(--accent);
+  }
+  .tab:hover:not(.active) { color: var(--fg-2); }
+  .tab-meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-4);
+    margin-left: 6px;
+  }
+  .tabs-spacer { flex: 1; }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--ink-1);
+    flex-wrap: wrap;
+  }
+  .range {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .range-arrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-4);
+  }
+  .presets { display: flex; gap: 6px; }
+  .preset {
+    background: var(--ink-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-1);
+    padding: 3px 8px;
+    color: var(--fg-2);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    cursor: pointer;
+    transition: background var(--dur-1) var(--ease-std);
+  }
+  .preset:hover { background: var(--ink-3); color: var(--fg-1); }
+
+  .cta {
+    margin: 80px 0;
+    padding: 0 40px;
+  }
+  .cta-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: var(--tracking-caps);
+    text-transform: uppercase;
+    color: var(--fg-3);
+    font-weight: 500;
+  }
+  .cta-title {
+    margin: 6px 0 8px;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.018em;
+    color: var(--fg-1);
+    line-height: 1.2;
+  }
+  .cta-meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-3);
+  }
+  .cta-btn { margin-top: 28px; }
+</style>

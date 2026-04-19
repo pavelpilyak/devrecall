@@ -32,10 +32,17 @@ export interface LicenseInfo {
   activated_at?: string;
 }
 
+export interface LLMInfo {
+  provider: string;
+  model: string;
+}
+
 export interface StatusResponse {
   status: string;
   sources: SourceStatus[];
   license: LicenseInfo;
+  llm?: LLMInfo;
+  config_path?: string;
 }
 
 export interface StandupResponse {
@@ -265,4 +272,13 @@ export const api = {
 
   perfReview: (after: string, before: string) =>
     get<ReviewResponse>(`/api/perf-review?after=${after}&before=${before}`),
+
+  llmConfig: (cfg: { provider: string; model: string; base_url?: string }) =>
+    post<{ message: string }>("/api/llm/config", cfg),
+
+  llmKey: (provider: "openai" | "anthropic", api_key: string) =>
+    post<{ message: string }>("/api/llm/key", { provider, api_key }),
+
+  llmTest: (overrides?: { provider: string; model: string; base_url?: string }) =>
+    post<{ message: string; provider: string; sample: string }>("/api/llm/test", overrides),
 };

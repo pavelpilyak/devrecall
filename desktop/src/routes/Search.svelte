@@ -1,23 +1,28 @@
 <script lang="ts">
   import { api, type SearchResult } from "../lib/api";
+  import PanelHeader from "../components/ui/PanelHeader.svelte";
+  import Icon from "../components/ui/Icon.svelte";
+  import Chip from "../components/ui/Chip.svelte";
+  import SourceDot from "../components/ui/SourceDot.svelte";
+
+  const SOURCES = ["all", "git", "github", "gitlab", "bitbucket", "slack", "calendar", "jira", "linear"] as const;
 
   let query = $state("");
-  let sourceFilter = $state("");
+  let sourceFilter = $state<string>("all");
   let results = $state<SearchResult[]>([]);
   let loading = $state(false);
   let error = $state("");
   let searched = $state(false);
 
-  const sources = ["", "git", "slack", "calendar", "github", "gitlab", "bitbucket", "jira", "confluence", "linear"];
-
   async function doSearch() {
-    if (!query.trim()) return;
+    const q = query.trim();
+    if (!q) return;
     loading = true;
     error = "";
     searched = true;
     try {
-      const resp = await api.search(query.trim(), {
-        source: sourceFilter || undefined,
+      const resp = await api.search(q, {
+        source: sourceFilter === "all" ? undefined : sourceFilter,
         limit: 50,
       });
       results = resp.results || [];
@@ -36,107 +41,180 @@
     }
   }
 
-  function formatTime(ts: string): string {
+  function formatDate(ts: string): string {
     return new Date(ts).toLocaleDateString(undefined, {
       year: "numeric", month: "short", day: "numeric",
     });
   }
-
-  function sourceColor(source: string): string {
-    const colors: Record<string, string> = {
-      git: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
-      slack: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
-      calendar: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-      github: "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300",
-      gitlab: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-      bitbucket: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400",
-      jira: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-      confluence: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400",
-      linear: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400",
-    };
-    return colors[source] || "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
-  }
 </script>
 
-<div class="flex flex-col h-full">
-  <!-- Search bar -->
-  <div class="px-4 py-3 border-b border-zinc-200 dark:border-zinc-700 space-y-2">
-    <div class="flex gap-2">
-      <input
-        type="text"
-        bind:value={query}
-        onkeydown={handleKeydown}
-        placeholder="Search activities..."
-        class="flex-1 px-3 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-600
-               bg-white dark:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-devrecall-500"
-      />
-      <button
-        onclick={doSearch}
-        disabled={loading || !query.trim()}
-        class="px-4 py-2 text-sm font-medium rounded-lg bg-devrecall-600 text-white
-               hover:bg-devrecall-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        Search
-      </button>
-    </div>
-    <div class="flex gap-2 items-center">
-      <select
-        bind:value={sourceFilter}
-        class="text-xs px-2 py-1.5 rounded-md border border-zinc-300 dark:border-zinc-600
-               bg-white dark:bg-zinc-800"
-      >
-        <option value="">All sources</option>
-        {#each sources.slice(1) as src}
-          <option value={src}>{src}</option>
-        {/each}
-      </select>
-      {#if searched && !loading}
-        <span class="text-xs text-zinc-500">{results.length} results</span>
-      {/if}
-    </div>
+<div class="route-body">
+  <PanelHeader title="Search" meta={searched && !loading ? `${results.length} results` : undefined} />
+
+  <div class="search-bar">
+    <Icon name="search" size={14} />
+    <input
+      type="text"
+      bind:value={query}
+      onkeydown={handleKeydown}
+      placeholder="Search across your local activity…"
+    />
+    {#if loading}<span class="loading">searching…</span>{/if}
   </div>
 
-  <!-- Results -->
-  <div class="flex-1 overflow-y-auto">
-    {#if loading}
-      <div class="flex items-center justify-center h-32">
-        <p class="text-sm text-zinc-500">Searching...</p>
-      </div>
-    {:else if error}
-      <div class="mx-4 mt-3 text-sm text-red-500 px-3 py-2 bg-red-50 dark:bg-red-900/20 rounded-lg">
-        {error}
-      </div>
-    {:else if searched && results.length === 0}
-      <div class="flex items-center justify-center h-32">
-        <p class="text-sm text-zinc-500">No results found for "{query}".</p>
-      </div>
+  <div class="filters">
+    {#each SOURCES as s}
+      <button
+        class="chip"
+        class:active={sourceFilter === s}
+        onclick={() => { sourceFilter = s; if (searched) doSearch(); }}
+      >
+        {#if s !== "all"}<SourceDot source={s} size={6} />{/if}
+        <span>{s}</span>
+      </button>
+    {/each}
+  </div>
+
+  <div class="scroll">
+    {#if error}
+      <div class="error-box">{error}</div>
     {:else if !searched}
-      <div class="flex items-center justify-center h-32">
-        <p class="text-sm text-zinc-500">Enter a search query to find activities.</p>
-      </div>
+      <div class="state">Type a query and press ↵ to search your local index.</div>
+    {:else if loading}
+      <div class="state">Searching…</div>
+    {:else if results.length === 0}
+      <div class="state">No results for "{query}".</div>
     {:else}
-      <div class="divide-y divide-zinc-100 dark:divide-zinc-800">
-        {#each results as { activity }}
-          <div class="px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
-            <div class="flex items-start gap-2">
-              <span class="shrink-0 text-xs px-1.5 py-0.5 rounded {sourceColor(activity.source)}">
-                {activity.source}
-              </span>
-              <div class="min-w-0 flex-1">
-                <div class="text-sm font-medium">{activity.title}</div>
-                {#if activity.content}
-                  <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 line-clamp-3">
-                    {activity.content}
-                  </div>
-                {/if}
-                <div class="text-xs text-zinc-400 mt-1">
-                  {formatTime(activity.timestamp)} &middot; {activity.type}
-                </div>
-              </div>
+      {#each results as { activity } (activity.id ?? activity.timestamp + activity.title)}
+        <div class="row">
+          <SourceDot source={activity.source} />
+          <div class="main">
+            <div class="title">{activity.title}</div>
+            {#if activity.content}
+              <div class="preview">{activity.content}</div>
+            {/if}
+            <div class="meta">
+              {formatDate(activity.timestamp)}
+              {#if activity.type} · {activity.type}{/if}
             </div>
           </div>
-        {/each}
-      </div>
+          <Chip>
+            {#snippet children()}<span>{activity.source}</span>{/snippet}
+          </Chip>
+        </div>
+      {/each}
     {/if}
   </div>
 </div>
+
+<style>
+  .route-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .scroll { flex: 1; overflow: auto; background: var(--ink-1); }
+
+  .search-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--ink-1);
+    color: var(--fg-3);
+  }
+  .search-bar input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--fg-1);
+    font-family: var(--font-sans);
+    font-size: 14px;
+  }
+  .search-bar input::placeholder { color: var(--fg-4); }
+  .loading {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-4);
+  }
+
+  .filters {
+    display: flex;
+    gap: 4px;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--ink-1);
+    flex-wrap: wrap;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: var(--r-1);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--fg-2);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+    text-transform: capitalize;
+    white-space: nowrap;
+  }
+  .chip:hover { background: var(--ink-2); }
+  .chip.active {
+    border-color: var(--accent-line);
+    background: var(--accent-wash);
+    color: var(--mint-200);
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 12px 1fr auto;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--hairline);
+    cursor: pointer;
+    transition: background 80ms;
+  }
+  .row:hover { background: var(--ink-2); }
+  .main { min-width: 0; }
+  .title {
+    font-size: 13px;
+    color: var(--fg-1);
+    font-weight: 500;
+  }
+  .preview {
+    font-size: 12px;
+    color: var(--fg-3);
+    margin-top: 4px;
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-4);
+    margin-top: 6px;
+  }
+
+  .state {
+    padding: 60px 20px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--fg-3);
+  }
+  .error-box {
+    margin: 16px 20px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--danger);
+    background: var(--danger-wash);
+    border: 1px solid rgba(255, 107, 107, 0.2);
+    border-radius: var(--r-2);
+    padding: 10px 12px;
+  }
+</style>

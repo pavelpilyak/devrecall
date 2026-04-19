@@ -6,9 +6,6 @@
   "permissions": [
     "core:default",
     "shell:allow-open",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister",
-    "updater:default",
-    "notification:default"
+    "updater:default"
   ]
 }

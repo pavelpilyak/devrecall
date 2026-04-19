@@ -1,0 +1,385 @@
+/* ============================================================
+   DevRecall — Colors & Type
+   Dark-primary. Mint accent ("verify"/"fresh"/"your data stays local").
+   Fonts: JetBrains Mono (UI+code), Inter (prose), Source Serif 4 (reports).
+   All via Google Fonts — swap for licensed files if you have them.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap');
+
+:root {
+  /* ---------- Neutrals (dark, primary) ---------- */
+  /* Near-black base, cool-neutral, slightly warm at the top */
+  --ink-0:   #08090b;  /* app background, "void" */
+  --ink-1:   #0d0f12;  /* canvas / panel back */
+  --ink-2:   #12151a;  /* surface */
+  --ink-3:   #191d23;  /* surface-raised */
+  --ink-4:   #222830;  /* hairline, hover */
+  --ink-5:   #2d343e;  /* divider-strong, border-focus */
+  --ink-6:   #3a424d;  /* muted chrome */
+
+  /* Foregrounds */
+  --fg-1:    #e7ecf2;  /* primary text */
+  --fg-2:    #b8c0cc;  /* secondary text */
+  --fg-3:    #7b8595;  /* tertiary / meta */
+  --fg-4:    #545d6b;  /* disabled / placeholder */
+  --fg-mute: #3d4551;  /* hint, ghost */
+
+  /* ---------- Accent: Mint ("verify", "fresh", "recall") ---------- */
+  --mint-50:  #e6fbef;
+  --mint-100: #c8f6d8;
+  --mint-200: #9ef0bd;
+  --mint-300: #7cf0a8;  /* signature accent */
+  --mint-400: #4cdb87;
+  --mint-500: #22c56a;
+  --mint-600: #179b52;
+  --mint-700: #11733d;
+  --mint-800: #0c4d29;
+
+  --accent:        var(--mint-300);
+  --accent-hover:  var(--mint-200);
+  --accent-press:  var(--mint-400);
+  --accent-ink:    #052014;            /* text on accent */
+  --accent-wash:   rgba(124, 240, 168, 0.10);
+  --accent-line:   rgba(124, 240, 168, 0.32);
+
+  /* ---------- Semantic ---------- */
+  --ok:      #4cdb87;
+  --warn:    #e8c872;
+  --danger:  #ff6b6b;
+  --info:    #6aa9ff;
+
+  --ok-wash:     rgba(76, 219, 135, 0.10);
+  --warn-wash:   rgba(232, 200, 114, 0.10);
+  --danger-wash: rgba(255, 107, 107, 0.10);
+  --info-wash:   rgba(106, 169, 255, 0.10);
+
+  /* ---------- Source hues (integrations) ---------- */
+  /* Each integration gets a tinted dot + wash, no heavy brand logos in UI. */
+  --src-git:      #f0883e;  /* git orange */
+  --src-github:   #c7cdd6;  /* neutral light */
+  --src-slack:    #c986e6;  /* slack aubergine */
+  --src-calendar: #6aa9ff;  /* calendar blue */
+  --src-jira:     #4a9eff;
+  --src-linear:   #9a8cff;
+  --src-gitlab:   #fc6d26;
+
+  /* ---------- Surfaces / borders ---------- */
+  --bg:            var(--ink-0);
+  --bg-canvas:     var(--ink-1);
+  --bg-surface:    var(--ink-2);
+  --bg-raised:     var(--ink-3);
+  --bg-hover:      var(--ink-4);
+
+  --border:        rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.10);
+  --border-focus:  var(--mint-300);
+  --hairline:      rgba(255, 255, 255, 0.04);
+
+  /* ---------- Radii (subtle, 4–6px) ---------- */
+  --r-0: 0px;
+  --r-1: 3px;     /* chips, inline badges */
+  --r-2: 5px;     /* buttons, inputs, cards */
+  --r-3: 7px;     /* panels */
+  --r-4: 10px;    /* dialogs, popovers */
+  --r-full: 999px;
+
+  /* ---------- Spacing (4px base) ---------- */
+  --s-0: 0;
+  --s-1: 2px;
+  --s-2: 4px;
+  --s-3: 6px;
+  --s-4: 8px;
+  --s-5: 12px;
+  --s-6: 16px;
+  --s-7: 20px;
+  --s-8: 24px;
+  --s-9: 32px;
+  --s-10: 40px;
+  --s-11: 56px;
+  --s-12: 72px;
+
+  /* ---------- Shadows / elevation ---------- */
+  /* Dark UI: shadows are subtle + inner-hairline, not puffy drop shadows. */
+  --shadow-1: 0 1px 0 rgba(255,255,255,0.03) inset,
+              0 1px 2px rgba(0,0,0,0.35);
+  --shadow-2: 0 1px 0 rgba(255,255,255,0.04) inset,
+              0 6px 16px -4px rgba(0,0,0,0.5);
+  --shadow-3: 0 1px 0 rgba(255,255,255,0.05) inset,
+              0 12px 32px -6px rgba(0,0,0,0.55),
+              0 2px 6px rgba(0,0,0,0.4);
+  --shadow-accent: 0 0 0 1px var(--accent-line),
+                   0 0 20px -6px rgba(124,240,168,0.35);
+
+  /* ---------- Motion ---------- */
+  --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:   cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-std:  cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-1: 80ms;     /* hover, press */
+  --dur-2: 160ms;    /* popovers, small transitions */
+  --dur-3: 240ms;    /* panel changes */
+  --dur-4: 400ms;    /* route changes */
+
+  /* ---------- Type — families ---------- */
+  --font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-sans:    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-serif:   "Source Serif 4", "Iowan Old Style", "Apple Garamond", Georgia, serif;
+
+  /* Type — scale (dense devtool, 13px body by default) */
+  --t-xs:    11px;   /* meta, source labels */
+  --t-sm:    12px;   /* labels, table meta */
+  --t-base:  13px;   /* body default */
+  --t-md:    14px;   /* emphasis body */
+  --t-lg:    16px;   /* section lead */
+  --t-xl:    20px;   /* card title */
+  --t-2xl:   26px;   /* page title */
+  --t-3xl:   34px;   /* hero / display */
+  --t-4xl:   48px;   /* marketing display */
+
+  --lh-tight: 1.2;
+  --lh-snug:  1.35;
+  --lh-body:  1.55;
+  --lh-prose: 1.7;
+
+  --tracking-tight:  -0.012em;
+  --tracking-mono:   -0.005em;
+  --tracking-wide:    0.04em;
+  --tracking-caps:    0.08em;
+}
+
+/* ============================================================
+   Light mode (secondary — dark is primary).
+   Apply by adding `.theme-light` or `[data-theme="light"]` to :root.
+   ============================================================ */
+.theme-light, [data-theme="light"] {
+  --ink-0:   #ffffff;
+  --ink-1:   #fafbfc;
+  --ink-2:   #f4f5f7;
+  --ink-3:   #eceef2;
+  --ink-4:   #e1e4ea;
+  --ink-5:   #cdd2db;
+  --ink-6:   #a8aeba;
+
+  --fg-1:    #10131a;
+  --fg-2:    #373d4a;
+  --fg-3:    #5f6775;
+  --fg-4:    #8a93a1;
+  --fg-mute: #b4bac5;
+
+  --accent:        #11733d;
+  --accent-hover:  #0c4d29;
+  --accent-press:  #179b52;
+  --accent-ink:    #ffffff;
+  --accent-wash:   rgba(17, 115, 61, 0.08);
+  --accent-line:   rgba(17, 115, 61, 0.28);
+
+  --border:        rgba(16, 19, 26, 0.08);
+  --border-strong: rgba(16, 19, 26, 0.14);
+  --hairline:      rgba(16, 19, 26, 0.05);
+
+  --shadow-1: 0 1px 2px rgba(16, 19, 26, 0.06);
+  --shadow-2: 0 4px 12px rgba(16, 19, 26, 0.08);
+  --shadow-3: 0 12px 28px rgba(16, 19, 26, 0.12);
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+html, body {
+  background: var(--bg);
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  font-size: var(--t-base);
+  line-height: var(--lh-body);
+  letter-spacing: var(--tracking-tight);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01", "cv11";   /* Inter tweaks: cleaner 1/l/g */
+}
+
+::selection { background: var(--accent-wash); color: var(--fg-1); }
+
+/* ============================================================
+   Semantic type classes
+   ============================================================ */
+.t-display {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: var(--t-4xl);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.02em;
+}
+.t-h1 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: var(--t-3xl);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.018em;
+}
+.t-h2 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: var(--t-2xl);
+  line-height: var(--lh-snug);
+  letter-spacing: -0.014em;
+}
+.t-h3 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: var(--t-xl);
+  line-height: var(--lh-snug);
+  letter-spacing: -0.012em;
+}
+.t-lead {
+  font-size: var(--t-lg);
+  line-height: var(--lh-body);
+  color: var(--fg-2);
+  letter-spacing: -0.005em;
+}
+.t-body {
+  font-size: var(--t-base);
+  line-height: var(--lh-body);
+  color: var(--fg-1);
+}
+.t-body-sm {
+  font-size: var(--t-sm);
+  line-height: var(--lh-body);
+  color: var(--fg-2);
+}
+.t-meta {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-3);
+  letter-spacing: var(--tracking-mono);
+}
+.t-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  color: var(--fg-3);
+  font-weight: 500;
+}
+.t-code, code, kbd {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  letter-spacing: var(--tracking-mono);
+}
+kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-1);
+  border: 1px solid var(--border-strong);
+  background: var(--ink-3);
+  color: var(--fg-2);
+  font-size: 11px;
+  font-weight: 500;
+}
+.t-prose-serif {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: var(--lh-prose);
+  color: var(--fg-1);
+  letter-spacing: 0;
+}
+.t-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum", "zero";
+}
+
+/* ============================================================
+   Primitives — buttons, inputs, chips (low-level only)
+   ============================================================ */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border-strong);
+  background: var(--ink-3);
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-std),
+              border-color var(--dur-1) var(--ease-std),
+              transform var(--dur-1) var(--ease-std);
+}
+.btn:hover { background: var(--ink-4); border-color: var(--ink-5); }
+.btn:active { transform: translateY(0.5px); background: var(--ink-2); }
+.btn--primary {
+  background: var(--accent); color: var(--accent-ink);
+  border-color: transparent;
+  box-shadow: 0 0 0 1px var(--accent-line);
+}
+.btn--primary:hover { background: var(--accent-hover); }
+.btn--primary:active { background: var(--accent-press); }
+.btn--ghost {
+  background: transparent; border-color: transparent; color: var(--fg-2);
+}
+.btn--ghost:hover { background: var(--ink-3); color: var(--fg-1); }
+.btn--sm { height: 24px; padding: 0 8px; font-size: var(--t-xs); }
+.btn--lg { height: 34px; padding: 0 14px; font-size: var(--t-md); }
+
+.input {
+  display: block; width: 100%;
+  height: 30px; padding: 0 10px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--border-strong);
+  background: var(--ink-2);
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  font-size: var(--t-sm);
+  outline: none;
+  transition: border-color var(--dur-1) var(--ease-std),
+              background var(--dur-1) var(--ease-std);
+}
+.input::placeholder { color: var(--fg-4); }
+.input:focus { border-color: var(--accent-line); background: var(--ink-3); box-shadow: 0 0 0 3px var(--accent-wash); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 20px; padding: 0 6px;
+  border-radius: var(--r-1);
+  background: var(--ink-3);
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-mono);
+  border: 1px solid var(--border);
+}
+.chip--accent { background: var(--accent-wash); color: var(--mint-200); border-color: var(--accent-line); }
+.chip--warn   { background: var(--warn-wash);   color: var(--warn);        border-color: rgba(232,200,114,0.3); }
+.chip--danger { background: var(--danger-wash); color: var(--danger);      border-color: rgba(255,107,107,0.3); }
+.chip--info   { background: var(--info-wash);   color: var(--info);        border-color: rgba(106,169,255,0.3); }
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-1);
+}
+
+.hairline { background: var(--hairline); height: 1px; width: 100%; }
+.divider  { background: var(--border);  height: 1px; width: 100%; }
+
+/* Focus rings — keyboard-first audience */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-2);
+}
+
+/* Scrollbars — quiet */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--ink-4);
+  border-radius: var(--r-full);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--ink-5); background-clip: padding-box; border: 2px solid transparent; }

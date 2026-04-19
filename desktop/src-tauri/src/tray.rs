@@ -21,11 +21,12 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let menu = Menu::with_items(app, &[&show, &log_event, &sync_now, &quit])?;
 
-    let icon = Image::from_bytes(include_bytes!("../icons/icon.png"))
+    let icon = Image::from_bytes(include_bytes!("../icons/tray-template.png"))
         .map_err(|e| format!("Failed to load tray icon: {e}"))?;
 
     let tray = TrayIconBuilder::with_id("devrecall-tray")
         .icon(icon)
+        .icon_as_template(true)
         .tooltip("DevRecall")
         .menu(&menu)
         .on_menu_event(move |app, event| match event.id.as_ref() {

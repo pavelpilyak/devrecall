@@ -5,119 +5,129 @@
   interface Props {
     content: string;
     class?: string;
+    variant?: "serif" | "sans";
   }
 
-  let { content, class: className = "" }: Props = $props();
+  let { content, class: className = "", variant = "sans" }: Props = $props();
 
-  // Configure marked for sensible defaults.
-  marked.setOptions({
-    breaks: true,
-    gfm: true,
-  });
+  marked.setOptions({ breaks: true, gfm: true });
 
   let html = $derived(DOMPurify.sanitize(marked.parse(content || "") as string));
 </script>
 
-<div class="markdown {className}">
-  {@html html}
+<div class="md" class:serif={variant === "serif"} class:sans={variant === "sans"}>
+  <div class={className}>
+    {@html html}
+  </div>
 </div>
 
 <style>
-  .markdown :global(h1) {
-    font-size: 1.25rem;
-    font-weight: 700;
-    margin-top: 1rem;
-    margin-bottom: 0.5rem;
-  }
-  .markdown :global(h2) {
-    font-size: 1.125rem;
+  .md :global(h1) {
+    font-size: 26px;
     font-weight: 600;
-    margin-top: 0.75rem;
-    margin-bottom: 0.375rem;
+    letter-spacing: -0.014em;
+    margin: 0 0 12px;
+    color: var(--fg-1);
   }
-  .markdown :global(h3) {
-    font-size: 1rem;
+  .md :global(h2) {
+    font-size: 20px;
     font-weight: 600;
-    margin-top: 0.5rem;
-    margin-bottom: 0.25rem;
+    letter-spacing: -0.012em;
+    margin: 24px 0 10px;
+    color: var(--fg-1);
   }
-  .markdown :global(p) {
-    margin-bottom: 0.5rem;
-    line-height: 1.625;
+  .md :global(h3) {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 18px 0 8px;
+    color: var(--fg-1);
   }
-  .markdown :global(ul),
-  .markdown :global(ol) {
-    margin-left: 1.25rem;
-    margin-bottom: 0.5rem;
+  .md :global(p) {
+    margin: 0 0 10px;
+    line-height: 1.7;
+    color: var(--fg-1);
   }
-  .markdown :global(ul) {
-    list-style-type: disc;
+  .md :global(ul),
+  .md :global(ol) {
+    margin: 0 0 12px;
+    padding-left: 20px;
+    color: var(--fg-1);
   }
-  .markdown :global(ol) {
-    list-style-type: decimal;
+  .md :global(li) {
+    margin-bottom: 6px;
+    line-height: 1.7;
   }
-  .markdown :global(li) {
-    margin-bottom: 0.125rem;
-    line-height: 1.5;
+  .md :global(code) {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    background: var(--ink-3);
+    padding: 2px 6px;
+    border-radius: var(--r-1);
+    color: var(--fg-1);
   }
-  .markdown :global(code) {
-    font-family: ui-monospace, monospace;
-    font-size: 0.85em;
-    background: rgba(127, 127, 127, 0.12);
-    padding: 0.125rem 0.3rem;
-    border-radius: 0.25rem;
-  }
-  .markdown :global(pre) {
-    background: rgba(127, 127, 127, 0.1);
-    padding: 0.75rem;
-    border-radius: 0.375rem;
+  .md :global(pre) {
+    background: var(--ink-2);
+    border: 1px solid var(--border);
+    padding: 12px 14px;
+    border-radius: var(--r-2);
     overflow-x: auto;
-    margin-bottom: 0.5rem;
+    margin: 0 0 12px;
   }
-  .markdown :global(pre code) {
-    background: none;
-    padding: 0;
+  .md :global(pre code) { background: none; padding: 0; }
+  .md :global(blockquote) {
+    border-left: 3px solid var(--accent-line);
+    padding-left: 12px;
+    margin: 0 0 12px;
+    color: var(--fg-2);
+    font-style: italic;
   }
-  .markdown :global(blockquote) {
-    border-left: 3px solid rgba(127, 127, 127, 0.3);
-    padding-left: 0.75rem;
-    margin-left: 0;
-    margin-bottom: 0.5rem;
-    color: rgba(127, 127, 127, 0.8);
-  }
-  .markdown :global(a) {
-    color: #3b82f6;
+  .md :global(a) {
+    color: var(--accent);
     text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-color: var(--accent-line);
   }
-  .markdown :global(a:hover) {
-    color: #2563eb;
-  }
-  .markdown :global(strong) {
-    font-weight: 600;
-  }
-  .markdown :global(hr) {
+  .md :global(a:hover) { color: var(--mint-200); }
+  .md :global(strong) { font-weight: 600; color: var(--fg-1); }
+  .md :global(hr) {
     border: none;
-    border-top: 1px solid rgba(127, 127, 127, 0.2);
-    margin: 0.75rem 0;
+    border-top: 1px solid var(--border);
+    margin: 20px 0;
   }
-  .markdown :global(table) {
+  .md :global(table) {
     width: 100%;
     border-collapse: collapse;
-    margin-bottom: 0.5rem;
-    font-size: 0.875rem;
+    margin-bottom: 12px;
+    font-size: 13px;
   }
-  .markdown :global(th),
-  .markdown :global(td) {
-    border: 1px solid rgba(127, 127, 127, 0.2);
-    padding: 0.375rem 0.5rem;
+  .md :global(th),
+  .md :global(td) {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
     text-align: left;
   }
-  .markdown :global(th) {
+  .md :global(th) {
     font-weight: 600;
-    background: rgba(127, 127, 127, 0.06);
+    background: var(--ink-2);
+    color: var(--fg-2);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-caps);
   }
-  /* Remove bottom margin from last element */
-  .markdown :global(*:last-child) {
-    margin-bottom: 0;
+
+  .md.serif :global(p),
+  .md.serif :global(li),
+  .md.serif :global(ul),
+  .md.serif :global(ol) {
+    font-family: var(--font-serif);
+    font-size: 15px;
+    line-height: 1.7;
   }
+  .md.serif :global(h2),
+  .md.serif :global(h3) {
+    font-family: var(--font-sans);
+  }
+
+  .md :global(*:last-child) { margin-bottom: 0; }
 </style>

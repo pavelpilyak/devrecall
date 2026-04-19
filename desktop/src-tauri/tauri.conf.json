@@ -15,8 +15,10 @@
       {
         "label": "main",
         "title": "DevRecall",
-        "width": 455,
-        "height": 600,
+        "width": 1200,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 560,
         "resizable": true,
         "visible": true,
         "decorations": true
