@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/pavelpiliak/devrecall/internal/auth"
-	"github.com/pavelpiliak/devrecall/internal/config"
+	"github.com/pavelpilyak/devrecall/internal/auth"
+	"github.com/pavelpilyak/devrecall/internal/config"
 )
 
 func TestFromConfig_Ollama(t *testing.T) {

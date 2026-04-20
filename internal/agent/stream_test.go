@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pavelpiliak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/llm"
 )
 
 // streamingProvider is a fake llm.ToolCallingProvider that replays a queued

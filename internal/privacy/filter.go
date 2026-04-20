@@ -3,8 +3,8 @@ package privacy
 import (
 	"encoding/json"
 
-	"github.com/pavelpiliak/devrecall/internal/config"
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/internal/config"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // Apply filters a slice of activities according to per-source privacy modes.

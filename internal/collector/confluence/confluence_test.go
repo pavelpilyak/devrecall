@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 func newTestServer(t *testing.T, handlers map[string]http.HandlerFunc) (*httptest.Server, *Collector) {

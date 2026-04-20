@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/storage"
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 func mustOpen(t *testing.T) *storage.DB {

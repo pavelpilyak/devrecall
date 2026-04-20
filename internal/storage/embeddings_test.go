@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // pad384 pads a short vector to 384 dimensions (vec0 table requirement).

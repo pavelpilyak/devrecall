@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // InsertSummary stores a new periodic summary. If a summary for the same

@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/storage"
-	"github.com/pavelpiliak/devrecall/internal/summarizer"
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/internal/summarizer"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // TestStandupPipeline tests the query→summarize pipeline without config/git dependencies.

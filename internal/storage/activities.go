@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // InsertActivity upserts a single activity. On conflict (same source+source_id),

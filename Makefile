@@ -9,7 +9,7 @@ build:
 
 build-prod:
 	@test -f keys/prod-public.pem || (echo "Error: keys/prod-public.pem not found. Run: make keygen" && exit 1)
-	go build -tags "fts5 GO" -ldflags "-X main.version=$(VERSION) -X 'github.com/pavelpiliak/devrecall/internal/license.publicKeyPEM=$(LICENSE_PUB_KEY)'" -o bin/$(BINARY) ./cmd/devrecall
+	go build -tags "fts5 GO" -ldflags "-X main.version=$(VERSION) -X 'github.com/pavelpilyak/devrecall/internal/license.publicKeyPEM=$(LICENSE_PUB_KEY)'" -o bin/$(BINARY) ./cmd/devrecall
 
 keygen:
 	@mkdir -p keys

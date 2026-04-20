@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 func TestTemplateSummarizer_BragDoc(t *testing.T) {

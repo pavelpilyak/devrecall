@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 func mustOpen(t *testing.T) *DB {

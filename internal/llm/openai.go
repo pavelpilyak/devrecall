@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/collector/ratelimit"
+	"github.com/pavelpilyak/devrecall/internal/collector/ratelimit"
 )
 
 const defaultOpenAIURL = "https://api.openai.com/v1"

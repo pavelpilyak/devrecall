@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/agent"
-	agenttools "github.com/pavelpiliak/devrecall/internal/agent/tools"
-	"github.com/pavelpiliak/devrecall/internal/chat/freshness"
-	"github.com/pavelpiliak/devrecall/internal/llm"
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/internal/agent"
+	agenttools "github.com/pavelpilyak/devrecall/internal/agent/tools"
+	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
+	"github.com/pavelpilyak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // fakeStreamProvider is a tiny llm.ToolCallingProvider used by the chat

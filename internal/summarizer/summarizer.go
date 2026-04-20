@@ -1,7 +1,7 @@
 package summarizer
 
 import (
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // Summarizer generates human-readable summaries from activities.

@@ -3,8 +3,8 @@ package llm
 import (
 	"fmt"
 
-	"github.com/pavelpiliak/devrecall/internal/auth"
-	"github.com/pavelpiliak/devrecall/internal/config"
+	"github.com/pavelpilyak/devrecall/internal/auth"
+	"github.com/pavelpilyak/devrecall/internal/config"
 )
 
 // APIKeyToken is the structure stored in the token store for LLM API keys.

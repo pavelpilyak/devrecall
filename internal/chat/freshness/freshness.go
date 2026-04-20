@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/internal/storage"
 )
 
 // Status enumerates the lifecycle of a source during a freshness check.

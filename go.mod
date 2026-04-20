@@ -1,4 +1,4 @@
-module github.com/pavelpiliak/devrecall
+module github.com/pavelpilyak/devrecall
 
 go 1.26.1
 

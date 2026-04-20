@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/config"
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/internal/config"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 var ts = time.Date(2026, 3, 27, 14, 0, 0, 0, time.UTC)

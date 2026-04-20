@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/collector/ratelimit"
+	"github.com/pavelpilyak/devrecall/internal/collector/ratelimit"
 )
 
 const defaultOllamaURL = "http://localhost:11434"

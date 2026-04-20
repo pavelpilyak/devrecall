@@ -8,10 +8,10 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/pavelpiliak/devrecall/internal/auth"
-	"github.com/pavelpiliak/devrecall/internal/config"
-	"github.com/pavelpiliak/devrecall/internal/llm"
-	"github.com/pavelpiliak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/internal/auth"
+	"github.com/pavelpilyak/devrecall/internal/config"
+	"github.com/pavelpilyak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/storage"
 )
 
 // wizard holds the state for the interactive onboarding wizard.

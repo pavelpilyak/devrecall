@@ -1,4 +1,4 @@
-module github.com/pavelpiliak/devrecall/scripts/seed-test-data
+module github.com/pavelpilyak/devrecall/scripts/seed-test-data
 
 go 1.23
 

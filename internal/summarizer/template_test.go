@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 func meta(repo, sha string, files, ins, del int) string {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/internal/storage"
 )
 
 // newTestDB returns an in-memory DB used to seed sync_state rows for the

@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/config"
-	"github.com/pavelpiliak/devrecall/internal/license"
-	"github.com/pavelpiliak/devrecall/internal/storage"
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/internal/config"
+	"github.com/pavelpilyak/devrecall/internal/license"
+	"github.com/pavelpilyak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // mockTokenStore is a no-op token store for tests.

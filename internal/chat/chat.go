@@ -15,10 +15,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/pavelpiliak/devrecall/internal/agent"
-	"github.com/pavelpiliak/devrecall/internal/chat/freshness"
-	"github.com/pavelpiliak/devrecall/internal/llm"
-	"github.com/pavelpiliak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/internal/agent"
+	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
+	"github.com/pavelpilyak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/storage"
 )
 
 const maxHistory = 10 // keep last N user+assistant message pairs

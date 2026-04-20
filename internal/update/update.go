@@ -27,7 +27,7 @@ import (
 
 const (
 	// DefaultReleasesURL is the GitHub API endpoint for the latest devrecall release.
-	DefaultReleasesURL = "https://api.github.com/repos/pavelpiliak/devrecall/releases/latest"
+	DefaultReleasesURL = "https://api.github.com/repos/pavelpilyak/devrecall/releases/latest"
 
 	// CheckInterval is the minimum time between passive update checks.
 	CheckInterval = 24 * time.Hour

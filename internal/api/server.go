@@ -11,17 +11,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/agent"
-	"github.com/pavelpiliak/devrecall/internal/auth"
-	"github.com/pavelpiliak/devrecall/internal/chat/freshness"
-	"github.com/pavelpiliak/devrecall/internal/collector/git"
-	"github.com/pavelpiliak/devrecall/internal/config"
-	"github.com/pavelpiliak/devrecall/internal/license"
-	"github.com/pavelpiliak/devrecall/internal/llm"
-	"github.com/pavelpiliak/devrecall/internal/privacy"
-	"github.com/pavelpiliak/devrecall/internal/storage"
-	"github.com/pavelpiliak/devrecall/internal/summarizer"
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/internal/agent"
+	"github.com/pavelpilyak/devrecall/internal/auth"
+	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
+	"github.com/pavelpilyak/devrecall/internal/collector/git"
+	"github.com/pavelpilyak/devrecall/internal/config"
+	"github.com/pavelpilyak/devrecall/internal/license"
+	"github.com/pavelpilyak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/privacy"
+	"github.com/pavelpilyak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/internal/summarizer"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 const defaultPort = 9147 // "DRCL" on phone keypad

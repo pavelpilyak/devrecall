@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // gqlHandler creates a test server that dispatches based on the GraphQL query content.

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/collector/ticketlink"
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/internal/collector/ticketlink"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // commitMeta holds per-commit diff stats stored as JSON in Activity.Metadata.

@@ -19,8 +19,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/agent/tools"
-	"github.com/pavelpiliak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/agent/tools"
+	"github.com/pavelpilyak/devrecall/internal/llm"
 )
 
 // Defaults applied when LoopOptions fields are zero.

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pavelpiliak/devrecall/internal/auth"
-	"github.com/pavelpiliak/devrecall/internal/config"
-	"github.com/pavelpiliak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/internal/auth"
+	"github.com/pavelpilyak/devrecall/internal/config"
+	"github.com/pavelpilyak/devrecall/internal/storage"
 )
 
 // mockTokenStore is a simple in-memory token store for tests.

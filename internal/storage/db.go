@@ -6,7 +6,7 @@ import (
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/pavelpiliak/devrecall/internal/config"
+	"github.com/pavelpilyak/devrecall/internal/config"
 )
 
 func init() {

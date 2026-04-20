@@ -51,6 +51,73 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.tar.gz
 
+  # Build Go CLI binaries for Linux (x86_64 + aarch64) and .deb packages
+  build-cli-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goarch: amd64
+            nfpm_arch: amd64
+            tarball_suffix: x86_64
+            cc: gcc
+            apt_packages: ""
+          - goarch: arm64
+            nfpm_arch: arm64
+            tarball_suffix: aarch64
+            cc: aarch64-linux-gnu-gcc
+            apt_packages: gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install cross-compilation toolchain
+        if: matrix.apt_packages != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.apt_packages }}
+
+      - name: Install nfpm
+        run: |
+          curl -sSL -o /tmp/nfpm.tar.gz https://github.com/goreleaser/nfpm/releases/download/v2.41.3/nfpm_2.41.3_Linux_x86_64.tar.gz
+          sudo tar -C /usr/local/bin -xzf /tmp/nfpm.tar.gz nfpm
+
+      - name: Build CLI
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+          CC: ${{ matrix.cc }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          mkdir -p bin
+          go build -tags "fts5 GO" \
+            -ldflags "-X main.version=${VERSION}" \
+            -o bin/devrecall-linux-${{ matrix.nfpm_arch }} \
+            ./cmd/devrecall
+
+      - name: Create tarball
+        run: |
+          cp bin/devrecall-linux-${{ matrix.nfpm_arch }} devrecall-linux-${{ matrix.tarball_suffix }}
+          tar czf devrecall-linux-${{ matrix.tarball_suffix }}.tar.gz devrecall-linux-${{ matrix.tarball_suffix }}
+
+      - name: Build .deb package
+        env:
+          NFPM_ARCH: ${{ matrix.nfpm_arch }}
+        run: |
+          export NFPM_VERSION=${GITHUB_REF_NAME#v}
+          nfpm package --config packaging/nfpm.yaml --packager deb --target devrecall_${NFPM_VERSION}_${{ matrix.nfpm_arch }}.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devrecall-linux-${{ matrix.tarball_suffix }}
+          path: |
+            devrecall-linux-${{ matrix.tarball_suffix }}.tar.gz
+            devrecall_*_${{ matrix.nfpm_arch }}.deb
+
   # Run Go tests
   test-go:
     runs-on: macos-latest
@@ -157,7 +224,7 @@ jobs:
 
   # Create GitHub Release with all artifacts
   release:
-    needs: [build-cli, build-desktop]
+    needs: [build-cli, build-cli-linux, build-desktop]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -169,8 +236,24 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          find . -type f \( -name "*.tar.gz" -o -name "*.dmg" \) -exec sha256sum {} \; > checksums.sha256
+          find . -type f \( -name "*.tar.gz" -o -name "*.dmg" -o -name "*.deb" \) -exec sha256sum {} \; > checksums.sha256
           cat checksums.sha256
+
+      - name: Update Homebrew formula with release checksums
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          sha_darwin_arm=$(sha256sum artifacts/devrecall-darwin-aarch64/devrecall-darwin-aarch64.tar.gz | awk '{print $1}')
+          sha_darwin_x86=$(sha256sum artifacts/devrecall-darwin-x86_64/devrecall-darwin-x86_64.tar.gz | awk '{print $1}')
+          sha_linux_arm=$(sha256sum artifacts/devrecall-linux-aarch64/devrecall-linux-aarch64.tar.gz | awk '{print $1}')
+          sha_linux_x86=$(sha256sum artifacts/devrecall-linux-x86_64/devrecall-linux-x86_64.tar.gz | awk '{print $1}')
+          sed -i \
+            -e "s/^  version \".*\"/  version \"${VERSION}\"/" \
+            -e "s/PLACEHOLDER_DARWIN_AARCH64_SHA256/${sha_darwin_arm}/" \
+            -e "s/PLACEHOLDER_DARWIN_X86_64_SHA256/${sha_darwin_x86}/" \
+            -e "s/PLACEHOLDER_LINUX_AARCH64_SHA256/${sha_linux_arm}/" \
+            -e "s/PLACEHOLDER_LINUX_X86_64_SHA256/${sha_linux_x86}/" \
+            Formula/devrecall-cli.rb
+          cp Formula/devrecall-cli.rb artifacts/devrecall-cli.rb
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -179,4 +262,6 @@ jobs:
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.dmg
+            artifacts/**/*.deb
             artifacts/checksums.sha256
+            artifacts/devrecall-cli.rb

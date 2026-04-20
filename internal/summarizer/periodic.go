@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/llm"
-	"github.com/pavelpiliak/devrecall/internal/storage"
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 const monthlySystemPrompt = `You are a developer monthly summary generator. Given daily and weekly summaries for a month, write a concise monthly summary.

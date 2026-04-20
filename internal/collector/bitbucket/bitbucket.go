@@ -9,8 +9,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/collector/ratelimit"
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/internal/collector/ratelimit"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 const (

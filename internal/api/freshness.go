@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/chat/freshness"
-	"github.com/pavelpiliak/devrecall/internal/collector/git"
-	"github.com/pavelpiliak/devrecall/internal/config"
-	"github.com/pavelpiliak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
+	"github.com/pavelpilyak/devrecall/internal/collector/git"
+	"github.com/pavelpilyak/devrecall/internal/config"
+	"github.com/pavelpilyak/devrecall/internal/storage"
 )
 
 // BuildFreshnessChecker turns the user's chat.sync_freshness config into a

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/llm"
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 const standupSystemPrompt = `You are a developer standup report generator. Given a list of work activities (commits, Slack messages, meetings, etc.), write a concise, natural-language standup summary.

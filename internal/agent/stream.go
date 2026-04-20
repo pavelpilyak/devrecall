@@ -8,7 +8,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/pavelpiliak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/llm"
 )
 
 // AgentEventType identifies the kind of event RunStream emits.

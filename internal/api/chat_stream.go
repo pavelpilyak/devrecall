@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/pavelpiliak/devrecall/internal/agent"
-	agenttools "github.com/pavelpiliak/devrecall/internal/agent/tools"
-	"github.com/pavelpiliak/devrecall/internal/chat/freshness"
-	"github.com/pavelpiliak/devrecall/internal/embedding"
-	"github.com/pavelpiliak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/agent"
+	agenttools "github.com/pavelpilyak/devrecall/internal/agent/tools"
+	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
+	"github.com/pavelpilyak/devrecall/internal/embedding"
+	"github.com/pavelpilyak/devrecall/internal/llm"
 )
 
 const chatStreamSystemPrompt = `You are DevRecall, a developer work-memory assistant. You answer questions about the user's work history by calling the read-only tools provided to you.

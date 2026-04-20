@@ -3,7 +3,7 @@ package collector
 import (
 	"context"
 
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // Collector defines the interface all source integrations must implement.

@@ -14,9 +14,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/internal/embedding"
-	"github.com/pavelpiliak/devrecall/internal/llm"
-	"github.com/pavelpiliak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/internal/embedding"
+	"github.com/pavelpilyak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/storage"
 )
 
 // Deps bundles the read-only dependencies tools need to execute. Embedder

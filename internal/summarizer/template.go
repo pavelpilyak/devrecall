@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // commitMeta mirrors the JSON metadata stored by the git collector.

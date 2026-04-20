@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	slackcollector "github.com/pavelpiliak/devrecall/internal/collector/slack"
-	"github.com/pavelpiliak/devrecall/internal/llm"
-	"github.com/pavelpiliak/devrecall/pkg/models"
+	slackcollector "github.com/pavelpilyak/devrecall/internal/collector/slack"
+	"github.com/pavelpilyak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
 // mockProvider is a test double for llm.Provider.
