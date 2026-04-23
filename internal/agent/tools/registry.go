@@ -3,8 +3,7 @@
 // semantic search, internal/embedding) — no network calls, no writes.
 //
 // The catalogue is intentionally small. New tools should only be added when
-// a real query cannot be answered with the existing set; see
-// docs/chat-agent-rewrite.md for the design rationale.
+// a real query cannot be answered with the existing set.
 package tools
 
 import (

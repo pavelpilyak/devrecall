@@ -95,9 +95,8 @@ type ChatConfig struct {
 	SyncFreshness SyncFreshnessConfig `json:"sync_freshness,omitempty"`
 }
 
-// SyncFreshnessConfig configures the pre-agent freshness sync step. See
-// docs/chat-agent-rewrite.md ("Sync freshness — pre-agent only"). Durations
-// are time.ParseDuration strings, e.g. "3h", "30m".
+// SyncFreshnessConfig configures the pre-agent freshness sync step.
+// Durations are time.ParseDuration strings, e.g. "3h", "30m".
 type SyncFreshnessConfig struct {
 	// Disabled turns the freshness step off entirely. The /sync slash
 	// command can still force a refresh.

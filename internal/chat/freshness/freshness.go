@@ -1,5 +1,4 @@
-// Package freshness implements the pre-agent sync step described in
-// docs/chat-agent-rewrite.md ("Sync freshness — pre-agent only").
+// Package freshness implements the pre-agent sync step.
 //
 // Before the chat agent loop runs, the caller asks a Checker to inspect
 // the per-source `sync_state.synced_at` timestamps and trigger a fast

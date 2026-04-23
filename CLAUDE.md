@@ -33,7 +33,6 @@ internal/
   summarizer/           LLM-powered summary generation (standup, weekly, brag, perf review)
 pkg/models/             Shared domain types (Activity, Identity, Summary)
 relay/                  Cloudflare Worker — OAuth callback relay (TypeScript)
-docs/                   Product documentation and specs
 ```
 
 ## Commands
@@ -71,9 +70,5 @@ Build tags: `fts5` enables SQLite FTS5 full-text search, `GO` enables hugot's pu
 ## Domain & Infrastructure
 
 - **Domain:** `devrecall.dev` (owned)
-- **Cloud relay:** `relay.devrecall.dev` — Cloudflare Worker, handles OAuth callbacks only. See `docs/cloud-relay.md`.
+- **Cloud relay:** `relay.devrecall.dev` — Cloudflare Worker, handles OAuth callbacks only.
 - **Slack OAuth app:** registered at api.slack.com, redirect URI `https://relay.devrecall.dev/oauth/slack/callback`
-
-## Roadmap
-
-See `docs/roadmap.md`. Current phase: **v0.4 — GitHub/GitLab/Bitbucket + Jira/Linear**.
