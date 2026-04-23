@@ -18,7 +18,6 @@ import (
 	"github.com/pavelpilyak/devrecall/internal/api"
 	"github.com/pavelpilyak/devrecall/internal/auth"
 	"github.com/pavelpilyak/devrecall/internal/daemon"
-	"github.com/pavelpilyak/devrecall/internal/backup"
 	"github.com/pavelpilyak/devrecall/internal/collector/git"
 	bbcollector "github.com/pavelpilyak/devrecall/internal/collector/bitbucket"
 	calcollector "github.com/pavelpilyak/devrecall/internal/collector/calendar"
@@ -32,7 +31,6 @@ import (
 	"github.com/pavelpilyak/devrecall/internal/chat"
 	"github.com/pavelpilyak/devrecall/internal/embedding"
 	"github.com/pavelpilyak/devrecall/internal/identity"
-	"github.com/pavelpilyak/devrecall/internal/license"
 	"github.com/pavelpilyak/devrecall/internal/update"
 	"github.com/pavelpilyak/devrecall/internal/llm"
 	"github.com/pavelpilyak/devrecall/internal/privacy"
@@ -65,15 +63,12 @@ func main() {
 		newSearchCmd(),
 		newLogCmd(),
 		newTimelineCmd(),
-		newBackupCmd(),
 		newPruneCmd(),
 		newConfigCmd(),
 		newAuthCmd(),
 		newIdentityCmd(),
 		newServeCmd(),
 		newDaemonCmd(),
-		newActivateCmd(),
-		newDeactivateCmd(),
 		newUpdateCmd(),
 	)
 
@@ -240,7 +235,6 @@ func runStandup(dateFlag string) error {
 		repos = mergeUnique(repos, git.DiscoverRepos(cfg.Git.ScanPaths))
 		fmt.Fprintf(os.Stderr, " found %d\n", len(repos))
 	}
-	repos, _ = capReposForPlan(dir, repos)
 	fmt.Fprintf(os.Stderr, "Detecting git emails...")
 	emails := mergeUnique(cfg.Git.Emails, git.DetectEmails(repos))
 	fmt.Fprintf(os.Stderr, " %d email(s)\n", len(emails))
@@ -262,7 +256,7 @@ func runStandup(dateFlag string) error {
 
 	// Sync Slack if configured.
 	var slackUserID string
-	if cfg.Slack.Enabled && cfg.Slack.TeamID != "" && requireFeature(dir, license.FeatureSlack, "Slack integration") {
+	if cfg.Slack.Enabled && cfg.Slack.TeamID != "" {
 		var token auth.SlackToken
 		if err := tokenStore.Load("slack", cfg.Slack.TeamID, &token); err != nil {
 			fmt.Fprintf(os.Stderr, "Slack: token not found: %v (run 'devrecall auth slack')\n", err)
@@ -296,7 +290,7 @@ func runStandup(dateFlag string) error {
 	}
 
 	// Sync Calendar if configured.
-	if cfg.Calendar.Enabled && cfg.Calendar.Email != "" && requireFeature(dir, license.FeatureCalendar, "Calendar integration") {
+	if cfg.Calendar.Enabled && cfg.Calendar.Email != "" {
 		gtoken, err := loadGoogleToken(tokenStore, cfg.Calendar.Email)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Calendar: %v\n", err)
@@ -321,7 +315,7 @@ func runStandup(dateFlag string) error {
 	}
 
 	// Sync GitHub if configured.
-	if cfg.GitHub.Enabled && cfg.GitHub.Username != "" && requireFeature(dir, license.FeatureGitHub, "GitHub integration") {
+	if cfg.GitHub.Enabled && cfg.GitHub.Username != "" {
 		var ghToken auth.GitHubToken
 		if err := tokenStore.Load("github", cfg.GitHub.Username, &ghToken); err != nil {
 			fmt.Fprintf(os.Stderr, "GitHub: token not found: %v (run 'devrecall auth github')\n", err)
@@ -341,7 +335,7 @@ func runStandup(dateFlag string) error {
 	}
 
 	// Sync GitLab if configured.
-	if cfg.GitLab.Enabled && cfg.GitLab.Username != "" && requireFeature(dir, license.FeatureGitLab, "GitLab integration") {
+	if cfg.GitLab.Enabled && cfg.GitLab.Username != "" {
 		var glToken auth.GitLabToken
 		if err := tokenStore.Load("gitlab", cfg.GitLab.Username, &glToken); err != nil {
 			fmt.Fprintf(os.Stderr, "GitLab: token not found: %v (run 'devrecall auth gitlab')\n", err)
@@ -361,7 +355,7 @@ func runStandup(dateFlag string) error {
 	}
 
 	// Sync Bitbucket if configured.
-	if cfg.Bitbucket.Enabled && cfg.Bitbucket.Username != "" && requireFeature(dir, license.FeatureBitbucket, "Bitbucket integration") {
+	if cfg.Bitbucket.Enabled && cfg.Bitbucket.Username != "" {
 		var bbToken auth.BitbucketToken
 		if err := tokenStore.Load("bitbucket", cfg.Bitbucket.Username, &bbToken); err != nil {
 			fmt.Fprintf(os.Stderr, "Bitbucket: token not found: %v (run 'devrecall auth bitbucket')\n", err)
@@ -381,7 +375,7 @@ func runStandup(dateFlag string) error {
 	}
 
 	// Sync Jira if configured.
-	if cfg.Jira.Enabled && cfg.Jira.Email != "" && requireFeature(dir, license.FeatureJira, "Jira integration") {
+	if cfg.Jira.Enabled && cfg.Jira.Email != "" {
 		var atlToken auth.AtlassianToken
 		if err := tokenStore.Load("jira", cfg.Jira.Email, &atlToken); err != nil {
 			fmt.Fprintf(os.Stderr, "Jira: token not found: %v (run 'devrecall auth jira')\n", err)
@@ -408,7 +402,7 @@ func runStandup(dateFlag string) error {
 	}
 
 	// Sync Linear if configured.
-	if cfg.Linear.Enabled && cfg.Linear.Email != "" && requireFeature(dir, license.FeatureLinear, "Linear integration") {
+	if cfg.Linear.Enabled && cfg.Linear.Email != "" {
 		var lt auth.LinearToken
 		if err := tokenStore.Load("linear", cfg.Linear.Email, &lt); err != nil {
 			fmt.Fprintf(os.Stderr, "Linear: token not found: %v (run 'devrecall auth linear')\n", err)
@@ -679,7 +673,6 @@ func runSync(ctx context.Context) error {
 			repos = mergeUnique(repos, git.DiscoverRepos(cfg.Git.ScanPaths))
 			fmt.Fprintf(os.Stderr, " found %d\n", len(repos))
 		}
-		repos, _ = capReposForPlan(dir, repos)
 		fmt.Fprintf(os.Stderr, "Detecting git emails...")
 		emails := mergeUnique(cfg.Git.Emails, git.DetectEmails(repos))
 		fmt.Fprintf(os.Stderr, " %d email(s)\n", len(emails))
@@ -708,7 +701,7 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync Slack.
-	if cfg.Slack.Enabled && cfg.Slack.TeamID != "" && requireFeature(dir, license.FeatureSlack, "Slack integration") {
+	if cfg.Slack.Enabled && cfg.Slack.TeamID != "" {
 		var token auth.SlackToken
 		if err := tokenStore.Load("slack", cfg.Slack.TeamID, &token); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting Slack messages...\n")
@@ -745,7 +738,7 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync Google Calendar.
-	if cfg.Calendar.Enabled && cfg.Calendar.Email != "" && requireFeature(dir, license.FeatureCalendar, "Calendar integration") {
+	if cfg.Calendar.Enabled && cfg.Calendar.Email != "" {
 		gtoken, gtokenErr := loadGoogleToken(tokenStore, cfg.Calendar.Email)
 		if gtokenErr == nil {
 			fmt.Fprintf(os.Stderr, "Collecting calendar events...\n")
@@ -804,7 +797,7 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync GitHub.
-	if cfg.GitHub.Enabled && cfg.GitHub.Username != "" && requireFeature(dir, license.FeatureGitHub, "GitHub integration") {
+	if cfg.GitHub.Enabled && cfg.GitHub.Username != "" {
 		var ghToken auth.GitHubToken
 		if err := tokenStore.Load("github", cfg.GitHub.Username, &ghToken); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting GitHub activity...\n")
@@ -831,7 +824,7 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync GitLab.
-	if cfg.GitLab.Enabled && cfg.GitLab.Username != "" && requireFeature(dir, license.FeatureGitLab, "GitLab integration") {
+	if cfg.GitLab.Enabled && cfg.GitLab.Username != "" {
 		var glToken auth.GitLabToken
 		if err := tokenStore.Load("gitlab", cfg.GitLab.Username, &glToken); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting GitLab activity...\n")
@@ -858,7 +851,7 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync Bitbucket.
-	if cfg.Bitbucket.Enabled && cfg.Bitbucket.Username != "" && requireFeature(dir, license.FeatureBitbucket, "Bitbucket integration") {
+	if cfg.Bitbucket.Enabled && cfg.Bitbucket.Username != "" {
 		var bbToken auth.BitbucketToken
 		if err := tokenStore.Load("bitbucket", cfg.Bitbucket.Username, &bbToken); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting Bitbucket activity...\n")
@@ -885,7 +878,7 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync Jira.
-	if cfg.Jira.Enabled && cfg.Jira.Email != "" && requireFeature(dir, license.FeatureJira, "Jira integration") {
+	if cfg.Jira.Enabled && cfg.Jira.Email != "" {
 		var atlToken auth.AtlassianToken
 		if err := tokenStore.Load("jira", cfg.Jira.Email, &atlToken); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting Jira activity...\n")
@@ -921,7 +914,7 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync Linear.
-	if cfg.Linear.Enabled && cfg.Linear.Email != "" && requireFeature(dir, license.FeatureLinear, "Linear integration") {
+	if cfg.Linear.Enabled && cfg.Linear.Email != "" {
 		var lt auth.LinearToken
 		if err := tokenStore.Load("linear", cfg.Linear.Email, &lt); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting Linear activity...\n")
@@ -948,7 +941,7 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync Confluence (reuses Atlassian/Jira auth).
-	if cfg.Confluence.Enabled && requireFeature(dir, license.FeatureJira, "Confluence integration") {
+	if cfg.Confluence.Enabled {
 		var atlToken auth.AtlassianToken
 		tokenKey := cfg.Jira.Email // reuse Jira token key
 		if tokenKey == "" {
@@ -998,17 +991,6 @@ func runSync(ctx context.Context) error {
 	// Quarterly auto-snapshot: check if any completed quarters lack a summary.
 	if err := runQuarterlyAutoSnapshot(ctx, db, cfg, tokenStore, dir); err != nil {
 		fmt.Fprintf(os.Stderr, "Quarterly snapshot warning: %v\n", err)
-	}
-
-	// Periodic license validation against relay server.
-	lic, _ := license.Load(dir)
-	if license.NeedsValidation(lic) {
-		fmt.Fprintf(os.Stderr, "Validating license...\n")
-		if err := license.ValidateRemote(dir); err != nil {
-			fmt.Fprintf(os.Stderr, "License validation warning: %v\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "License validated.\n")
-		}
 	}
 
 	return nil
@@ -1095,12 +1077,6 @@ func runQuarterlyAutoSnapshot(ctx context.Context, db *storage.DB, cfg *config.C
 	if generated > 0 {
 		fmt.Fprintf(os.Stderr, "Auto-snapshot: generated %d quarterly %s.\n",
 			generated, pluralize(generated, "summary", "summaries"))
-
-		// If backup is set up, push the quarterly summaries.
-		engine := backup.NewEngine(db, backup.NewClient(""), dir)
-		if engine.IsSetup() {
-			fmt.Fprintf(os.Stderr, "Quarterly snapshots will be included in the next 'devrecall backup now'.\n")
-		}
 	}
 
 	return nil
@@ -1245,9 +1221,6 @@ func runChat() error {
 	dir, err := config.Dir()
 	if err != nil {
 		return err
-	}
-	if !requireFeature(dir, license.FeatureChat, "RAG chat") {
-		return nil
 	}
 	tokenStore, err := auth.NewTokenStore(cfg.TokenStorage, dir)
 	if err != nil {
@@ -1430,9 +1403,6 @@ func runBrag(period string) error {
 	if err != nil {
 		return err
 	}
-	if !requireFeature(dir, license.FeatureBrag, "Brag document generation") {
-		return nil
-	}
 
 	after, before, err := parsePeriodArg(period)
 	if err != nil {
@@ -1517,9 +1487,6 @@ func runPerfReview(period string) error {
 	dir, err := config.Dir()
 	if err != nil {
 		return err
-	}
-	if !requireFeature(dir, license.FeatureBrag, "Performance review generation") {
-		return nil
 	}
 
 	after, before, err := parsePeriodArg(period)
@@ -1882,210 +1849,6 @@ func runTimeline(period, sourceFilter string) error {
 	}
 	fmt.Println()
 
-	return nil
-}
-
-func newBackupCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "backup",
-		Short: "Manage encrypted cloud backup of summaries",
-	}
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "setup",
-		Short: "Set up backup with a passphrase",
-		Long:  "Initialize encrypted backup. You'll set a passphrase used to derive the encryption key. Store it safely — it cannot be recovered.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBackupSetup()
-		},
-	})
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "now",
-		Short: "Push all summaries to the relay now",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBackupNow()
-		},
-	})
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "status",
-		Short: "Show backup status",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBackupStatus()
-		},
-	})
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "restore",
-		Short: "Restore summaries from backup",
-		Long:  "Pull all encrypted blobs from the relay, decrypt with your passphrase, and rebuild the summaries table.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBackupRestore()
-		},
-	})
-
-	return cmd
-}
-
-func backupEngine() (*backup.Engine, error) {
-	dir, err := config.Dir()
-	if err != nil {
-		return nil, err
-	}
-
-	db, err := storage.Open()
-	if err != nil {
-		return nil, err
-	}
-
-	// Create engine with a placeholder client first, then replace with device-ID-authed client.
-	engine := backup.NewEngine(db, backup.NewClient(""), dir)
-	if deviceID := engine.DeviceID(); deviceID != "" {
-		engine = backup.NewEngine(db, backup.NewClient(deviceID), dir)
-	}
-	return engine, nil
-}
-
-func readPassphrase(prompt string) (string, error) {
-	fmt.Print(prompt)
-	scanner := bufio.NewScanner(os.Stdin)
-	if !scanner.Scan() {
-		return "", fmt.Errorf("no input")
-	}
-	pass := strings.TrimSpace(scanner.Text())
-	if pass == "" {
-		return "", fmt.Errorf("passphrase cannot be empty")
-	}
-	return pass, nil
-}
-
-func runBackupSetup() error {
-	dir, err := config.Dir()
-	if err != nil {
-		return err
-	}
-	if !requireFeature(dir, license.FeatureBackup, "Cloud backup") {
-		return nil
-	}
-	engine, err := backupEngine()
-	if err != nil {
-		return err
-	}
-
-	if engine.IsSetup() {
-		fmt.Println("Backup is already set up.")
-		fmt.Print("Re-initialize with a new passphrase? This will NOT delete existing remote backups. (y/n): ")
-		scanner := bufio.NewScanner(os.Stdin)
-		if !scanner.Scan() || strings.ToLower(strings.TrimSpace(scanner.Text())) != "y" {
-			fmt.Println("Cancelled.")
-			return nil
-		}
-	}
-
-	pass, err := readPassphrase("Enter backup passphrase: ")
-	if err != nil {
-		return err
-	}
-	pass2, err := readPassphrase("Confirm passphrase: ")
-	if err != nil {
-		return err
-	}
-	if pass != pass2 {
-		return fmt.Errorf("passphrases do not match")
-	}
-
-	if err := engine.Setup(pass); err != nil {
-		return err
-	}
-
-	fmt.Println("Backup configured. Your summaries will be encrypted with this passphrase.")
-	fmt.Println("⚠ Store your passphrase safely — it cannot be recovered.")
-	return nil
-}
-
-func runBackupNow() error {
-	dir, err := config.Dir()
-	if err != nil {
-		return err
-	}
-	if !requireFeature(dir, license.FeatureBackup, "Cloud backup") {
-		return nil
-	}
-	engine, err := backupEngine()
-	if err != nil {
-		return err
-	}
-
-	pass, err := readPassphrase("Enter backup passphrase: ")
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintln(os.Stderr, "Encrypting and pushing summaries...")
-	pushed, err := engine.PushSummaries(pass)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Pushed %d %s.\n", pushed, pluralize(pushed, "summary", "summaries"))
-	return nil
-}
-
-func runBackupStatus() error {
-	engine, err := backupEngine()
-	if err != nil {
-		return err
-	}
-
-	status, err := engine.GetStatus()
-	if err != nil {
-		return err
-	}
-
-	if !status.Enabled {
-		fmt.Println("Backup is not set up. Run 'devrecall backup setup' to enable.")
-		return nil
-	}
-
-	fmt.Println("Backup: enabled")
-	fmt.Printf("Remote blobs: %d\n", status.BlobCount)
-	if len(status.Blobs) > 0 {
-		totalSize := 0
-		for _, b := range status.Blobs {
-			totalSize += b.Size
-		}
-		fmt.Printf("Total size: %s\n", formatBytes(totalSize))
-		fmt.Printf("Latest: %s (%s)\n", status.Blobs[0].Date, status.Blobs[0].Type)
-	}
-	return nil
-}
-
-func runBackupRestore() error {
-	dir, err := config.Dir()
-	if err != nil {
-		return err
-	}
-	if !requireFeature(dir, license.FeatureBackup, "Cloud backup") {
-		return nil
-	}
-	engine, err := backupEngine()
-	if err != nil {
-		return err
-	}
-
-	pass, err := readPassphrase("Enter backup passphrase: ")
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintln(os.Stderr, "Pulling and decrypting backups...")
-	restored, err := engine.PullAndRestore(pass)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Restored %d %s.\n", restored, pluralize(restored, "summary", "summaries"))
 	return nil
 }
 
@@ -3370,72 +3133,6 @@ func newDaemonCmd() *cobra.Command {
 
 	cmd.AddCommand(installCmd, uninstallCmd, statusCmd)
 	return cmd
-}
-
-// requireFeature checks whether the current license includes the named feature.
-// If not, it prints a non-blocking upgrade notice and returns false.
-// The caller should degrade gracefully, never block the user entirely.
-func requireFeature(dir string, feature license.Feature, displayName string) bool {
-	if license.HasFeature(dir, feature) {
-		return true
-	}
-	fmt.Fprintf(os.Stderr, "%s requires Pro plan ($99 one-time).\n", displayName)
-	fmt.Fprintf(os.Stderr, "Activate: devrecall.dev/pricing | Already have a key? devrecall activate <key>\n")
-	return false
-}
-
-// capReposForPlan limits repos to FreeRepoLimit on the free plan.
-// Returns the (possibly truncated) list and whether it was capped.
-func capReposForPlan(dir string, repos []string) ([]string, bool) {
-	if license.HasFeature(dir, license.FeatureSlack) { // any pro feature means paid plan
-		return repos, false
-	}
-	if len(repos) <= license.FreeRepoLimit {
-		return repos, false
-	}
-	fmt.Fprintf(os.Stderr, "Free plan limited to %d repos (found %d). Upgrade to Pro for unlimited.\n", license.FreeRepoLimit, len(repos))
-	fmt.Fprintf(os.Stderr, "Activate: devrecall.dev/pricing | Already have a key? devrecall activate <key>\n")
-	return repos[:license.FreeRepoLimit], true
-}
-
-func newActivateCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "activate <license-key>",
-		Short: "Activate a Pro or Team license",
-		Long:  "Activate a license key to unlock Pro or Team features.\nFormat: DR-PRO-XXXX-XXXX-XXXX or DR-TEAM-XXXX-XXXX-XXXX",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			dir, err := config.Dir()
-			if err != nil {
-				return err
-			}
-			lic, err := license.Activate(dir, args[0])
-			if err != nil {
-				return err
-			}
-			plan := string(lic.Plan)
-			fmt.Printf("%s plan activated (1 device).\n", strings.ToUpper(plan[:1])+plan[1:])
-			return nil
-		},
-	}
-}
-
-func newDeactivateCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "deactivate",
-		Short: "Remove the current license, reverting to free plan",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			dir, err := config.Dir()
-			if err != nil {
-				return err
-			}
-			if err := license.Deactivate(dir); err != nil {
-				return err
-			}
-			fmt.Println("License removed. Reverted to free plan.")
-			return nil
-		},
-	}
 }
 
 func newUpdateCmd() *cobra.Command {

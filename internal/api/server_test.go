@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/pavelpilyak/devrecall/internal/config"
-	"github.com/pavelpilyak/devrecall/internal/license"
 	"github.com/pavelpilyak/devrecall/internal/storage"
 	"github.com/pavelpilyak/devrecall/pkg/models"
 )
@@ -39,12 +38,6 @@ func setupTestServer(t *testing.T) (*Server, *storage.DB) {
 
 	srv := NewServer(0, db, cfg, &mockTokenStore{})
 	srv.dataDir = t.TempDir()
-	// Activate a pro license with a signed JWT so endpoints aren't blocked by licenseMiddleware.
-	signingKey, err := license.ParseTestKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	license.ActivateOffline(srv.dataDir, "DR-PRO-AAAA-BBBB-CCCC", signingKey)
 	return srv, db
 }
 
@@ -429,103 +422,6 @@ func TestNewServer_CustomPort(t *testing.T) {
 	}
 }
 
-func TestHandleStatus_IncludesLicense(t *testing.T) {
-	// Use a fresh server without a license to verify the default is "free".
-	db, err := storage.OpenPath(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	srv := NewServer(0, db, &config.Config{}, &mockTokenStore{})
-	srv.dataDir = t.TempDir() // no license file → free plan
-
-	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, newRequest("GET", "/api/status", nil))
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
-
-	lic, ok := resp["license"].(map[string]any)
-	if !ok {
-		t.Fatal("expected license object in status response")
-	}
-	if lic["plan"] != "free" {
-		t.Errorf("expected free plan in default status, got %v", lic["plan"])
-	}
-}
-
-func TestHandleActivate(t *testing.T) {
-	// Mock relay that accepts any well-formed key.
-	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":         "activated",
-			"plan":           "pro",
-			"signed_license": "test-jwt",
-		})
-	}))
-	defer relay.Close()
-
-	srv, _ := setupTestServer(t)
-	srv.relayURL = relay.URL
-
-	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
-
-	t.Run("valid key", func(t *testing.T) {
-		body := map[string]string{"key": "DR-PRO-A1B2-C3D4-E5F6"}
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, newRequest("POST", "/api/activate", body))
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
-		if resp["message"] != "pro plan activated" {
-			t.Errorf("expected 'pro plan activated', got %v", resp["message"])
-		}
-	})
-
-	t.Run("invalid key format", func(t *testing.T) {
-		body := map[string]string{"key": "INVALID-KEY"}
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, newRequest("POST", "/api/activate", body))
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", w.Code)
-		}
-	})
-
-	t.Run("empty key", func(t *testing.T) {
-		body := map[string]string{"key": ""}
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, newRequest("POST", "/api/activate", body))
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", w.Code)
-		}
-	})
-
-	t.Run("invalid JSON", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/activate", bytes.NewReader([]byte("not json")))
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", w.Code)
-		}
-	})
-}
-
 func TestHandleLog(t *testing.T) {
 	srv, db := setupTestServer(t)
 	mux := http.NewServeMux()
@@ -615,58 +511,3 @@ func TestHandleLog(t *testing.T) {
 	})
 }
 
-func TestLicenseMiddleware_FreePlanBlocked(t *testing.T) {
-	db, err := storage.OpenPath(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	srv := NewServer(0, db, &config.Config{}, &mockTokenStore{})
-	srv.dataDir = t.TempDir() // no license → free plan
-
-	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
-	handler := srv.licenseMiddleware(mux)
-
-	// Gated endpoints should return 402.
-	for _, path := range []string{"/api/chat", "/api/standup", "/api/week", "/api/search", "/api/activities", "/api/sync", "/api/log"} {
-		method := "GET"
-		if path == "/api/chat" || path == "/api/sync" || path == "/api/log" {
-			method = "POST"
-		}
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, httptest.NewRequest(method, path, nil))
-		if w.Code != http.StatusPaymentRequired {
-			t.Errorf("%s %s: expected 402, got %d", method, path, w.Code)
-		}
-		var resp map[string]any
-		json.NewDecoder(w.Body).Decode(&resp)
-		if resp["error"] != "license_required" {
-			t.Errorf("%s %s: expected license_required error, got %v", method, path, resp["error"])
-		}
-	}
-
-	// Exempt endpoints should pass through.
-	for _, path := range []string{"/api/status"} {
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-		if w.Code == http.StatusPaymentRequired {
-			t.Errorf("GET %s should not be blocked on free plan", path)
-		}
-	}
-}
-
-func TestLicenseMiddleware_ProPlanAllowed(t *testing.T) {
-	srv, _ := setupTestServer(t) // has pro license
-
-	mux := http.NewServeMux()
-	srv.registerRoutes(mux)
-	handler := srv.licenseMiddleware(mux)
-
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/standup", nil))
-	if w.Code == http.StatusPaymentRequired {
-		t.Error("pro plan should not be blocked")
-	}
-}

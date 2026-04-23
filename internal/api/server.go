@@ -16,7 +16,6 @@ import (
 	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
 	"github.com/pavelpilyak/devrecall/internal/collector/git"
 	"github.com/pavelpilyak/devrecall/internal/config"
-	"github.com/pavelpilyak/devrecall/internal/license"
 	"github.com/pavelpilyak/devrecall/internal/llm"
 	"github.com/pavelpilyak/devrecall/internal/privacy"
 	"github.com/pavelpilyak/devrecall/internal/storage"
@@ -44,9 +43,6 @@ type Server struct {
 	// chat-stream handler. Tests inject deterministic syncers through
 	// this hook; in production it's BuildFreshnessChecker / BuildFreshnessSyncers.
 	freshnessFactory func() (*freshness.Checker, map[string]freshness.Syncer)
-
-	// relayURL overrides the license relay URL. Empty means use the default.
-	relayURL string
 }
 
 // NewServer creates a local API server on the given port (0 = default 9147).
@@ -69,7 +65,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.srv = &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", s.port),
-		Handler: corsMiddleware(s.licenseMiddleware(mux)),
+		Handler: corsMiddleware(mux),
 	}
 
 	go func() {
@@ -97,7 +93,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
 	mux.HandleFunc("POST /api/sync", s.handleSync)
-	mux.HandleFunc("POST /api/activate", s.handleActivate)
 	mux.HandleFunc("POST /api/llm/config", s.handleLLMConfig)
 	mux.HandleFunc("POST /api/llm/key", s.handleLLMKey)
 	mux.HandleFunc("POST /api/llm/test", s.handleLLMTest)
@@ -151,12 +146,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		result = append(result, ss)
 	}
 
-	licInfo := s.getLicenseInfo()
-
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
 		"sources": result,
-		"license": licInfo,
 		"llm": map[string]any{
 			"provider": s.cfg.LLM.Provider,
 			"model":    s.cfg.LLM.Model,
@@ -700,39 +692,6 @@ func parseLogTimestamp(s string, loc *time.Location) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("invalid timestamp %q (use YYYY-MM-DD or YYYY-MM-DD HH:MM)", s)
 }
 
-func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Key string `json:"key"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	if req.Key == "" {
-		writeError(w, http.StatusBadRequest, "missing required field: key")
-		return
-	}
-
-	dir := s.configDir()
-
-	var lic *license.License
-	var err error
-	if s.relayURL != "" {
-		lic, err = license.ActivateWithURL(dir, req.Key, s.relayURL)
-	} else {
-		lic, err = license.Activate(dir, req.Key)
-	}
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"message": fmt.Sprintf("%s plan activated", lic.Plan),
-		"license": license.GetInfo(dir),
-	})
-}
-
 func (s *Server) handleLLMConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Provider string `json:"provider"`
@@ -831,11 +790,6 @@ func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) getLicenseInfo() license.Info {
-	dir := s.configDir()
-	return license.GetInfo(dir)
-}
-
 func (s *Server) configDir() string {
 	if s.dataDir != "" {
 		return s.dataDir
@@ -855,37 +809,6 @@ func (s *Server) promptLoader() *summarizer.PromptLoader {
 		return summarizer.NewPromptLoader("")
 	}
 	return summarizer.NewPromptLoader(dir + "/prompts")
-}
-
-// licenseMiddleware gates the desktop app behind a paid license. Endpoints
-// needed for activation and status are always allowed so the user can still
-// purchase and activate from within the app. Everything else returns 402
-// Payment Required with a JSON message on the free plan.
-func (s *Server) licenseMiddleware(next http.Handler) http.Handler {
-	// Paths that must work without a license so the user can activate.
-	exempt := map[string]bool{
-		"/api/status":     true,
-		"/api/activate":   true,
-		"/api/llm/config": true,
-		"/api/llm/key":    true,
-		"/api/llm/test":   true,
-		"/health":         true,
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if exempt[r.URL.Path] {
-			next.ServeHTTP(w, r)
-			return
-		}
-		info := s.getLicenseInfo()
-		if license.Plan(info.Plan) == license.PlanFree {
-			writeJSON(w, http.StatusPaymentRequired, map[string]any{
-				"error":   "license_required",
-				"message": "The desktop app requires a Pro or Team license. Run `devrecall activate <key>` or purchase at https://devrecall.dev.",
-			})
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // corsMiddleware adds CORS headers for local development (Tauri dev server on localhost:5173).

@@ -5,8 +5,6 @@ import { Env } from "../src/types";
 function mockEnv(): Env {
   return {
     OAUTH_SESSIONS: {} as any,
-    BACKUP_STORE: {} as any,
-    LICENSE_DB: {} as any,
     SLACK_CLIENT_ID: "slack-id",
     SLACK_CLIENT_SECRET: "slack-secret",
     GOOGLE_CLIENT_ID: "google-client-id",
@@ -17,8 +15,6 @@ function mockEnv(): Env {
     ATLASSIAN_CLIENT_SECRET: "atlassian-secret",
     LINEAR_CLIENT_ID: "linear-id",
     LINEAR_CLIENT_SECRET: "linear-secret",
-    LICENSE_SIGNING_KEY: "",
-    LEMON_SQUEEZY_WEBHOOK_SECRET: "",
     LATEST_VERSION: "",
     MIN_REQUIRED_VERSION: "",
     UPDATE_MESSAGE: "",
