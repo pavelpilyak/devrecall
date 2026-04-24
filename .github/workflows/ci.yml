@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  GO_VERSION: "1.23"
+  NODE_VERSION: "22"
+
+jobs:
+  test-go:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run Go tests
+        run: make test
+
+  test-rust:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install frontend deps
+        working-directory: desktop
+        run: pnpm install
+
+      - name: Build frontend (needed for Tauri)
+        working-directory: desktop
+        run: pnpm build
+
+      - name: Run Rust tests
+        working-directory: desktop/src-tauri
+        run: cargo test
+
+  test-frontend:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install deps and test
+        working-directory: desktop
+        run: |
+          pnpm install
+          pnpm test
