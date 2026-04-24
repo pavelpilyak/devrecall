@@ -37,3 +37,7 @@ Thumbs.db
 .env.local
 *.pem
 *.key
+
+# Cloudflare Workers / miniflare state
+.wrangler/
+.dev.vars
