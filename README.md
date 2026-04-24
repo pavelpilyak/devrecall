@@ -32,9 +32,12 @@ Requires Go 1.22+ with CGO enabled (for SQLite FTS5).
 ### Homebrew (macOS, once released)
 
 ```bash
-brew tap pavelpilyak/devrecall https://github.com/pavelpilyak/devrecall
-brew install devrecall
+brew tap pavelpilyak/devrecall
+brew install devrecall-cli           # CLI only
+brew install --cask devrecall        # Desktop app
 ```
+
+Tap repo: [pavelpilyak/homebrew-devrecall](https://github.com/pavelpilyak/homebrew-devrecall)
 
 ### Linux .deb (once released)
 

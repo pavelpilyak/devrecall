@@ -239,22 +239,6 @@ jobs:
           find . -type f \( -name "*.tar.gz" -o -name "*.dmg" -o -name "*.deb" \) -exec sha256sum {} \; > checksums.sha256
           cat checksums.sha256
 
-      - name: Update Homebrew formula with release checksums
-        run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          sha_darwin_arm=$(sha256sum artifacts/devrecall-darwin-aarch64/devrecall-darwin-aarch64.tar.gz | awk '{print $1}')
-          sha_darwin_x86=$(sha256sum artifacts/devrecall-darwin-x86_64/devrecall-darwin-x86_64.tar.gz | awk '{print $1}')
-          sha_linux_arm=$(sha256sum artifacts/devrecall-linux-aarch64/devrecall-linux-aarch64.tar.gz | awk '{print $1}')
-          sha_linux_x86=$(sha256sum artifacts/devrecall-linux-x86_64/devrecall-linux-x86_64.tar.gz | awk '{print $1}')
-          sed -i \
-            -e "s/^  version \".*\"/  version \"${VERSION}\"/" \
-            -e "s/PLACEHOLDER_DARWIN_AARCH64_SHA256/${sha_darwin_arm}/" \
-            -e "s/PLACEHOLDER_DARWIN_X86_64_SHA256/${sha_darwin_x86}/" \
-            -e "s/PLACEHOLDER_LINUX_AARCH64_SHA256/${sha_linux_arm}/" \
-            -e "s/PLACEHOLDER_LINUX_X86_64_SHA256/${sha_linux_x86}/" \
-            Formula/devrecall-cli.rb
-          cp Formula/devrecall-cli.rb artifacts/devrecall-cli.rb
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -264,4 +248,3 @@ jobs:
             artifacts/**/*.dmg
             artifacts/**/*.deb
             artifacts/checksums.sha256
-            artifacts/devrecall-cli.rb
