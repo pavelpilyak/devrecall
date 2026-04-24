@@ -235,38 +235,6 @@ describe("api.chatStream", () => {
   });
 });
 
-describe("api.activate", () => {
-  it("sends POST with license key", async () => {
-    const licenseData = {
-      plan: "pro",
-      features: ["chat", "slack"],
-      devices_used: 1,
-      devices_allowed: 1,
-    };
-    mockFetch.mockResolvedValue(
-      mockJsonResponse({ message: "pro plan activated", license: licenseData })
-    );
-
-    const result = await api.activate("DR-PRO-A1B2-C3D4-E5F6");
-
-    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:9147/api/activate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: "DR-PRO-A1B2-C3D4-E5F6" }),
-    });
-    expect(result.message).toBe("pro plan activated");
-    expect(result.license.plan).toBe("pro");
-  });
-
-  it("throws on invalid key", async () => {
-    mockFetch.mockResolvedValue(
-      mockJsonResponse({ error: "invalid license key format" }, 400)
-    );
-
-    await expect(api.activate("INVALID")).rejects.toThrow("invalid license key format");
-  });
-});
-
 describe("api.sync", () => {
   it("sends POST to /api/sync", async () => {
     mockFetch.mockResolvedValue(

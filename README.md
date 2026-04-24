@@ -16,17 +16,8 @@ and perf-review material on demand. All data stays on your machine.
 
 ## Install
 
-### Homebrew (macOS)
-
-```bash
-brew tap pavelpilyak/devrecall
-brew install devrecall
-```
-
-### Linux (.deb)
-
-Download the latest `.deb` from [Releases](https://github.com/pavelpilyak/devrecall/releases)
-and install with `dpkg -i devrecall_*.deb`.
+Prebuilt binaries (Homebrew, `.deb`) ship with the first tagged release.
+Until then, build from source.
 
 ### From source
 
@@ -37,6 +28,18 @@ make build          # bin/devrecall
 ```
 
 Requires Go 1.22+ with CGO enabled (for SQLite FTS5).
+
+### Homebrew (macOS, once released)
+
+```bash
+brew tap pavelpilyak/devrecall https://github.com/pavelpilyak/devrecall
+brew install devrecall
+```
+
+### Linux .deb (once released)
+
+Download the latest `.deb` from [Releases](https://github.com/pavelpilyak/devrecall/releases)
+and install with `dpkg -i devrecall_*.deb`.
 
 ## Quickstart
 

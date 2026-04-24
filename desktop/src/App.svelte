@@ -2,8 +2,6 @@
   import { onMount } from "svelte";
   import { api } from "./lib/api";
   import { connected, checkConnection, serverError, lastSyncAt, apiStatus } from "./lib/stores";
-  import { isPro } from "./lib/license";
-  import AppPaywall from "./components/AppPaywall.svelte";
   import Titlebar from "./components/Titlebar.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import CommandPalette from "./components/CommandPalette.svelte";
@@ -241,8 +239,6 @@
         {/if}
       </div>
     </div>
-  {:else if !$isPro}
-    <AppPaywall />
   {:else}
     <div class="window-body">
       <Sidebar

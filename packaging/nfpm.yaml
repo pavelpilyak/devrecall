@@ -12,7 +12,7 @@ description: |
   Jira, and Linear. All data stays local.
 vendor: DevRecall
 homepage: https://devrecall.dev
-license: Proprietary
+license: MIT
 
 contents:
   - src: ./bin/devrecall-linux-${NFPM_ARCH}
@@ -27,7 +27,7 @@ contents:
 
 deb:
   fields:
-    Bugs: https://github.com/pavelpiliak/devrecall/issues
+    Bugs: https://github.com/pavelpilyak/devrecall/issues
   compression: xz
 
 overrides:

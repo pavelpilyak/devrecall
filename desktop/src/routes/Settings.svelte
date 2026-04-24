@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type SourceStatus } from "../lib/api";
-  import { licenseInfo } from "../lib/license";
   import { apiStatus, checkConnection, lastSyncAt } from "../lib/stores";
   import PanelHeader from "../components/ui/PanelHeader.svelte";
   import SettingsSection from "../components/ui/SettingsSection.svelte";
@@ -16,11 +15,6 @@
   let loading = $state(true);
   let syncing = $state(false);
   let error = $state("");
-
-  let licenseKey = $state("");
-  let activating = $state(false);
-  let activateError = $state("");
-  let activateSuccess = $state("");
 
   let lastSyncTime = $state<string | null>(null);
 
@@ -165,23 +159,6 @@
     return `${Math.floor(hours / 24)}d ago`;
   }
 
-  async function handleActivateLicense() {
-    if (!licenseKey.trim()) return;
-    activating = true;
-    activateError = "";
-    activateSuccess = "";
-    try {
-      const result = await api.activate(licenseKey.trim());
-      activateSuccess = result.message;
-      licenseKey = "";
-      await checkConnection();
-    } catch (e) {
-      activateError = e instanceof Error ? e.message : "Activation failed";
-    } finally {
-      activating = false;
-    }
-  }
-
   async function checkForUpdate() {
     checkingUpdate = true;
     updateError = "";
@@ -207,10 +184,6 @@
       updateError = e instanceof Error ? e.message : "Update failed";
       updating = false;
     }
-  }
-
-  function openPricing() {
-    window.open("https://devrecall.dev/pricing", "_blank");
   }
 
   onMount(() => {
@@ -340,41 +313,6 @@
         {/snippet}
       </SettingsSection>
 
-      <SettingsSection title="License">
-        {#snippet children()}
-          <SettingsRow
-            titleText="Plan"
-            meta={$licenseInfo.activated_at
-              ? `activated ${new Date($licenseInfo.activated_at).toLocaleDateString()}`
-              : "free tier · CLI only"}
-          >
-            {#snippet right()}
-              <Chip variant={$licenseInfo.plan === "free" ? "default" : "accent"}>
-                {#snippet children()}<span style="text-transform: capitalize">{$licenseInfo.plan}</span>{/snippet}
-              </Chip>
-            {/snippet}
-          </SettingsRow>
-          {#if $licenseInfo.plan === "free"}
-            <div class="activate">
-              <input
-                type="text"
-                bind:value={licenseKey}
-                placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
-                onkeydown={(e: KeyboardEvent) => { if (e.key === "Enter") handleActivateLicense(); }}
-              />
-              <Btn size="sm" variant="primary" disabled={activating || !licenseKey.trim()} onclick={handleActivateLicense}>
-                {#snippet children()}<span>{activating ? "Activating…" : "Activate"}</span>{/snippet}
-              </Btn>
-              <Btn size="sm" variant="ghost" onclick={openPricing}>
-                {#snippet children()}<span>Get a key</span>{/snippet}
-              </Btn>
-            </div>
-            {#if activateError}<div class="error-inline">{activateError}</div>{/if}
-            {#if activateSuccess}<div class="ok-inline">{activateSuccess}</div>{/if}
-          {/if}
-        {/snippet}
-      </SettingsSection>
-
       <SettingsSection title="About">
         {#snippet children()}
           <SettingsRow titleText="DevRecall Desktop" meta="v0.1.0 · Tauri 2">
@@ -431,40 +369,10 @@
     font-size: 11px;
     color: var(--danger);
   }
-  .ok-inline {
-    margin: 10px 16px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--ok);
-  }
   .ok-label {
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-3);
-  }
-
-  .activate {
-    display: flex;
-    gap: 8px;
-    padding: 12px 16px;
-    border-top: 1px solid var(--hairline);
-    align-items: center;
-  }
-  .activate input {
-    flex: 1;
-    height: 30px;
-    padding: 0 10px;
-    border-radius: var(--r-2);
-    border: 1px solid var(--border-strong);
-    background: var(--ink-3);
-    color: var(--fg-1);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    outline: none;
-  }
-  .activate input:focus {
-    border-color: var(--accent-line);
-    box-shadow: 0 0 0 3px var(--accent-wash);
   }
 
   .select, .text {

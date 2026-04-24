@@ -65,7 +65,7 @@ Build tags: `fts5` enables SQLite FTS5 full-text search, `GO` enables hugot's pu
 - **LLM strategy:** Local Ollama for fast tasks, BYOK for quality tasks. Fallback chain: primary → secondary → local → template.
 - **Config location:** `~/.devrecall/config.json` for settings, `~/.devrecall/devrecall.db` for data.
 - **Server port:** Default 9147 ("DRCL" on phone keypad). Override via `server.port` in config.json or `--port` flag on `devrecall serve`.
-- **OAuth tokens:** Stored in `~/.devrecall/tokens/` (0600 permissions). OS keychain backend planned.
+- **OAuth tokens:** Stored in `~/.devrecall/tokens/` (0600 permissions).
 
 ## Domain & Infrastructure
 
