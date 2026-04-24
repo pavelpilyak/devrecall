@@ -3028,12 +3028,12 @@ func newServeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the local HTTP API server",
-		Long:  "Starts a localhost-only HTTP API for desktop app and integrations. Port defaults to 9147 but can be overridden via --port flag or server.port in config.json.",
+		Long:  "Starts a localhost-only HTTP API for desktop app and integrations. Port defaults to 3725 but can be overridden via --port flag or server.port in config.json.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runServe(portFlag)
 		},
 	}
-	cmd.Flags().IntVar(&portFlag, "port", 0, "Port to listen on (default: 9147)")
+	cmd.Flags().IntVar(&portFlag, "port", 0, "Port to listen on (default: 3725)")
 	return cmd
 }
 

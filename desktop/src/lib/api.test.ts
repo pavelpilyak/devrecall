@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock @tauri-apps/api/core before importing api.
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn().mockResolvedValue("http://127.0.0.1:9147"),
+  invoke: vi.fn().mockResolvedValue("http://127.0.0.1:3725"),
 }));
 
 // Mock fetch globally before importing api.
@@ -30,7 +30,7 @@ describe("api.status", () => {
 
     const result = await api.status();
 
-    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:9147/api/status");
+    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:3725/api/status");
     expect(result.status).toBe("ok");
   });
 
@@ -49,7 +49,7 @@ describe("api.standup", () => {
 
     await api.standup();
 
-    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:9147/api/standup");
+    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:3725/api/standup");
   });
 
   it("passes date param when provided", async () => {
@@ -60,7 +60,7 @@ describe("api.standup", () => {
     await api.standup("2026-03-01");
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "http://127.0.0.1:9147/api/standup?date=2026-03-01"
+      "http://127.0.0.1:3725/api/standup?date=2026-03-01"
     );
   });
 });
@@ -73,7 +73,7 @@ describe("api.week", () => {
 
     await api.week();
 
-    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:9147/api/week");
+    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:3725/api/week");
   });
 
   it("passes weeks_back param", async () => {
@@ -84,7 +84,7 @@ describe("api.week", () => {
     await api.week(1);
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "http://127.0.0.1:9147/api/week?weeks_back=1"
+      "http://127.0.0.1:3725/api/week?weeks_back=1"
     );
   });
 });
@@ -97,7 +97,7 @@ describe("api.activities", () => {
 
     await api.activities();
 
-    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:9147/api/activities");
+    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:3725/api/activities");
   });
 
   it("builds query string from filters", async () => {
@@ -146,7 +146,7 @@ describe("api.chat", () => {
     const history = [{ role: "user", content: "hi" }];
     const result = await api.chat("what did I do?", history);
 
-    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:9147/api/chat", {
+    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:3725/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "what did I do?", history }),
@@ -243,7 +243,7 @@ describe("api.sync", () => {
 
     const result = await api.sync();
 
-    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:9147/api/sync", {
+    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:3725/api/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: undefined,
@@ -260,7 +260,7 @@ describe("api.log", () => {
 
     const result = await api.log({ text: "Talked to mobile team" });
 
-    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:9147/api/log", {
+    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:3725/api/log", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: "Talked to mobile team" }),
@@ -282,7 +282,7 @@ describe("api.log", () => {
     });
 
     const call = mockFetch.mock.calls[0];
-    expect(call[0]).toBe("http://127.0.0.1:9147/api/log");
+    expect(call[0]).toBe("http://127.0.0.1:3725/api/log");
     const body = JSON.parse(call[1].body);
     expect(body).toEqual({
       text: "Decision call",

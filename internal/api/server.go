@@ -23,7 +23,7 @@ import (
 	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
-const defaultPort = 9147 // "DRCL" on phone keypad
+const defaultPort = 3725 // "DRCL" on phone keypad
 
 // Server is the localhost-only HTTP API for desktop app and integrations.
 type Server struct {
@@ -45,7 +45,7 @@ type Server struct {
 	freshnessFactory func() (*freshness.Checker, map[string]freshness.Syncer)
 }
 
-// NewServer creates a local API server on the given port (0 = default 9147).
+// NewServer creates a local API server on the given port (0 = default 3725).
 func NewServer(port int, db *storage.DB, cfg *config.Config, tokenStore auth.TokenStore) *Server {
 	if port == 0 {
 		port = defaultPort

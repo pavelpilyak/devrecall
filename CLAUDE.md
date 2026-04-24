@@ -15,7 +15,7 @@ On-device developer activity aggregator — generates AI-powered standups, perf 
 ```
 cmd/devrecall/          CLI entrypoint
 internal/
-  api/                  Local HTTP API (localhost:9147) for desktop app + integrations
+  api/                  Local HTTP API (localhost:3725) for desktop app + integrations
   auth/                 OAuth flows + token storage (keychain/file-based)
   chat/                 Interactive chat REPL with conversation memory
   collector/            Source integrations (git, slack, calendar, jira, linear)
@@ -64,7 +64,7 @@ Build tags: `fts5` enables SQLite FTS5 full-text search, `GO` enables hugot's pu
 - **Identity resolution:** Email is the primary key for merging identities across Git, Slack, Calendar, Jira, Linear.
 - **LLM strategy:** Local Ollama for fast tasks, BYOK for quality tasks. Fallback chain: primary → secondary → local → template.
 - **Config location:** `~/.devrecall/config.json` for settings, `~/.devrecall/devrecall.db` for data.
-- **Server port:** Default 9147 ("DRCL" on phone keypad). Override via `server.port` in config.json or `--port` flag on `devrecall serve`.
+- **Server port:** Default 3725 ("DRCL" on phone keypad). Override via `server.port` in config.json or `--port` flag on `devrecall serve`.
 - **OAuth tokens:** Stored in `~/.devrecall/tokens/` (0600 permissions).
 
 ## Domain & Infrastructure

@@ -1,6 +1,6 @@
 /**
  * HTTP client for the DevRecall local API.
- * Port defaults to 9147 but can be overridden via server.port in config.json.
+ * Port defaults to 3725 but can be overridden via server.port in config.json.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -12,7 +12,7 @@ async function baseUrl(): Promise<string> {
   try {
     _baseUrl = await invoke<string>("api_url");
   } catch {
-    _baseUrl = "http://127.0.0.1:9147";
+    _baseUrl = "http://127.0.0.1:3725";
   }
   return _baseUrl;
 }

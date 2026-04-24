@@ -410,8 +410,8 @@ func TestMethodNotAllowed(t *testing.T) {
 
 func TestNewServer_DefaultPort(t *testing.T) {
 	srv := NewServer(0, nil, &config.Config{}, &mockTokenStore{})
-	if srv.Port() != 9147 {
-		t.Errorf("expected default port 9147, got %d", srv.Port())
+	if srv.Port() != 3725 {
+		t.Errorf("expected default port 3725, got %d", srv.Port())
 	}
 }
 

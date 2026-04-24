@@ -24,7 +24,7 @@ In scope:
 - The CLI (`cmd/devrecall`) and all packages under `internal/` and `pkg/`
 - The desktop app (`desktop/`)
 - The Cloudflare Worker relay (`relay/`)
-- OAuth token storage, local API (`localhost:9147`), and the embedded SQLite DB
+- OAuth token storage, local API (`localhost:3725`), and the embedded SQLite DB
 
 Out of scope:
 - Third-party dependencies (report those to their maintainers)

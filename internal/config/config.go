@@ -86,7 +86,7 @@ type Config struct {
 
 // ServerConfig controls the local HTTP API server.
 type ServerConfig struct {
-	// Port is the TCP port to listen on. 0 or omitted means 9147 (default).
+	// Port is the TCP port to listen on. 0 or omitted means 3725 (default).
 	Port int `json:"port,omitempty"`
 }
 

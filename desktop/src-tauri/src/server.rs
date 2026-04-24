@@ -9,7 +9,7 @@ use tauri::Emitter;
 
 use crate::ApiStatus;
 
-pub const DEFAULT_API_PORT: u16 = 9147;
+pub const DEFAULT_API_PORT: u16 = 3725;
 
 /// Read the configured port from `~/.devrecall/config.json` (`server.port`),
 /// falling back to `DEFAULT_API_PORT` if the file is missing, unparseable,
@@ -172,8 +172,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_api_port_is_9147() {
-        assert_eq!(DEFAULT_API_PORT, 9147);
+    fn default_api_port_is_3725() {
+        assert_eq!(DEFAULT_API_PORT, 3725);
     }
 
     #[test]
