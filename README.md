@@ -32,7 +32,7 @@ you worked on.
 
 ## Install
 
-Homebrew and `.deb` packages ship with the first tagged release. Until then:
+Homebrew ships with the first tagged release. Until then:
 
 ```bash
 git clone https://github.com/pavelpilyak/devrecall.git
