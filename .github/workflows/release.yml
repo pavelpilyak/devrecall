@@ -210,17 +210,16 @@ jobs:
         working-directory: desktop
         run: pnpm install
 
+      # Unsigned DMG. tauri.conf.json sets signingIdentity: null, so Apple
+      # codesign vars are unused. The Tauri update keypair is optional —
+      # the build succeeds without it; the auto-updater just won't validate
+      # signatures at runtime. Add TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] as
+      # repo secrets later to enable signed updates.
       - name: Build Tauri app
         working-directory: desktop
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm tauri build --target ${{ matrix.target }}
 
       - name: Upload DMG
