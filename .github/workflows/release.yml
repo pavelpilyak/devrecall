@@ -203,11 +203,20 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --target ${{ matrix.target }}
 
+      # Tauri produces DevRecall_<version>_<arch>.dmg with arch="aarch64" or "x64".
+      # Rename to DevRecall-<arch>.dmg with arch="aarch64" or "x86_64" so the
+      # cask URL never has to track Tauri's naming convention or the version.
+      - name: Rename DMG to stable filename
+        run: |
+          cd desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg
+          src=$(ls DevRecall_*.dmg | head -1)
+          mv "$src" "DevRecall-${{ matrix.arch }}.dmg"
+
       - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
           name: DevRecall-${{ matrix.arch }}.dmg
-          path: desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          path: desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/DevRecall-${{ matrix.arch }}.dmg
 
   # Create GitHub Release with all artifacts
   release:
@@ -237,10 +246,11 @@ jobs:
             artifacts/**/*.dmg
             artifacts/checksums.sha256
 
-      # Pushes the new version + tarball SHAs into pavelpilyak/homebrew-devrecall.
-      # Cask (DMG) is left for manual bump until Tauri DMG naming is pinned.
-      # Requires repo secret HOMEBREW_TAP_TOKEN (PAT with `repo` scope on the tap).
-      - name: Bump Homebrew tap (CLI formula)
+      # Pushes the new version + tarball/DMG SHAs into pavelpilyak/homebrew-devrecall
+      # for both the CLI formula and the cask. Requires repo secret HOMEBREW_TAP_TOKEN
+      # (PAT with `repo` scope on the tap). If unset, this step skips silently and
+      # the tap stays at the previous version — bump it manually.
+      - name: Bump Homebrew tap (formula + cask)
         if: env.HOMEBREW_TAP_TOKEN != ''
         run: |
           VERSION=${GITHUB_REF_NAME#v}
@@ -248,12 +258,14 @@ jobs:
           sha_darwin_x86=$(sha256sum artifacts/devrecall-darwin-x86_64/devrecall-darwin-x86_64.tar.gz | awk '{print $1}')
           sha_linux_arm=$(sha256sum artifacts/devrecall-linux-aarch64/devrecall-linux-aarch64.tar.gz | awk '{print $1}')
           sha_linux_x86=$(sha256sum artifacts/devrecall-linux-x86_64/devrecall-linux-x86_64.tar.gz | awk '{print $1}')
+          sha_dmg_arm=$(sha256sum artifacts/DevRecall-aarch64.dmg/DevRecall-aarch64.dmg | awk '{print $1}')
+          sha_dmg_x86=$(sha256sum artifacts/DevRecall-x86_64.dmg/DevRecall-x86_64.dmg | awk '{print $1}')
 
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/pavelpilyak/homebrew-devrecall.git" tap
           cd tap
 
-          # Each url block is `url "..."` followed by `sha256 "..."`.
-          # Match the url line, advance to next line, replace the sha256 value.
+          # In both formula and cask, each block is `url "..."` followed by
+          # `sha256 "..."`. Match the url line, advance one line, replace sha.
           sed -i \
             -e "s/^  version \".*\"/  version \"${VERSION}\"/" \
             -e "/devrecall-darwin-aarch64.tar.gz/{n;s/sha256 \".*\"/sha256 \"${sha_darwin_arm}\"/;}" \
@@ -262,12 +274,18 @@ jobs:
             -e "/devrecall-linux-x86_64.tar.gz/{n;s/sha256 \".*\"/sha256 \"${sha_linux_x86}\"/;}" \
             Formula/devrecall-cli.rb
 
+          sed -i \
+            -e "s/^  version \".*\"/  version \"${VERSION}\"/" \
+            -e "/DevRecall-aarch64.dmg/{n;s/sha256 \".*\"/sha256 \"${sha_dmg_arm}\"/;}" \
+            -e "/DevRecall-x86_64.dmg/{n;s/sha256 \".*\"/sha256 \"${sha_dmg_x86}\"/;}" \
+            Casks/devrecall.rb
+
           git config user.name "devrecall-bot"
           git config user.email "devrecall-bot@users.noreply.github.com"
-          git add Formula/devrecall-cli.rb
+          git add Formula/devrecall-cli.rb Casks/devrecall.rb
           if git diff --cached --quiet; then
-            echo "Tap formula already up to date"
+            echo "Tap already up to date"
           else
-            git commit -m "devrecall-cli ${VERSION}"
+            git commit -m "devrecall ${VERSION}"
             git push
           fi
