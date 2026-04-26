@@ -1,83 +1,50 @@
 # DevRecall
 
-**Your developer activity, aggregated on-device.** DevRecall pulls from Git,
-Slack, Google Calendar, Jira, Linear, and GitHub/GitLab/Bitbucket, stores it in
-a local SQLite database, and generates standups, weekly reports, brag docs,
-and perf-review material on demand. All data stays on your machine.
+**Your developer activity, aggregated on-device.** No cloud sync. No telemetry.
+Your data never leaves your machine.
 
-- **Local-first.** No cloud sync. No telemetry. Your data never leaves your
-  device unless you explicitly ask it to.
-- **Private by default.** OAuth tokens live in `~/.devrecall/tokens/` with
-  `0600` permissions. The Cloudflare Worker relay is a pass-through for OAuth
-  callbacks only — it never sees your data.
-- **Open source.** MIT-licensed. Fork it, audit it, self-compile it.
-- **LLM-optional.** Bundled embeddings run offline (ONNX + `all-MiniLM-L6-v2`).
-  Use local Ollama for chat, or bring your own OpenAI/Anthropic key.
+DevRecall pulls from Git, Slack, Google Calendar, Jira, Linear, and
+GitHub/GitLab/Bitbucket; stores it in a local SQLite database; and turns it
+into standups, weekly reports, brag docs, and a chat that actually knows what
+you worked on.
+
+<p align="center">
+  <img src=".github/assets/chat.jpg" alt="DevRecall desktop app — chat over your local work history" width="820">
+</p>
+
+📚 **[docs.devrecall.dev](https://docs.devrecall.dev)** — install, configure, integrations, CLI reference.
+
+## Why
+
+- **Local-first.** SQLite on your laptop. Tokens in `~/.devrecall/tokens/` (`0600`). The Cloudflare Worker relay is a pass-through for OAuth callbacks only — it never sees your data.
+- **LLM-optional.** Bundled embeddings run offline (ONNX + `all-MiniLM-L6-v2`). Use local Ollama for chat, or bring your own OpenAI/Anthropic key.
+- **Open source.** MIT-licensed. Audit it, fork it, build it from source.
+
+## Sources
+
+| Source            | What gets collected                            |
+| ----------------- | ---------------------------------------------- |
+| Git (local)       | Commits, branch activity, files changed        |
+| GitHub / GitLab / Bitbucket | PRs/MRs, reviews, issues, comments   |
+| Slack             | Your messages, threads you participated in     |
+| Google Calendar   | Meetings attended, organized, declined         |
+| Jira / Linear     | Issue transitions, comments, sprint membership |
 
 ## Install
 
-Prebuilt binaries (Homebrew, `.deb`) ship with the first tagged release.
-Until then, build from source.
-
-### From source
+Homebrew and `.deb` packages ship with the first tagged release. Until then:
 
 ```bash
 git clone https://github.com/pavelpilyak/devrecall.git
 cd devrecall
-make build          # bin/devrecall
+make build          # → bin/devrecall
 ```
 
 Requires Go 1.22+ with CGO enabled (for SQLite FTS5).
 
-### Homebrew (macOS, once released)
+Full install + setup walkthrough at **[docs.devrecall.dev/install](https://docs.devrecall.dev/install/)**.
 
-```bash
-brew tap pavelpilyak/devrecall
-brew install devrecall-cli           # CLI only
-brew install --cask devrecall        # Desktop app
-```
-
-Tap repo: [pavelpilyak/homebrew-devrecall](https://github.com/pavelpilyak/homebrew-devrecall)
-
-### Linux .deb (once released)
-
-Download the latest `.deb` from [Releases](https://github.com/pavelpilyak/devrecall/releases)
-and install with `dpkg -i devrecall_*.deb`.
-
-## Quickstart
-
-```bash
-# 1. Connect a source (opens browser for OAuth)
-devrecall connect slack
-devrecall connect github
-
-# 2. Pull activity from the last 7 days
-devrecall sync --since 7d
-
-# 3. Generate a standup
-devrecall standup
-
-# 4. Chat with your work history
-devrecall chat
-> what did I ship last sprint?
-```
-
-Run `devrecall --help` for the full command list.
-
-## What it collects
-
-| Source     | What                                                  |
-| ---------- | ----------------------------------------------------- |
-| Git        | Commits, PR descriptions, branch activity             |
-| GitHub     | PRs, reviews, issues, comments                        |
-| GitLab     | MRs, reviews, issues                                  |
-| Bitbucket  | PRs, comments                                         |
-| Slack      | Messages in channels you're in                        |
-| Calendar   | Google Calendar events                                |
-| Jira       | Tickets you touched                                   |
-| Linear     | Issues you touched                                    |
-
-## How it works
+## Architecture
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────────┐
@@ -91,29 +58,27 @@ Run `devrecall --help` for the full command list.
                                            perf review
 ```
 
-See [`CLAUDE.md`](CLAUDE.md) for the architecture overview.
+Module overview: [`CLAUDE.md`](CLAUDE.md). Architecture deep-dive: [docs.devrecall.dev/architecture](https://docs.devrecall.dev/architecture/).
 
 ## Development
 
 ```bash
-make build              # Build to bin/devrecall
-make test               # Run tests with race detector
+make build              # bin/devrecall
+make test               # tests with race detector
 make lint               # golangci-lint
-make relay-deploy       # Deploy Cloudflare Worker (maintainers only)
 ```
 
 Build tags: `fts5` enables SQLite full-text search; `GO` enables hugot's pure
 Go ONNX backend for embeddings.
 
+The desktop app (Tauri + Svelte) lives in [`desktop/`](desktop/);
+the OAuth callback relay (Cloudflare Worker) in [`relay/`](relay/).
+
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports and collector contributions
-are especially welcome.
+Bug reports and collector contributions are especially welcome.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security
 
-See [SECURITY.md](SECURITY.md) for responsible disclosure.
-
-## License
-
-[MIT](LICENSE) © 2026 Pavel Piliak
+[SECURITY.md](SECURITY.md) for responsible disclosure.
