@@ -1,13 +1,14 @@
 // Package packaging contains tests that validate the DevRecall
-// distribution artifacts (Homebrew formulas, nfpm config, and the
-// release workflow). These configs live in the repo root rather than
-// under a Go package, so the tests read them as plain files.
+// distribution artifacts (nfpm config and the release workflow).
+// These configs live in the repo root rather than under a Go package,
+// so the tests read them as plain files. Homebrew formulas live in
+// the dedicated tap repo (pavelpilyak/homebrew-devrecall) and are
+// validated there.
 package packaging
 
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -55,56 +56,6 @@ func TestNFPMConfig_HasRequiredFields(t *testing.T) {
 	// Every arch-templated source path must use the same placeholder as `arch`.
 	if !strings.Contains(content, "bin/devrecall-linux-${NFPM_ARCH}") {
 		t.Error("nfpm.yaml source binary path does not use ${NFPM_ARCH} placeholder")
-	}
-}
-
-func TestHomebrewCaskFormula_HasArchSpecificSources(t *testing.T) {
-	root := repoRoot(t)
-	content := readFile(t, filepath.Join(root, "Formula", "devrecall.rb"))
-
-	required := []string{
-		`cask "devrecall"`,
-		"on_arm",
-		"on_intel",
-		"DevRecall-aarch64.dmg",
-		"DevRecall-x86_64.dmg",
-		`homepage "https://devrecall.dev"`,
-		`depends_on macos:`,
-	}
-	for _, s := range required {
-		if !strings.Contains(content, s) {
-			t.Errorf("Formula/devrecall.rb missing required token: %q", s)
-		}
-	}
-}
-
-func TestHomebrewCLIFormula_CoversAllPlatforms(t *testing.T) {
-	root := repoRoot(t)
-	content := readFile(t, filepath.Join(root, "Formula", "devrecall-cli.rb"))
-
-	// Each of the four supported build targets must have a url and a
-	// sha256 placeholder so the release workflow can substitute them in.
-	platforms := []struct {
-		tarball     string
-		shaPlaceholder string
-	}{
-		{"devrecall-darwin-aarch64.tar.gz", "PLACEHOLDER_DARWIN_AARCH64_SHA256"},
-		{"devrecall-darwin-x86_64.tar.gz", "PLACEHOLDER_DARWIN_X86_64_SHA256"},
-		{"devrecall-linux-aarch64.tar.gz", "PLACEHOLDER_LINUX_AARCH64_SHA256"},
-		{"devrecall-linux-x86_64.tar.gz", "PLACEHOLDER_LINUX_X86_64_SHA256"},
-	}
-	for _, p := range platforms {
-		if !strings.Contains(content, p.tarball) {
-			t.Errorf("devrecall-cli.rb missing tarball %q", p.tarball)
-		}
-		if !strings.Contains(content, p.shaPlaceholder) {
-			t.Errorf("devrecall-cli.rb missing sha placeholder %q", p.shaPlaceholder)
-		}
-	}
-
-	// The formula must install the binary under a stable name.
-	if !regexp.MustCompile(`bin\.install\s+"devrecall-#\{arch_suffix\}"\s+=>\s+"devrecall"`).MatchString(content) {
-		t.Error("devrecall-cli.rb should install binary as 'devrecall'")
 	}
 }
 
