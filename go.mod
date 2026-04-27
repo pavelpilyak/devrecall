@@ -12,6 +12,7 @@ require (
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/daulet/tokenizers v1.26.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect

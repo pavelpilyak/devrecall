@@ -104,7 +104,8 @@ func (s *Server) chatLoop() (*agent.Loop, error) {
 		return s.agentLoopFactory()
 	}
 
-	llmProvider, err := llm.FromConfig(s.cfg, s.tokenStore)
+	cfg := s.Cfg()
+	llmProvider, err := llm.FromConfig(cfg, s.tokenStore)
 	if err != nil {
 		return nil, fmt.Errorf("LLM not configured: %w", err)
 	}
@@ -113,7 +114,7 @@ func (s *Server) chatLoop() (*agent.Loop, error) {
 		return nil, fmt.Errorf("LLM provider %q does not support tool calling", llmProvider.Name())
 	}
 
-	embedder, err := embedding.FromConfig(s.cfg, s.tokenStore)
+	embedder, err := embedding.FromConfig(cfg, s.tokenStore)
 	if err != nil {
 		// Embedder is optional — semantic_search_activities will return an
 		// error at call time if it's nil.
@@ -169,7 +170,8 @@ func (s *Server) chatFreshness() (*freshness.Checker, map[string]freshness.Synce
 	if s.freshnessFactory != nil {
 		return s.freshnessFactory()
 	}
-	return BuildFreshnessChecker(s.cfg, s.db), BuildFreshnessSyncers(s.cfg, s.db)
+	cfg := s.Cfg()
+	return BuildFreshnessChecker(cfg, s.db), BuildFreshnessSyncers(cfg, s.db)
 }
 
 // writeSSE serialises one AgentEvent as an SSE event frame.

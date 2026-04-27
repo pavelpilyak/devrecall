@@ -2,10 +2,13 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -509,5 +512,55 @@ func TestHandleLog(t *testing.T) {
 			t.Errorf("expected 400, got %d", w.Code)
 		}
 	})
+}
+
+// TestWatchConfig_ReloadsOnFileChange verifies that an external edit to
+// config.json (e.g., manual `vim ~/.devrecall/config.json` while the daemon
+// is running) is picked up live, without restarting the server.
+func TestWatchConfig_ReloadsOnFileChange(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	dir := filepath.Join(tmpHome, ".devrecall")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "config.json")
+
+	initial := `{"llm":{"provider":"ollama","model":"gemma4"}}`
+	if err := os.WriteFile(cfgPath, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := NewServer(0, nil, cfg, &mockTokenStore{})
+	if got := srv.Cfg().LLM.Provider; got != "ollama" {
+		t.Fatalf("baseline provider = %q, want ollama", got)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.WatchConfig(ctx)
+
+	// Give fsnotify a moment to register the dir watch before we mutate.
+	time.Sleep(100 * time.Millisecond)
+
+	updated := `{"llm":{"provider":"openai","model":"gpt-4o-mini"}}`
+	if err := os.WriteFile(cfgPath, []byte(updated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srv.Cfg().LLM.Provider == "openai" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("config did not reload within 2s; provider still = %q", srv.Cfg().LLM.Provider)
 }
 

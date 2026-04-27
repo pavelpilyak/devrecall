@@ -3068,6 +3068,10 @@ func runServe(port int) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	// Hot-reload config.json whenever it's edited externally so the running
+	// daemon and the desktop app stay consistent with the file on disk.
+	go srv.WatchConfig(ctx)
+
 	fmt.Fprintf(os.Stderr, "DevRecall API listening on http://127.0.0.1:%d\n", srv.Port())
 	return srv.Start(ctx)
 }

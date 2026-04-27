@@ -4,12 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 
 	"github.com/pavelpilyak/devrecall/internal/agent"
 	"github.com/pavelpilyak/devrecall/internal/auth"
@@ -27,10 +32,16 @@ const defaultPort = 3725 // "DRCL" on phone keypad
 
 // Server is the localhost-only HTTP API for desktop app and integrations.
 type Server struct {
-	port       int
-	srv        *http.Server
-	db         *storage.DB
-	cfg        *config.Config
+	port int
+	srv  *http.Server
+	db   *storage.DB
+
+	// cfg is read concurrently by every handler and replaced atomically by
+	// WatchConfig and the LLM-config writer. Always read via Cfg() and write
+	// via the copy-on-write pattern under cfgMu.
+	cfg   atomic.Pointer[config.Config]
+	cfgMu sync.Mutex
+
 	tokenStore auth.TokenStore
 	dataDir    string // override for ~/.devrecall (used in tests)
 
@@ -50,11 +61,95 @@ func NewServer(port int, db *storage.DB, cfg *config.Config, tokenStore auth.Tok
 	if port == 0 {
 		port = defaultPort
 	}
-	return &Server{
+	s := &Server{
 		port:       port,
 		db:         db,
-		cfg:        cfg,
 		tokenStore: tokenStore,
+	}
+	s.cfg.Store(cfg)
+	return s
+}
+
+// Cfg returns the current config snapshot. Callers must treat it as
+// read-only — to mutate, take cfgMu, copy, save, then Store the copy.
+func (s *Server) Cfg() *config.Config {
+	return s.cfg.Load()
+}
+
+// WatchConfig blocks until ctx is cancelled, reloading the config from disk
+// whenever the file changes. Editor-style atomic writes (temp file + rename)
+// are picked up because we watch the parent directory rather than the file
+// inode itself. Events are debounced so a multi-stage write produces at most
+// one reload.
+func (s *Server) WatchConfig(ctx context.Context) {
+	cur := s.Cfg()
+	if cur == nil {
+		return
+	}
+	path := cur.Path()
+	if path == "" {
+		return
+	}
+	path = filepath.Clean(path)
+	dir := filepath.Dir(path)
+
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Printf("config watcher: %v", err)
+		return
+	}
+	defer w.Close()
+
+	if err := w.Add(dir); err != nil {
+		log.Printf("config watcher add %s: %v", dir, err)
+		return
+	}
+
+	const debounce = 150 * time.Millisecond
+	var timer *time.Timer
+	fire := make(chan struct{}, 1)
+	schedule := func() {
+		if timer != nil {
+			timer.Stop()
+		}
+		timer = time.AfterFunc(debounce, func() {
+			select {
+			case fire <- struct{}{}:
+			default:
+			}
+		})
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-w.Events:
+			if !ok {
+				return
+			}
+			if filepath.Clean(ev.Name) != path {
+				continue
+			}
+			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+				continue
+			}
+			schedule()
+		case err, ok := <-w.Errors:
+			if !ok {
+				return
+			}
+			log.Printf("config watcher error: %v", err)
+		case <-fire:
+			next, err := config.Load()
+			if err != nil {
+				log.Printf("config reload: %v", err)
+				continue
+			}
+			s.cfgMu.Lock()
+			s.cfg.Store(next)
+			s.cfgMu.Unlock()
+		}
 	}
 }
 
@@ -104,6 +199,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 // --- Handlers ---
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg()
 	counts, err := s.db.CountActivitiesBySource()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "counting activities: "+err.Error())
@@ -121,15 +217,15 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		name    string
 		enabled bool
 	}{
-		{"git", s.cfg.Git.Enabled},
-		{"slack", s.cfg.Slack.Enabled},
-		{"calendar", s.cfg.Calendar.Enabled},
-		{"github", s.cfg.GitHub.Enabled},
-		{"gitlab", s.cfg.GitLab.Enabled},
-		{"bitbucket", s.cfg.Bitbucket.Enabled},
-		{"jira", s.cfg.Jira.Enabled},
-		{"confluence", s.cfg.Confluence.Enabled},
-		{"linear", s.cfg.Linear.Enabled},
+		{"git", cfg.Git.Enabled},
+		{"slack", cfg.Slack.Enabled},
+		{"calendar", cfg.Calendar.Enabled},
+		{"github", cfg.GitHub.Enabled},
+		{"gitlab", cfg.GitLab.Enabled},
+		{"bitbucket", cfg.Bitbucket.Enabled},
+		{"jira", cfg.Jira.Enabled},
+		{"confluence", cfg.Confluence.Enabled},
+		{"linear", cfg.Linear.Enabled},
 	}
 
 	result := make([]sourceStatus, 0, len(sources))
@@ -150,10 +246,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"status":  "ok",
 		"sources": result,
 		"llm": map[string]any{
-			"provider": s.cfg.LLM.Provider,
-			"model":    s.cfg.LLM.Model,
+			"provider": cfg.LLM.Provider,
+			"model":    cfg.LLM.Model,
 		},
-		"config_path": s.cfg.Path(),
+		"config_path": cfg.Path(),
 	})
 }
 
@@ -181,11 +277,11 @@ func (s *Server) handleStandup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activities = privacy.Apply(activities, s.cfg.Privacy)
+	activities = privacy.Apply(activities, s.Cfg().Privacy)
 	activities = summarizer.DeduplicateActivities(activities)
 
 	var sum summarizer.Summarizer
-	if p, llmErr := llm.FromConfig(s.cfg, s.tokenStore); llmErr == nil {
+	if p, llmErr := llm.FromConfig(s.Cfg(), s.tokenStore); llmErr == nil {
 		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader())
 	} else {
 		sum = summarizer.NewTemplateSummarizer()
@@ -234,11 +330,11 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activities = privacy.Apply(activities, s.cfg.Privacy)
+	activities = privacy.Apply(activities, s.Cfg().Privacy)
 	activities = summarizer.DeduplicateActivities(activities)
 
 	var sum summarizer.Summarizer
-	if p, llmErr := llm.FromConfig(s.cfg, s.tokenStore); llmErr == nil {
+	if p, llmErr := llm.FromConfig(s.Cfg(), s.tokenStore); llmErr == nil {
 		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader())
 	} else {
 		sum = summarizer.NewTemplateSummarizer()
@@ -271,7 +367,7 @@ func (s *Server) handleBrag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activities = privacy.Apply(activities, s.cfg.Privacy)
+	activities = privacy.Apply(activities, s.Cfg().Privacy)
 	activities = summarizer.DeduplicateActivities(activities)
 
 	var childSummaries []models.Summary
@@ -281,7 +377,7 @@ func (s *Server) handleBrag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var sum summarizer.Summarizer
-	if p, llmErr := llm.FromConfig(s.cfg, s.tokenStore); llmErr == nil {
+	if p, llmErr := llm.FromConfig(s.Cfg(), s.tokenStore); llmErr == nil {
 		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader())
 	} else {
 		sum = summarizer.NewTemplateSummarizer()
@@ -319,7 +415,7 @@ func (s *Server) handlePerfReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activities = privacy.Apply(activities, s.cfg.Privacy)
+	activities = privacy.Apply(activities, s.Cfg().Privacy)
 	activities = summarizer.DeduplicateActivities(activities)
 
 	var childSummaries []models.Summary
@@ -329,7 +425,7 @@ func (s *Server) handlePerfReview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var sum summarizer.Summarizer
-	if p, llmErr := llm.FromConfig(s.cfg, s.tokenStore); llmErr == nil {
+	if p, llmErr := llm.FromConfig(s.Cfg(), s.tokenStore); llmErr == nil {
 		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader())
 	} else {
 		sum = summarizer.NewTemplateSummarizer()
@@ -441,7 +537,7 @@ func (s *Server) handleActivities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activities = privacy.Apply(activities, s.cfg.Privacy)
+	activities = privacy.Apply(activities, s.Cfg().Privacy)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"activities": activities,
@@ -565,14 +661,15 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 
 // syncGit runs git collector and inserts new activities. Returns count of new activities.
 func (s *Server) syncGit(ctx context.Context) int {
-	if !s.cfg.Git.Enabled {
+	cfg := s.Cfg()
+	if !cfg.Git.Enabled {
 		return 0
 	}
-	repos := s.cfg.Git.Repos
-	if len(s.cfg.Git.ScanPaths) > 0 {
-		repos = mergeUnique(repos, git.DiscoverRepos(s.cfg.Git.ScanPaths))
+	repos := cfg.Git.Repos
+	if len(cfg.Git.ScanPaths) > 0 {
+		repos = mergeUnique(repos, git.DiscoverRepos(cfg.Git.ScanPaths))
 	}
-	emails := mergeUnique(s.cfg.Git.Emails, git.DetectEmails(repos))
+	emails := mergeUnique(cfg.Git.Emails, git.DetectEmails(repos))
 
 	if len(repos) == 0 || len(emails) == 0 {
 		return 0
@@ -709,13 +806,20 @@ func (s *Server) handleLLMConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.cfg.LLM.Provider = req.Provider
-	s.cfg.LLM.Model = strings.TrimSpace(req.Model)
-	s.cfg.LLM.BaseURL = strings.TrimSpace(req.BaseURL)
-	if err := s.cfg.Save(); err != nil {
+	// Copy-on-write so concurrent readers see either the old or the new
+	// config in full, never a half-mutated one. cfgMu also serializes against
+	// WatchConfig in case the file is being externally edited at the same time.
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	next := *s.Cfg()
+	next.LLM.Provider = req.Provider
+	next.LLM.Model = strings.TrimSpace(req.Model)
+	next.LLM.BaseURL = strings.TrimSpace(req.BaseURL)
+	if err := next.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, "saving config: "+err.Error())
 		return
 	}
+	s.cfg.Store(&next)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "LLM config saved"})
 }
 
@@ -754,7 +858,7 @@ func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	cfg := *s.cfg
+	cfg := *s.Cfg()
 	if req.Provider != "" {
 		switch req.Provider {
 		case "ollama", "openai", "anthropic":

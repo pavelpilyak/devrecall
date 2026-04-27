@@ -51,6 +51,26 @@
     anthropic: { model: "claude-haiku-4-5-20251001", base_url: "" },
   };
 
+  const DOCS_BASE = "https://docs.devrecall.dev";
+  const INTEGRATION_DOCS: Record<string, string> = {
+    git: `${DOCS_BASE}/integrations/git/`,
+    github: `${DOCS_BASE}/integrations/github/`,
+    slack: `${DOCS_BASE}/integrations/slack/`,
+    calendar: `${DOCS_BASE}/integrations/calendar/`,
+    jira: `${DOCS_BASE}/integrations/jira/`,
+    linear: `${DOCS_BASE}/integrations/linear/`,
+  };
+
+  async function openDocs(source: string) {
+    const url = INTEGRATION_DOCS[source] ?? `${DOCS_BASE}/configure/`;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("open_path", { path: url });
+    } catch (err) {
+      console.error("failed to open docs", url, err);
+    }
+  }
+
   async function saveLLMConfig() {
     llmSaving = true;
     llmMsg = "";
@@ -234,8 +254,11 @@
                     <SyncDot status="ok" />
                     <span class="ok-label">connected</span>
                   {:else}
-                    <Btn size="sm">
-                      {#snippet children()}<span>Connect</span>{/snippet}
+                    <Btn size="sm" onclick={() => openDocs(src.name)} title="Open setup guide">
+                      {#snippet children()}
+                        <span>Setup guide</span>
+                        <Icon name="external-link" size={11} />
+                      {/snippet}
                     </Btn>
                   {/if}
                 {/snippet}
