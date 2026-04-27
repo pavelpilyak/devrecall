@@ -191,11 +191,14 @@ jobs:
         working-directory: desktop
         run: pnpm install
 
-      # Unsigned DMG. tauri.conf.json sets signingIdentity: null, so Apple
-      # codesign vars are unused. The Tauri update keypair is optional —
-      # the build succeeds without it; the auto-updater just won't validate
-      # signatures at runtime. Add TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] as
-      # repo secrets later to enable signed updates.
+      # Ad-hoc signed DMG. tauri.conf.json sets signingIdentity: "-", which
+      # tells codesign to use ad-hoc signing (no Apple Developer cert needed).
+      # On Apple Silicon this avoids the "is damaged" Gatekeeper error and
+      # instead shows the standard right-click → Open prompt for unsigned apps.
+      # The Tauri update keypair is optional — the build succeeds without it;
+      # the auto-updater just won't validate signatures at runtime. Add
+      # TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] as repo secrets later to enable
+      # signed updates.
       - name: Build Tauri app
         working-directory: desktop
         env:
