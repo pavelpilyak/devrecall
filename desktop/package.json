@@ -1,7 +1,7 @@
 {
   "name": "devrecall-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -27,7 +27,6 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-updater": "^2.0.0",
     "@types/dompurify": "^3.2.0",
     "dompurify": "^3.3.3",
     "marked": "^18.0.0"

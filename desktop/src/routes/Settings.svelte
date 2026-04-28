@@ -18,11 +18,6 @@
 
   let lastSyncTime = $state<string | null>(null);
 
-  let updateAvailable = $state<string | null>(null);
-  let checkingUpdate = $state(false);
-  let updating = $state(false);
-  let updateError = $state("");
-
   type Provider = "ollama" | "openai" | "anthropic";
   let llmProvider = $state<Provider>("ollama");
   let llmModel = $state("");
@@ -179,33 +174,6 @@
     return `${Math.floor(hours / 24)}d ago`;
   }
 
-  async function checkForUpdate() {
-    checkingUpdate = true;
-    updateError = "";
-    try {
-      const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check();
-      updateAvailable = update ? update.version : null;
-    } catch (e) {
-      updateError = e instanceof Error ? e.message : "Update check failed";
-    } finally {
-      checkingUpdate = false;
-    }
-  }
-
-  async function installUpdate() {
-    updating = true;
-    updateError = "";
-    try {
-      const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check();
-      if (update) await update.downloadAndInstall();
-    } catch (e) {
-      updateError = e instanceof Error ? e.message : "Update failed";
-      updating = false;
-    }
-  }
-
   onMount(() => {
     loadStatus();
   });
@@ -338,22 +306,7 @@
 
       <SettingsSection title="About">
         {#snippet children()}
-          <SettingsRow titleText="DevRecall Desktop" meta="v0.1.0 · Tauri 2">
-            {#snippet right()}
-              {#if updateAvailable}
-                <Chip variant="accent">
-                  {#snippet children()}<span>v{updateAvailable} ready</span>{/snippet}
-                </Chip>
-                <Btn size="sm" variant="primary" disabled={updating} onclick={installUpdate}>
-                  {#snippet children()}<span>{updating ? "Installing…" : "Update"}</span>{/snippet}
-                </Btn>
-              {:else}
-                <Btn size="sm" variant="ghost" disabled={checkingUpdate} onclick={checkForUpdate}>
-                  {#snippet children()}<span>{checkingUpdate ? "Checking…" : "Check for updates"}</span>{/snippet}
-                </Btn>
-              {/if}
-            {/snippet}
-          </SettingsRow>
+          <SettingsRow titleText="DevRecall Desktop" meta="v0.1.1 · Tauri 2 · update via `brew upgrade --cask devrecall`" />
           <SettingsRow titleText="Relay" meta="cf-worker · OAuth callbacks only · never user data">
             {#snippet right()}
               <Chip variant="accent">
@@ -361,9 +314,6 @@
               </Chip>
             {/snippet}
           </SettingsRow>
-          {#if updateError}
-            <div class="error-inline">{updateError}</div>
-          {/if}
         {/snippet}
       </SettingsSection>
     </div>
