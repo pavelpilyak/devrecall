@@ -220,13 +220,18 @@ jobs:
           # APPLE_API_KEY_PATH is set in GITHUB_ENV by the decode step above.
         run: pnpm tauri build --target ${{ matrix.target }}
 
-      # Sanity check: notarization ticket should be stapled to the DMG.
-      # Fails the build loudly if it isn't.
+      # Sanity check: Tauri notarizes and staples the .app inside the DMG
+      # (not the DMG wrapper itself — that's the standard pattern). Mount
+      # the DMG and validate the .app's ticket. Fails loudly if missing.
       - name: Verify notarization
         run: |
           dmg=$(ls desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/DevRecall_*.dmg | head -1)
-          echo "Verifying $dmg"
-          xcrun stapler validate "$dmg"
+          mount=$(hdiutil attach -nobrowse -noautoopen "$dmg" | tail -1 | awk '{print $NF}')
+          echo "Mounted at $mount"
+          xcrun stapler validate "$mount/DevRecall.app"
+          codesign --verify --deep --strict --verbose=2 "$mount/DevRecall.app"
+          spctl --assess --type exec --verbose=2 "$mount/DevRecall.app"
+          hdiutil detach "$mount"
 
       # Tauri produces DevRecall_<version>_<arch>.dmg with arch="aarch64" or "x64".
       # Rename to DevRecall-<arch>.dmg with arch="aarch64" or "x86_64" so the
