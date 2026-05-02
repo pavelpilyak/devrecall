@@ -6,7 +6,7 @@ settings:
 
 dependencies:
   '@tauri-apps/api':
-    specifier: ^2.0.0
+    specifier: ~2.10.0
     version: 2.10.1
   '@types/dompurify':
     specifier: ^3.2.0
