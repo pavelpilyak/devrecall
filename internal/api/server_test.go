@@ -564,3 +564,34 @@ func TestWatchConfig_ReloadsOnFileChange(t *testing.T) {
 	t.Fatalf("config did not reload within 2s; provider still = %q", srv.Cfg().LLM.Provider)
 }
 
+func TestCORSMiddlewareAlwaysReturnsWildcard(t *testing.T) {
+	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	cases := []struct {
+		name   string
+		origin string
+	}{
+		{"no origin", ""},
+		{"tauri origin", "tauri://localhost"},
+		{"vite dev origin", "http://localhost:5173"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			got := w.Header().Get("Access-Control-Allow-Origin")
+			if got != "*" {
+				t.Errorf("Access-Control-Allow-Origin = %q, want %q (origin=%q)", got, "*", tc.origin)
+			}
+		})
+	}
+}
+

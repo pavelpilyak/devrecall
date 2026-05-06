@@ -915,10 +915,16 @@ func (s *Server) promptLoader() *summarizer.PromptLoader {
 	return summarizer.NewPromptLoader(dir + "/prompts")
 }
 
-// corsMiddleware adds CORS headers for local development (Tauri dev server on localhost:5173).
+// corsMiddleware adds CORS headers for local-only access (Tauri webview, dev
+// server on localhost:5173, or curl). The API binds to 127.0.0.1 only, so a
+// permissive `*` is safe — there's no remote origin that can reach it.
+//
+// We previously echoed back r.Header.Get("Origin"), but Tauri 2's webview on
+// macOS sometimes doesn't send Origin for tauri://localhost → http://127.0.0.1
+// fetches, leaving the header empty and tripping the browser's CORS check.
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
