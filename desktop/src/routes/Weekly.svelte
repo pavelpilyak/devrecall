@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type WeeklyResponse } from "../lib/api";
   import { save, load } from "../lib/persist";
+  import { today } from "../lib/stores";
   import PanelHeader from "../components/ui/PanelHeader.svelte";
   import Btn from "../components/ui/Btn.svelte";
   import Icon from "../components/ui/Icon.svelte";
@@ -60,7 +61,8 @@
     return `${weeksBack} weeks ago`;
   }
 
-  function weekRange(): string {
+  const weekRange = $derived.by(() => {
+    void $today;
     const now = new Date();
     const start = new Date(now);
     start.setDate(start.getDate() - start.getDay() + 1 - weeksBack * 7);
@@ -68,11 +70,11 @@
     end.setDate(end.getDate() + 6);
     const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
     return `${fmt(start)} – ${fmt(end)}`;
-  }
+  });
 
   const titleText = $derived(`Weekly summary · ${weekLabel()}`);
   const metaText = $derived.by(() => {
-    if (!report) return `${weekRange()} · tap generate to summarize`;
+    if (!report) return `${weekRange} · tap generate to summarize`;
     return `${report.week_start} to ${report.week_end} · ${report.activity_count} activities`;
   });
 </script>

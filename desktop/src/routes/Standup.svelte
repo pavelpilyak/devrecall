@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type StandupResponse } from "../lib/api";
   import { save, load } from "../lib/persist";
+  import { today } from "../lib/stores";
   import PanelHeader from "../components/ui/PanelHeader.svelte";
   import Btn from "../components/ui/Btn.svelte";
   import Icon from "../components/ui/Icon.svelte";
@@ -23,6 +24,19 @@
     d.setDate(d.getDate() - 1);
     return d.toISOString().slice(0, 10);
   }
+
+  let prevYesterday = yesterdayStr();
+  $effect(() => {
+    void $today;
+    const newYesterday = yesterdayStr();
+    if (newYesterday !== prevYesterday && date === prevYesterday) {
+      date = newYesterday;
+      report = cache[date] ?? null;
+      generated = !!report;
+      error = "";
+    }
+    prevYesterday = newYesterday;
+  });
 
   async function loadStandup() {
     loading = true;

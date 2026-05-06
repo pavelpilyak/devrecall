@@ -1,10 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { get } from "svelte/store";
 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-import { connected, apiStatus, checkConnection } from "./stores";
+import { connected, apiStatus, checkConnection, today } from "./stores";
 
 function mockJsonResponse(data: unknown, status = 200) {
   return {
@@ -48,5 +48,28 @@ describe("checkConnection", () => {
 
     expect(get(connected)).toBe(false);
     expect(get(apiStatus)).toBeNull();
+  });
+});
+
+describe("today store", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("emits exactly once per actual day change", () => {
+    const seen: string[] = [];
+    const unsub = today.subscribe((v) => seen.push(v));
+    const initial = seen.length;
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2099-01-02T08:00:00Z"));
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("focus"));
+
+    expect(seen.length).toBe(initial + 1);
+    expect(get(today)).toBe("2099-01-02");
+
+    unsub();
   });
 });

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Activity } from "../lib/api";
-  import { lastSyncAt } from "../lib/stores";
+  import { lastSyncAt, today } from "../lib/stores";
   import PanelHeader from "../components/ui/PanelHeader.svelte";
   import Chip from "../components/ui/Chip.svelte";
   import SourceDot from "../components/ui/SourceDot.svelte";
@@ -28,6 +28,17 @@
     d.setDate(d.getDate() - 7);
     return d.toISOString().slice(0, 10);
   }
+
+  let prevToday = todayStr();
+  $effect(() => {
+    void $today;
+    const newToday = todayStr();
+    if (newToday !== prevToday && beforeDate === prevToday) {
+      beforeDate = newToday;
+      loadActivities();
+    }
+    prevToday = newToday;
+  });
 
   async function loadActivities() {
     loading = true;

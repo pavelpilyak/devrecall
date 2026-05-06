@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { api, type ReviewResponse } from "../lib/api";
   import { save, load } from "../lib/persist";
+  import { today } from "../lib/stores";
   import PanelHeader from "../components/ui/PanelHeader.svelte";
   import Btn from "../components/ui/Btn.svelte";
   import Icon from "../components/ui/Icon.svelte";
@@ -36,6 +37,19 @@
     d.setMonth(d.getMonth() - 1);
     return d.toISOString().slice(0, 10);
   }
+
+  let prevToday = todayStr();
+  $effect(() => {
+    void $today;
+    const newToday = todayStr();
+    if (newToday !== prevToday && beforeDate === prevToday) {
+      beforeDate = newToday;
+      report = cache[cacheKey(reviewType, afterDate, beforeDate)] ?? null;
+      generated = !!report;
+      error = "";
+    }
+    prevToday = newToday;
+  });
 
   function setPreset(preset: string) {
     const now = new Date();
