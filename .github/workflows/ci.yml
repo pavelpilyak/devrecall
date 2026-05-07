@@ -32,7 +32,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install pnpm
-        run: npm install -g pnpm
+        run: npm install -g pnpm@10
 
       - name: Install frontend deps
         working-directory: desktop
@@ -56,7 +56,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install pnpm
-        run: npm install -g pnpm
+        run: npm install -g pnpm@10
 
       - name: Install deps and test
         working-directory: desktop
