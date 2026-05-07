@@ -54,6 +54,12 @@ type Server struct {
 	// chat-stream handler. Tests inject deterministic syncers through
 	// this hook; in production it's BuildFreshnessChecker / BuildFreshnessSyncers.
 	freshnessFactory func() (*freshness.Checker, map[string]freshness.Syncer)
+
+	// syncStreamFactory builds the (Checker, syncers) pair used by the
+	// /api/sync/stream handler. Tests inject deterministic syncers
+	// through this hook so they don't have to mock real collectors;
+	// production builds it from cfg + tokenStore via BuildAllSyncers.
+	syncStreamFactory func() (*freshness.Checker, map[string]freshness.Syncer)
 }
 
 // NewServer creates a local API server on the given port (0 = default 3725).
@@ -188,6 +194,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
 	mux.HandleFunc("POST /api/sync", s.handleSync)
+	mux.HandleFunc("POST /api/sync/stream", s.handleSyncStream)
 	mux.HandleFunc("POST /api/llm/config", s.handleLLMConfig)
 	mux.HandleFunc("POST /api/llm/key", s.handleLLMKey)
 	mux.HandleFunc("POST /api/llm/test", s.handleLLMTest)

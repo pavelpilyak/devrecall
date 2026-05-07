@@ -30,18 +30,27 @@ let _today = todayISOString();
  */
 export const today = writable(_today);
 
-function tickToday() {
+/**
+ * Wall-clock `Date.now()`, refreshed on the same focus/visibility/60s cycle
+ * as `today`. Use this — not a local `setInterval` — when deriving "X m ago"
+ * style timestamps, so the display catches up after the laptop wakes from
+ * sleep instead of staying frozen at whatever value setInterval had paused on.
+ */
+export const nowTick = writable(Date.now());
+
+function tick() {
   const cur = todayISOString();
   if (cur !== _today) {
     _today = cur;
     today.set(cur);
   }
+  nowTick.set(Date.now());
 }
 
 if (typeof window !== "undefined") {
-  document.addEventListener("visibilitychange", tickToday);
-  window.addEventListener("focus", tickToday);
-  setInterval(tickToday, 60_000);
+  document.addEventListener("visibilitychange", tick);
+  window.addEventListener("focus", tick);
+  setInterval(tick, 60_000);
 }
 
 /** Check connection to the API and update stores. */

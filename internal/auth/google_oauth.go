@@ -143,6 +143,37 @@ func pollForGoogleToken(ctx context.Context, cfg GoogleOAuthConfig, sessionID, p
 	}
 }
 
+// LoadGoogleToken reads a Google token from the store and refreshes it via
+// the relay if it has expired. Refreshed tokens are persisted back to the
+// store so callers don't need to re-authenticate on every request. The
+// returned token's Email is preserved across refresh.
+//
+// Returns the same errors as the underlying TokenStore for "not found"
+// cases so callers can distinguish "user hasn't signed in" from "refresh
+// failed".
+func LoadGoogleToken(ctx context.Context, store TokenStore, email string) (*GoogleToken, error) {
+	var token GoogleToken
+	if err := store.Load("google", email, &token); err != nil {
+		return nil, err
+	}
+	if !token.IsExpired() {
+		return &token, nil
+	}
+	if token.RefreshToken == "" {
+		return nil, fmt.Errorf("access token expired and no refresh token available (run 'devrecall auth google')")
+	}
+
+	refreshed, err := RefreshGoogleToken(ctx, RelayBaseURL, token.RefreshToken)
+	if err != nil {
+		return nil, fmt.Errorf("refreshing token: %w", err)
+	}
+	refreshed.Email = token.Email
+	// Best-effort persist; if the keychain is locked we still return the
+	// fresh token so the caller can complete the in-flight request.
+	_ = store.Save("google", email, refreshed)
+	return refreshed, nil
+}
+
 // RefreshGoogleToken uses the relay to exchange a refresh token for a new access token.
 func RefreshGoogleToken(ctx context.Context, relayBaseURL string, refreshToken string) (*GoogleToken, error) {
 	body, _ := json.Marshal(map[string]string{

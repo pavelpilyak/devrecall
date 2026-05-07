@@ -252,6 +252,86 @@ describe("api.sync", () => {
   });
 });
 
+describe("api.syncStream", () => {
+  function mockSSEResponse(chunks: string[]) {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const c of chunks) controller.enqueue(encoder.encode(c));
+        controller.close();
+      },
+    });
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      body,
+      json: () => Promise.resolve({}),
+    };
+  }
+
+  it("decodes per-source freshness frames and the terminal done frame", async () => {
+    const sse =
+      'event: freshness\ndata: {"source":"git","status":"syncing"}\n\n' +
+      'event: freshness\ndata: {"source":"git","status":"synced","added":3}\n\n' +
+      'event: freshness\ndata: {"source":"slack","status":"syncing"}\n\n' +
+      'event: freshness\ndata: {"source":"slack","status":"synced","added":7}\n\n' +
+      'event: done\ndata: {"total_added":10}\n\n';
+
+    mockFetch.mockResolvedValue(mockSSEResponse([sse]));
+
+    const events: any[] = [];
+    await api.syncStream((ev) => events.push(ev));
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:3725/api/sync/stream",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(events.map((e) => e.type)).toEqual([
+      "freshness",
+      "freshness",
+      "freshness",
+      "freshness",
+      "done",
+    ]);
+    expect(events[0].source).toBe("git");
+    expect(events[1].added).toBe(3);
+    expect(events[4].total_added).toBe(10);
+  });
+
+  it("surfaces error frames mid-stream without rejecting", async () => {
+    const sse =
+      'event: freshness\ndata: {"source":"jira","status":"syncing"}\n\n' +
+      'event: freshness\ndata: {"source":"jira","status":"error","error":"token expired"}\n\n' +
+      'event: done\ndata: {"total_added":0}\n\n';
+
+    mockFetch.mockResolvedValue(mockSSEResponse([sse]));
+
+    const events: any[] = [];
+    await api.syncStream((ev) => events.push(ev));
+
+    const errorFrame = events.find(
+      (e) => e.type === "freshness" && e.status === "error"
+    );
+    expect(errorFrame?.error).toBe("token expired");
+    expect(events[events.length - 1].type).toBe("done");
+  });
+
+  it("rejects on transport error", async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+      body: null,
+      json: () => Promise.resolve({ error: "no syncers configured" }),
+    });
+
+    await expect(api.syncStream(() => {})).rejects.toThrow(
+      "no syncers configured"
+    );
+  });
+});
+
 describe("api.log", () => {
   it("sends POST with text only", async () => {
     mockFetch.mockResolvedValue(

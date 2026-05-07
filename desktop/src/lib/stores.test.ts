@@ -4,7 +4,7 @@ import { get } from "svelte/store";
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-import { connected, apiStatus, checkConnection, today } from "./stores";
+import { connected, apiStatus, checkConnection, today, nowTick } from "./stores";
 
 function mockJsonResponse(data: unknown, status = 200) {
   return {
@@ -71,5 +71,21 @@ describe("today store", () => {
     expect(get(today)).toBe("2099-01-02");
 
     unsub();
+  });
+});
+
+describe("nowTick store", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("advances to wall-clock Date.now() on focus, even after a sleep-like jump", () => {
+    vi.useFakeTimers();
+    const future = new Date("2099-06-15T12:34:56Z").getTime();
+    vi.setSystemTime(future);
+
+    window.dispatchEvent(new Event("focus"));
+
+    expect(get(nowTick)).toBe(future);
   });
 });

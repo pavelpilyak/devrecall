@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type SourceStatus } from "../lib/api";
-  import { apiStatus, checkConnection, lastSyncAt } from "../lib/stores";
+  import { apiStatus, checkConnection, lastSyncAt, nowTick } from "../lib/stores";
   import PanelHeader from "../components/ui/PanelHeader.svelte";
   import SettingsSection from "../components/ui/SettingsSection.svelte";
   import SettingsRow from "../components/ui/SettingsRow.svelte";
@@ -162,10 +162,10 @@
     }
   }
 
-  function formatSyncTime(syncedAt?: string): string {
+  function formatSyncTime(syncedAt: string | undefined, now: number): string {
     if (!syncedAt) return "never synced";
     const d = new Date(syncedAt);
-    const diff = Date.now() - d.getTime();
+    const diff = now - d.getTime();
     const mins = Math.floor(diff / 60_000);
     if (mins < 1) return "just now";
     if (mins < 60) return `${mins}m ago`;
@@ -188,7 +188,7 @@
         {#snippet children()}
           <SettingsRow
             titleText="Sync now"
-            meta={lastSyncTime ? `last sync · ${formatSyncTime(lastSyncTime)}` : "never synced"}
+            meta={lastSyncTime ? `last sync · ${formatSyncTime(lastSyncTime, $nowTick)}` : "never synced"}
           >
             {#snippet right()}
               <Btn size="sm" variant="primary" disabled={syncing} onclick={triggerSync}>
@@ -211,7 +211,7 @@
           {:else}
             {#each sources as src (src.name)}
               <SettingsRow
-                meta={src.enabled ? `${formatSyncTime(src.synced_at)} · ${src.count} activities` : "not connected"}
+                meta={src.enabled ? `${formatSyncTime(src.synced_at, $nowTick)} · ${src.count} activities` : "not connected"}
               >
                 {#snippet title()}
                   <SourceDot source={src.name} />
@@ -306,7 +306,7 @@
 
       <SettingsSection title="About">
         {#snippet children()}
-          <SettingsRow titleText="DevRecall Desktop" meta="v0.1.5 · Tauri 2 · run `brew upgrade` to update both the app and the CLI" />
+          <SettingsRow titleText="DevRecall Desktop" meta="v0.1.6 · Tauri 2 · run `brew upgrade` to update both the app and the CLI" />
           <SettingsRow titleText="Relay" meta="cf-worker · OAuth callbacks only · never user data">
             {#snippet right()}
               <Chip variant="accent">

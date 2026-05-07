@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api } from "./lib/api";
-  import { connected, checkConnection, serverError, lastSyncAt, apiStatus } from "./lib/stores";
+  import { api, type SyncStatus } from "./lib/api";
+  import { connected, checkConnection, serverError, lastSyncAt, apiStatus, nowTick } from "./lib/stores";
   import Titlebar from "./components/Titlebar.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import CommandPalette from "./components/CommandPalette.svelte";
@@ -59,22 +59,103 @@
 
   let syncing = $state(false);
   let syncError = $state("");
-  let nowTick = $state(Date.now());
+  // Per-source progress for the in-flight sync, keyed by source name. The
+  // server emits multiple `freshness` frames per source (syncing → synced)
+  // so each entry shows the latest status — used to drive the tooltip and
+  // the "Syncing X…" label.
+  let syncProgress = $state<Record<string, { status: SyncStatus; added?: number; error?: string }>>({});
+  // Most recent source the server reported `syncing` on. When that source
+  // transitions to a terminal state we clear it so the label can pick up
+  // whichever syncer started after it.
+  let activeSyncSource = $state<string | null>(null);
+
+  const sourceLabels: Record<string, string> = {
+    git: "Git",
+    slack: "Slack",
+    calendar: "Calendar",
+    github: "GitHub",
+    gitlab: "GitLab",
+    bitbucket: "Bitbucket",
+    jira: "Jira",
+    linear: "Linear",
+    confluence: "Confluence",
+  };
+  const sourceLabel = (src: string) => sourceLabels[src] ?? src;
 
   async function triggerSync() {
     if (syncing) return;
     syncing = true;
     syncError = "";
+    syncProgress = {};
+    activeSyncSource = null;
     try {
-      await api.sync();
+      await api.syncStream((ev) => {
+        if (ev.type !== "freshness") return;
+        syncProgress = {
+          ...syncProgress,
+          [ev.source]: { status: ev.status, added: ev.added, error: ev.error },
+        };
+        if (ev.status === "syncing") {
+          activeSyncSource = ev.source;
+        } else if (activeSyncSource === ev.source) {
+          // The source we were displaying just finished — fall back to
+          // any other still-in-flight source so the label keeps moving.
+          const stillSyncing = Object.entries(syncProgress).find(
+            ([, v]) => v.status === "syncing"
+          );
+          activeSyncSource = stillSyncing ? stillSyncing[0] : null;
+        }
+      });
       lastSyncAt.set(Date.now());
       await checkConnection();
     } catch (e) {
-      syncError = e instanceof Error ? e.message : "Sync failed";
+      // EventSource fallback: if streaming isn't reachable (e.g. older
+      // server), fall back to the buffered POST /api/sync so the button
+      // still works against pre-streaming binaries.
+      try {
+        await api.sync();
+        lastSyncAt.set(Date.now());
+        await checkConnection();
+      } catch {
+        syncError = e instanceof Error ? e.message : "Sync failed";
+      }
     } finally {
       syncing = false;
+      activeSyncSource = null;
     }
   }
+
+  // Tooltip body shown on the sync button. While syncing, lists every
+  // source's lifecycle status with a leading glyph. Idle, falls back to
+  // "last synced X ago" so users still see freshness at a glance.
+  const syncTooltip = $derived.by<string>(() => {
+    const entries = Object.entries(syncProgress);
+    if (entries.length > 0) {
+      const lines = entries.map(([src, p]) => {
+        const name = sourceLabel(src);
+        switch (p.status) {
+          case "syncing":
+            return `… ${name}`;
+          case "synced":
+            return `✓ ${name}${p.added ? ` (${p.added} new)` : ""}`;
+          case "fresh":
+            return `· ${name} (fresh)`;
+          case "error":
+            return `⚠ ${name} — ${p.error ?? "failed"}`;
+          case "skipped":
+            return `· ${name} (skipped)`;
+          case "disabled":
+            return `· ${name} (disabled)`;
+          default:
+            return `· ${name}`;
+        }
+      });
+      return lines.join("\n");
+    }
+    if (syncing) return "Syncing…";
+    if (lastSyncTs > 0) return `Last synced ${syncAgo}`;
+    return "Sync now";
+  });
 
   const lastSyncTs = $derived.by<number>(() => {
     let max = 0;
@@ -88,7 +169,7 @@
 
   const syncAgo = $derived.by<string>(() => {
     if (!lastSyncTs) return "never";
-    const delta = Math.max(0, nowTick - lastSyncTs);
+    const delta = Math.max(0, $nowTick - lastSyncTs);
     const m = Math.floor(delta / 60_000);
     if (m < 1) return "just now";
     if (m < 60) return `${m}m ago`;
@@ -100,7 +181,10 @@
   const syncMeta = $derived.by(() => {
     if ($serverError) return { status: "error" as const, label: "server error" };
     if (!$connected) return { status: "warn" as const, label: "not connected" };
-    if (syncing) return { status: "ok" as const, label: "Syncing…" };
+    if (syncing) {
+      const label = activeSyncSource ? `Syncing ${sourceLabel(activeSyncSource)}…` : "Syncing…";
+      return { status: "ok" as const, label };
+    }
     if (syncError) return { status: "error" as const, label: "sync failed" };
     return { status: "ok" as const, label: "Sync" };
   });
@@ -135,7 +219,6 @@
   onMount(() => {
     checkConnection();
     const interval = setInterval(checkConnection, 30_000);
-    const tickInterval = setInterval(() => { nowTick = Date.now(); }, 60_000);
 
     let unlistenServerErr: (() => void) | undefined;
     (async () => {
@@ -204,7 +287,6 @@
 
     return () => {
       clearInterval(interval);
-      clearInterval(tickInterval);
       window.removeEventListener("keydown", onKeydown);
       document.removeEventListener("click", onLinkClick);
       unlisten?.();
@@ -218,6 +300,7 @@
     syncStatus={syncMeta.status}
     syncLabel={syncMeta.label}
     syncAgo={syncing ? "" : syncAgo}
+    syncTooltip={syncTooltip}
     syncing={syncing}
     onSync={triggerSync}
     onCmdK={() => (paletteOpen = true)}

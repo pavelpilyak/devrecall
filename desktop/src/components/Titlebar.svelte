@@ -7,6 +7,7 @@
     syncStatus = "ok",
     syncLabel = "Sync",
     syncAgo = "",
+    syncTooltip = "",
     syncing = false,
     onSync,
     onCmdK,
@@ -14,10 +15,19 @@
     syncStatus?: SyncStatus;
     syncLabel?: string;
     syncAgo?: string;
+    /** Multi-line tooltip body. Falls back to the short syncLabel/ago summary. */
+    syncTooltip?: string;
     syncing?: boolean;
     onSync?: () => void;
     onCmdK?: () => void;
   }>();
+
+  // Compose the title attribute. Native HTML tooltips honour newlines
+  // when delivered as plain text, so this gives us a multi-line per-
+  // source breakdown without dragging in a custom popover component.
+  const titleAttr = $derived(
+    syncTooltip || (syncAgo ? `${syncLabel} · last synced ${syncAgo} ago` : syncLabel)
+  );
 </script>
 
 <div class="titlebar" data-tauri-drag-region>
@@ -36,7 +46,7 @@
     class:is-syncing={syncing}
     class:is-error={syncStatus === "error"}
     class:is-warn={syncStatus === "warn"}
-    title={syncAgo ? `${syncLabel} · last synced ${syncAgo} ago` : syncLabel}
+    title={titleAttr}
     disabled={syncing}
     onclick={() => onSync?.()}
   >

@@ -116,6 +116,30 @@ export type ChatStreamEvent =
   | { type: "done"; step: number; content: string }
   | { type: "error"; error: string };
 
+export type SyncStatus =
+  | "fresh"
+  | "syncing"
+  | "synced"
+  | "error"
+  | "disabled"
+  | "skipped";
+
+/**
+ * One event from POST /api/sync/stream. `freshness` events arrive once
+ * per source per lifecycle transition; the terminal `done` event carries
+ * the total new activities across every successful source.
+ */
+export type SyncStreamEvent =
+  | {
+      type: "freshness";
+      source: string;
+      status: SyncStatus;
+      added?: number;
+      error?: string;
+    }
+  | { type: "done"; total_added: number }
+  | { type: "error"; error: string };
+
 async function get<T>(path: string): Promise<T> {
   const base = await baseUrl();
   const resp = await fetch(`${base}${path}`);
@@ -124,6 +148,59 @@ async function get<T>(path: string): Promise<T> {
     throw new Error(err.error || resp.statusText);
   }
   return resp.json();
+}
+
+// consumeSSE drains a Response body of `event:`/`data:` frames and
+// dispatches each one as `{type, ...payload}` on `onEvent`. Shared by
+// chatStream + syncStream so the wire-format handling lives in one
+// place — every malformed frame is silently swallowed because the
+// server is the only thing producing them and we'd rather miss one
+// than tear down the connection on a parse error.
+async function consumeSSE<E extends { type: string }>(
+  resp: Response,
+  onEvent: (ev: E) => void
+): Promise<void> {
+  if (!resp.ok || !resp.body) {
+    const err = await resp.json().catch(() => ({ error: resp.statusText }));
+    throw new Error(err.error || resp.statusText);
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let currentEvent = "";
+  let dataLine = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+
+    let idx: number;
+    while ((idx = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, idx);
+      buf = buf.slice(idx + 1);
+
+      if (line === "") {
+        if (currentEvent && dataLine) {
+          try {
+            const parsed = JSON.parse(dataLine);
+            onEvent({ type: currentEvent, ...parsed } as E);
+          } catch {
+            /* swallow malformed frame */
+          }
+        }
+        currentEvent = "";
+        dataLine = "";
+        continue;
+      }
+      if (line.startsWith("event: ")) {
+        currentEvent = line.slice("event: ".length).trim();
+      } else if (line.startsWith("data: ")) {
+        dataLine = line.slice("data: ".length);
+      }
+    }
+  }
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
@@ -205,53 +282,31 @@ export const api = {
       body: JSON.stringify({ message, history: opts?.history }),
       signal: opts?.signal,
     });
-    if (!resp.ok || !resp.body) {
-      const err = await resp.json().catch(() => ({ error: resp.statusText }));
-      throw new Error(err.error || resp.statusText);
-    }
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    let currentEvent = "";
-    let dataLine = "";
-
-    // SSE frames are delimited by a blank line; each frame has at most one
-    // `event:` line and one `data:` line. We accumulate raw bytes, split on
-    // newlines, and dispatch whenever we hit a blank line.
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-
-      let idx: number;
-      while ((idx = buf.indexOf("\n")) !== -1) {
-        const line = buf.slice(0, idx);
-        buf = buf.slice(idx + 1);
-
-        if (line === "") {
-          if (currentEvent && dataLine) {
-            try {
-              const parsed = JSON.parse(dataLine);
-              onEvent({ type: currentEvent, ...parsed } as ChatStreamEvent);
-            } catch {
-              /* swallow malformed frame */
-            }
-          }
-          currentEvent = "";
-          dataLine = "";
-          continue;
-        }
-        if (line.startsWith("event: ")) {
-          currentEvent = line.slice("event: ".length).trim();
-        } else if (line.startsWith("data: ")) {
-          dataLine = line.slice("data: ".length);
-        }
-      }
-    }
+    await consumeSSE<ChatStreamEvent>(resp, onEvent);
   },
 
   sync: () => post<{ message: string }>("/api/sync"),
+
+  /**
+   * Open a streaming sync connection. Each source emits `syncing` then
+   * either `synced`/`error`; the `done` event terminates the stream.
+   *
+   * The returned promise resolves when the stream closes; reject only on
+   * transport errors. Pass an AbortSignal in `signal` to cancel — the
+   * server still completes any in-flight syncs but stops emitting.
+   */
+  syncStream: async (
+    onEvent: (ev: SyncStreamEvent) => void,
+    opts?: { signal?: AbortSignal }
+  ): Promise<void> => {
+    const base = await baseUrl();
+    const resp = await fetch(`${base}/api/sync/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: opts?.signal,
+    });
+    await consumeSSE<SyncStreamEvent>(resp, onEvent);
+  },
 
   log: (req: LogRequest) => post<LogResponse>("/api/log", req),
 

@@ -565,33 +565,15 @@ func runWeek(weeksBack int) error {
 }
 
 // loadGoogleToken loads the Google token and refreshes it if expired.
-// On refresh, the updated token is persisted to the store.
+// Wraps auth.LoadGoogleToken so the CLI keeps its "Google token expired,
+// refreshing..." progress line — the auth helper itself stays silent so
+// the API server can use it without spamming stdout.
 func loadGoogleToken(store auth.TokenStore, email string) (*auth.GoogleToken, error) {
-	var token auth.GoogleToken
-	if err := store.Load("google", email, &token); err != nil {
-		return nil, err
+	var existing auth.GoogleToken
+	if err := store.Load("google", email, &existing); err == nil && existing.IsExpired() && existing.RefreshToken != "" {
+		fmt.Fprintf(os.Stderr, "Google token expired, refreshing...\n")
 	}
-
-	if !token.IsExpired() {
-		return &token, nil
-	}
-
-	if token.RefreshToken == "" {
-		return nil, fmt.Errorf("access token expired and no refresh token available (run 'devrecall auth google')")
-	}
-
-	fmt.Fprintf(os.Stderr, "Google token expired, refreshing...\n")
-	refreshed, err := auth.RefreshGoogleToken(context.Background(), auth.RelayBaseURL, token.RefreshToken)
-	if err != nil {
-		return nil, fmt.Errorf("refreshing token: %w", err)
-	}
-
-	refreshed.Email = token.Email
-	if err := store.Save("google", email, refreshed); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to persist refreshed token: %v\n", err)
-	}
-
-	return refreshed, nil
+	return auth.LoadGoogleToken(context.Background(), store, email)
 }
 
 func defaultModelForProvider(provider string) string {
