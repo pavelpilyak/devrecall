@@ -1,6 +1,6 @@
 [package]
 name = "devrecall-desktop"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "DevRecall desktop app — menu bar tray for developer work memory"
 

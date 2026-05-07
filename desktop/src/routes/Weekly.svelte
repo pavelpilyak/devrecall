@@ -108,7 +108,7 @@
       <div class="cta">
         <div class="cta-eyebrow">Weekly summary</div>
         <h1 class="cta-title">{titleText}</h1>
-        <div class="cta-meta">{weekRange()}</div>
+        <div class="cta-meta">{weekRange}</div>
         <div class="cta-btn">
           <Btn variant="primary" onclick={generate}>
             {#snippet children()}
