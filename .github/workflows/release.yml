@@ -165,7 +165,7 @@ jobs:
 
   # Build Tauri desktop app for macOS
   build-desktop:
-    needs: [test-go, test-rust, test-frontend]
+    needs: [test-go, test-rust, test-frontend, build-cli]
     runs-on: macos-latest
     strategy:
       matrix:
@@ -190,6 +190,28 @@ jobs:
       - name: Install frontend deps
         working-directory: desktop
         run: pnpm install
+
+      # Pull the matching-arch CLI binary built by `build-cli` and place it
+      # where Tauri expects it as a sidecar (`bundle.externalBin`). Tauri
+      # looks for `<base>-<target-triple>` next to tauri.conf.json, copies it
+      # into Contents/MacOS/, signs it with the same Developer ID identity
+      # as the .app, and notarizes the whole bundle as one unit. The cask
+      # then symlinks it as `devrecall` into Homebrew's bin dir, so a single
+      # `brew upgrade devrecall` upgrades both GUI and CLI.
+      - name: Download CLI binary
+        uses: actions/download-artifact@v4
+        with:
+          name: devrecall-darwin-${{ matrix.arch }}
+          path: desktop/src-tauri/binaries
+
+      - name: Stage CLI sidecar
+        working-directory: desktop/src-tauri/binaries
+        run: |
+          tar xzf devrecall-darwin-${{ matrix.arch }}.tar.gz
+          mv devrecall-darwin-${{ matrix.arch }} devrecall-${{ matrix.target }}
+          chmod +x devrecall-${{ matrix.target }}
+          rm devrecall-darwin-${{ matrix.arch }}.tar.gz
+          ls -la
 
       # Decode the App Store Connect API key (.p8) to disk so notarytool can
       # find it. The secret stores the base64 of the .p8; we write it to a
