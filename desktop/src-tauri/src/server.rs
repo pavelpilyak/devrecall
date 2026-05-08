@@ -1,6 +1,6 @@
 //! CLI process management: discover the devrecall binary, spawn or attach to the API server.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::process::Command;
 use tokio::time::{sleep, Duration};
@@ -109,6 +109,18 @@ pub async fn ensure_running(
 
 /// Discover the devrecall binary in known locations.
 fn find_binary() -> Option<PathBuf> {
+    // 0. Prefer the sidecar bundled alongside the desktop binary. Tauri places
+    //    `bundle.externalBin` at Contents/MacOS/<base>; for our desktop binary
+    //    at Contents/MacOS/devrecall-desktop, the CLI lives at
+    //    Contents/MacOS/devrecall. Picking the sidecar first keeps the .app
+    //    self-contained — a stale `/opt/homebrew/bin/devrecall` symlink (e.g.
+    //    from a leftover devrecall-cli formula) can't shadow it.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(p) = sidecar_next_to(&exe) {
+            return Some(p);
+        }
+    }
+
     // 1. Check $PATH via `which`.
     if let Ok(output) = std::process::Command::new("which")
         .arg("devrecall")
@@ -163,6 +175,15 @@ fn find_binary() -> Option<PathBuf> {
     None
 }
 
+fn sidecar_next_to(exe: &Path) -> Option<PathBuf> {
+    let candidate = exe.parent()?.join("devrecall");
+    if candidate.exists() {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
 fn dirs_home() -> Option<PathBuf> {
     std::env::var("HOME").ok().map(PathBuf::from)
 }
@@ -204,6 +225,27 @@ mod tests {
         if let Some(p) = result {
             assert!(p.is_absolute(), "binary path should be absolute: {:?}", p);
         }
+    }
+
+    #[test]
+    fn sidecar_next_to_returns_path_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("devrecall-desktop");
+        std::fs::write(&exe, b"").unwrap();
+        let cli = dir.path().join("devrecall");
+        std::fs::write(&cli, b"").unwrap();
+
+        let found = sidecar_next_to(&exe);
+        assert_eq!(found, Some(cli));
+    }
+
+    #[test]
+    fn sidecar_next_to_returns_none_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("devrecall-desktop");
+        std::fs::write(&exe, b"").unwrap();
+
+        assert!(sidecar_next_to(&exe).is_none());
     }
 
     #[test]
