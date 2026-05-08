@@ -6,6 +6,7 @@ export const SOURCE_HUES: Record<string, string> = {
   calendar: "#6aa9ff",
   jira: "#4a9eff",
   linear: "#9a8cff",
+  confluence: "#2684ff",
 };
 
 export type SyncStatus = "ok" | "syncing" | "warn" | "error";

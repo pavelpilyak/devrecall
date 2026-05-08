@@ -54,6 +54,7 @@
     calendar: `${DOCS_BASE}/integrations/calendar/`,
     jira: `${DOCS_BASE}/integrations/jira/`,
     linear: `${DOCS_BASE}/integrations/linear/`,
+    confluence: `${DOCS_BASE}/integrations/confluence/`,
   };
 
   async function openDocs(source: string) {
