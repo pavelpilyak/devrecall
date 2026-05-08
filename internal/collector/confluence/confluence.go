@@ -26,6 +26,7 @@ type Collector struct {
 	cloudID   string // Atlassian cloud site ID
 	baseURL   string // API base URL
 	accountID string // cached after /myself call
+	linkBase  string // workspace URL captured from search response _links.base, used to build page URLs
 	client    *http.Client
 	isCloud   bool
 }
@@ -72,7 +73,7 @@ func (c *Collector) Collect(ctx context.Context) ([]models.Activity, error) {
 	return c.CollectSince(ctx, time.Now().Add(-7*24*time.Hour))
 }
 
-// CollectSince fetches pages the user created or edited since the given time.
+// CollectSince fetches pages and comments the user created or edited since the given time.
 func (c *Collector) CollectSince(ctx context.Context, since time.Time) ([]models.Activity, error) {
 	if err := c.ensureAccountID(ctx); err != nil {
 		return nil, fmt.Errorf("resolving account ID: %w", err)
@@ -83,10 +84,17 @@ func (c *Collector) CollectSince(ctx context.Context, since time.Time) ([]models
 		return nil, fmt.Errorf("searching pages: %w", err)
 	}
 
-	var activities []models.Activity
+	comments, err := c.searchComments(ctx, since)
+	if err != nil {
+		return nil, fmt.Errorf("searching comments: %w", err)
+	}
+
+	activities := make([]models.Activity, 0, len(pages)+len(comments))
 	for _, page := range pages {
-		a := c.pageToActivity(page)
-		activities = append(activities, a)
+		activities = append(activities, c.pageToActivity(page))
+	}
+	for _, comment := range comments {
+		activities = append(activities, c.commentToActivity(comment))
 	}
 
 	return activities, nil
@@ -99,16 +107,31 @@ type searchResult struct {
 	Start   int             `json:"start"`
 	Limit   int             `json:"limit"`
 	Size    int             `json:"size"`
+	// Atlassian returns the workspace base URL here (e.g.
+	// https://acme.atlassian.net/wiki) — per-page _links only carry the
+	// relative webui path, so we need this to build absolute URLs.
+	Links contentLinks `json:"_links,omitempty"`
 }
 
 type contentResult struct {
-	ID      string        `json:"id"`
-	Type    string        `json:"type"` // "page" or "blogpost"
-	Title   string        `json:"title"`
-	Status  string        `json:"status"`
-	Space   contentSpace  `json:"space,omitempty"`
-	History contentHistory `json:"history,omitempty"`
-	Links   contentLinks  `json:"_links,omitempty"`
+	ID        string            `json:"id"`
+	Type      string            `json:"type"` // "page", "blogpost", or "comment"
+	Title     string            `json:"title"`
+	Status    string            `json:"status"`
+	Space     contentSpace      `json:"space,omitempty"`
+	History   contentHistory    `json:"history,omitempty"`
+	Links     contentLinks      `json:"_links,omitempty"`
+	Container *contentContainer `json:"container,omitempty"` // parent for comments
+}
+
+// contentContainer is a slim view of a comment's parent page/blogpost.
+// Defined separately from contentResult to avoid recursive JSON types.
+type contentContainer struct {
+	ID    string       `json:"id"`
+	Type  string       `json:"type"`
+	Title string       `json:"title"`
+	Space contentSpace `json:"space,omitempty"`
+	Links contentLinks `json:"_links,omitempty"`
 }
 
 type contentSpace struct {
@@ -144,12 +167,15 @@ type myselfResult struct {
 // --- Metadata ---
 
 type pageMeta struct {
-	PageID    string `json:"page_id"`
-	SpaceKey  string `json:"space_key"`
-	SpaceName string `json:"space_name"`
-	PageType  string `json:"page_type"` // "page" or "blogpost"
-	Action    string `json:"action"`    // "created" or "updated"
-	URL       string `json:"url"`
+	PageID      string `json:"page_id"`                // for comments: the parent page's ID
+	CommentID   string `json:"comment_id,omitempty"`   // comments only
+	SpaceKey    string `json:"space_key"`
+	SpaceName   string `json:"space_name"`
+	PageType    string `json:"page_type"`              // "page", "blogpost", or "comment"
+	Action      string `json:"action"`                 // "created", "updated", or "commented"
+	URL         string `json:"url"`
+	ParentTitle string `json:"parent_title,omitempty"` // comments only
+	ParentType  string `json:"parent_type,omitempty"`  // comments only ("page" or "blogpost")
 }
 
 // --- Collection methods ---
@@ -191,6 +217,9 @@ func (c *Collector) searchPages(ctx context.Context, since time.Time) ([]content
 		if err := c.apiGet(ctx, "/rest/api/content/search", params, &result); err != nil {
 			return nil, err
 		}
+		if c.linkBase == "" && result.Links.Base != "" {
+			c.linkBase = result.Links.Base
+		}
 
 		// Filter to only pages the current user created or last edited.
 		for _, page := range result.Results {
@@ -206,6 +235,52 @@ func (c *Collector) searchPages(ctx context.Context, since time.Time) ([]content
 	}
 
 	return all, nil
+}
+
+func (c *Collector) searchComments(ctx context.Context, since time.Time) ([]contentResult, error) {
+	cql := fmt.Sprintf(
+		"type = comment AND lastmodified >= \"%s\" ORDER BY lastmodified DESC",
+		since.Format("2006-01-02"),
+	)
+
+	var all []contentResult
+	start := 0
+
+	for {
+		params := url.Values{
+			"cql":    {cql},
+			"expand": {"history,history.lastUpdated,space,container"},
+			"limit":  {strconv.Itoa(perPage)},
+			"start":  {strconv.Itoa(start)},
+		}
+
+		var result searchResult
+		if err := c.apiGet(ctx, "/rest/api/content/search", params, &result); err != nil {
+			return nil, err
+		}
+		if c.linkBase == "" && result.Links.Base != "" {
+			c.linkBase = result.Links.Base
+		}
+
+		for _, comment := range result.Results {
+			if c.isUserComment(comment) {
+				all = append(all, comment)
+			}
+		}
+
+		if result.Size < perPage {
+			break
+		}
+		start += result.Size
+	}
+
+	return all, nil
+}
+
+// isUserComment returns true when the current user authored this comment.
+// Edits to others' comments are not counted (Confluence doesn't really support that anyway).
+func (c *Collector) isUserComment(comment contentResult) bool {
+	return comment.History.CreatedBy.AccountID == c.accountID
 }
 
 // isUserPage checks whether the current user created or last edited this page.
@@ -253,6 +328,66 @@ func (c *Collector) pageToActivity(page contentResult) models.Activity {
 	}
 }
 
+func (c *Collector) commentToActivity(comment contentResult) models.Activity {
+	ts := c.parseTimestamp(comment)
+
+	parentTitle := ""
+	parentType := ""
+	parentID := ""
+	space := comment.Space
+	commentURL := c.pageURL(comment)
+	if comment.Container != nil {
+		parentTitle = comment.Container.Title
+		parentType = comment.Container.Type
+		parentID = comment.Container.ID
+		if space.Key == "" {
+			space = comment.Container.Space
+		}
+		// Comment's own _links may be empty; prefer the container's URL for navigation.
+		if commentURL == "" && comment.Container.Links.Base != "" && comment.Container.Links.WebUI != "" {
+			commentURL = comment.Container.Links.Base + comment.Container.Links.WebUI
+		}
+	}
+
+	meta := pageMeta{
+		PageID:      parentID,
+		CommentID:   comment.ID,
+		SpaceKey:    space.Key,
+		SpaceName:   space.Name,
+		PageType:    "comment",
+		Action:      "commented",
+		URL:         commentURL,
+		ParentTitle: parentTitle,
+		ParentType:  parentType,
+	}
+	metaJSON, _ := json.Marshal(meta)
+
+	parentLabel := parentType
+	if parentLabel == "" {
+		parentLabel = "page"
+	}
+	title := fmt.Sprintf("Commented on %s: %s", parentLabel, parentTitle)
+	if parentTitle == "" {
+		title = fmt.Sprintf("Commented on %s", parentLabel)
+	}
+	if space.Key != "" {
+		if parentTitle != "" {
+			title = fmt.Sprintf("Commented on %s in %s: %s", parentLabel, space.Key, parentTitle)
+		} else {
+			title = fmt.Sprintf("Commented on %s in %s", parentLabel, space.Key)
+		}
+	}
+
+	return models.Activity{
+		Source:    models.SourceConfluence,
+		SourceID:  fmt.Sprintf("confluence:comment:%s", comment.ID),
+		Type:      models.TypeDocument,
+		Title:     title,
+		Metadata:  string(metaJSON),
+		Timestamp: ts,
+	}
+}
+
 func (c *Collector) parseTimestamp(page contentResult) time.Time {
 	// Prefer last updated time; fall back to created date.
 	if when := page.History.LastUpdated.When; when != "" {
@@ -276,12 +411,17 @@ func (c *Collector) parseTimestamp(page contentResult) time.Time {
 }
 
 func (c *Collector) pageURL(page contentResult) string {
-	if page.Links.Base != "" && page.Links.WebUI != "" {
+	if page.Links.WebUI == "" {
+		return ""
+	}
+	// Atlassian only returns _links.base at the top level of the search response;
+	// per-page results carry just the relative webui path. Prefer per-page base
+	// if present, fall back to the workspace base captured from the search response.
+	if page.Links.Base != "" {
 		return page.Links.Base + page.Links.WebUI
 	}
-	// Construct from cloud ID if available.
-	if c.isCloud && c.cloudID != "" {
-		return fmt.Sprintf("https://id.atlassian.net/wiki/spaces/%s/pages/%s", page.Space.Key, page.ID)
+	if c.linkBase != "" {
+		return c.linkBase + page.Links.WebUI
 	}
 	return ""
 }

@@ -133,7 +133,7 @@ func listActivitiesTool(deps Deps) Tool {
 		"properties":{
 			"start":{"type":"string","description":"Inclusive start (RFC3339 or YYYY-MM-DD)"},
 			"end":{"type":"string","description":"Exclusive end (RFC3339 or YYYY-MM-DD)"},
-			"source":{"type":"string","description":"Filter by source: git, slack, calendar, github, gitlab, bitbucket, jira, linear, manual"},
+			"source":{"type":"string","description":"Filter by source: git, slack, calendar, github, gitlab, bitbucket, jira, confluence, linear, manual"},
 			"type":{"type":"string","description":"Filter by activity type: commit, message, meeting, ticket, review, pull_request, merge_request, issue, note"},
 			"identity_id":{"type":"integer","description":"Filter by identity (person) ID"},
 			"limit":{"type":"integer","description":"Max rows to return (default 50)"},

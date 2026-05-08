@@ -1547,7 +1547,7 @@ func newSearchCmd() *cobra.Command {
 			return runSearch(query, sourceFlag, limitFlag)
 		},
 	}
-	cmd.Flags().StringVar(&sourceFlag, "source", "", "Filter by source (git, slack, calendar, github, gitlab, bitbucket, jira, linear)")
+	cmd.Flags().StringVar(&sourceFlag, "source", "", "Filter by source (git, slack, calendar, github, gitlab, bitbucket, jira, confluence, linear)")
 	cmd.Flags().IntVar(&limitFlag, "limit", 20, "Maximum number of results")
 	return cmd
 }
@@ -1766,7 +1766,7 @@ Period formats: Q1-2026, 2026-03, 2026-03-01..2026-03-31, last-month, last-quart
 			return runTimeline(args[0], sourceFlag)
 		},
 	}
-	cmd.Flags().StringVar(&sourceFlag, "source", "", "Filter by source (git, slack, calendar, github, gitlab, bitbucket, jira, linear)")
+	cmd.Flags().StringVar(&sourceFlag, "source", "", "Filter by source (git, slack, calendar, github, gitlab, bitbucket, jira, confluence, linear)")
 	return cmd
 }
 

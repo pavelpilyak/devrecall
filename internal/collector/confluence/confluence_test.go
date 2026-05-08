@@ -6,16 +6,43 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
+// commentSearchKey is a sentinel route that routes comment-type CQL queries to a
+// separate handler; tests that don't supply it get an empty response for comments.
+const commentSearchKey = "/rest/api/content/search:comments"
+
 func newTestServer(t *testing.T, handlers map[string]http.HandlerFunc) (*httptest.Server, *Collector) {
 	t.Helper()
 	mux := http.NewServeMux()
+	pageHandler := handlers["/rest/api/content/search"]
+	commentHandler := handlers[commentSearchKey]
+	if pageHandler != nil || commentHandler != nil {
+		mux.HandleFunc("/rest/api/content/search", func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Query().Get("cql"), "type = comment") {
+				if commentHandler != nil {
+					commentHandler(w, r)
+					return
+				}
+				json.NewEncoder(w).Encode(searchResult{Size: 0})
+				return
+			}
+			if pageHandler != nil {
+				pageHandler(w, r)
+				return
+			}
+			json.NewEncoder(w).Encode(searchResult{Size: 0})
+		})
+	}
 	for path, handler := range handlers {
+		if path == "/rest/api/content/search" || path == commentSearchKey {
+			continue
+		}
 		mux.HandleFunc(path, handler)
 	}
 	srv := httptest.NewServer(mux)
@@ -378,6 +405,263 @@ func TestBasicAuth(t *testing.T) {
 	}
 	if len(authHeader) < 6 || authHeader[:5] != "Basic" {
 		t.Errorf("expected Basic auth header, got %q", authHeader)
+	}
+}
+
+func TestCollectSince_CommentByUser(t *testing.T) {
+	_, c := newTestServer(t, map[string]http.HandlerFunc{
+		commentSearchKey: func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(searchResult{
+				Results: []contentResult{
+					{
+						ID:     "c-9001",
+						Type:   "comment",
+						Status: "current",
+						History: contentHistory{
+							CreatedDate: "2026-04-12T11:00:00.000Z",
+							CreatedBy:   contentUser{AccountID: "user-123", DisplayName: "Me"},
+							LastUpdated: lastUpdated{
+								When: "2026-04-12T11:00:00.000Z",
+								By:   contentUser{AccountID: "user-123"},
+							},
+						},
+						Container: &contentContainer{
+							ID:    "p-42",
+							Type:  "page",
+							Title: "Architecture Overview",
+							Space: contentSpace{Key: "ARCH", Name: "Architecture"},
+							Links: contentLinks{
+								Base:  "https://mycompany.atlassian.net/wiki",
+								WebUI: "/spaces/ARCH/pages/p-42/Architecture+Overview",
+							},
+						},
+					},
+				},
+				Size: 1,
+			})
+		},
+	})
+
+	since := time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC)
+	activities, err := c.CollectSince(context.Background(), since)
+	if err != nil {
+		t.Fatalf("CollectSince: %v", err)
+	}
+	if len(activities) != 1 {
+		t.Fatalf("expected 1 activity, got %d", len(activities))
+	}
+
+	a := activities[0]
+	if a.SourceID != "confluence:comment:c-9001" {
+		t.Errorf("source_id = %q", a.SourceID)
+	}
+	if a.Type != models.TypeDocument {
+		t.Errorf("type = %q, want %q", a.Type, models.TypeDocument)
+	}
+	if a.Title != "Commented on page in ARCH: Architecture Overview" {
+		t.Errorf("title = %q", a.Title)
+	}
+
+	var meta pageMeta
+	if err := json.Unmarshal([]byte(a.Metadata), &meta); err != nil {
+		t.Fatalf("metadata parse: %v", err)
+	}
+	if meta.Action != "commented" {
+		t.Errorf("action = %q, want commented", meta.Action)
+	}
+	if meta.PageType != "comment" {
+		t.Errorf("page_type = %q, want comment", meta.PageType)
+	}
+	if meta.CommentID != "c-9001" {
+		t.Errorf("comment_id = %q", meta.CommentID)
+	}
+	if meta.PageID != "p-42" {
+		t.Errorf("page_id (parent) = %q, want p-42", meta.PageID)
+	}
+	if meta.ParentTitle != "Architecture Overview" {
+		t.Errorf("parent_title = %q", meta.ParentTitle)
+	}
+	if meta.ParentType != "page" {
+		t.Errorf("parent_type = %q", meta.ParentType)
+	}
+	if meta.SpaceKey != "ARCH" {
+		t.Errorf("space_key = %q", meta.SpaceKey)
+	}
+	if meta.URL != "https://mycompany.atlassian.net/wiki/spaces/ARCH/pages/p-42/Architecture+Overview" {
+		t.Errorf("url = %q", meta.URL)
+	}
+}
+
+func TestCollectSince_FiltersOtherUsersComments(t *testing.T) {
+	_, c := newTestServer(t, map[string]http.HandlerFunc{
+		commentSearchKey: func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(searchResult{
+				Results: []contentResult{
+					{
+						ID:   "c-other",
+						Type: "comment",
+						History: contentHistory{
+							CreatedBy: contentUser{AccountID: "other-user"},
+						},
+						Container: &contentContainer{ID: "p-1", Type: "page", Title: "Doc"},
+					},
+					{
+						ID:   "c-mine",
+						Type: "comment",
+						History: contentHistory{
+							CreatedDate: "2026-04-12T11:00:00.000Z",
+							CreatedBy:   contentUser{AccountID: "user-123"},
+						},
+						Container: &contentContainer{ID: "p-2", Type: "page", Title: "Other Doc"},
+					},
+				},
+				Size: 2,
+			})
+		},
+	})
+
+	activities, err := c.CollectSince(context.Background(), time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("CollectSince: %v", err)
+	}
+	if len(activities) != 1 {
+		t.Fatalf("expected 1 activity (other-user comment filtered), got %d", len(activities))
+	}
+	if activities[0].SourceID != "confluence:comment:c-mine" {
+		t.Errorf("expected user's own comment, got %q", activities[0].SourceID)
+	}
+}
+
+func TestCollectSince_PagesAndCommentsCombined(t *testing.T) {
+	_, c := newTestServer(t, map[string]http.HandlerFunc{
+		"/rest/api/content/search": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(searchResult{
+				Results: []contentResult{
+					{
+						ID:    "page-1",
+						Type:  "page",
+						Title: "My Doc",
+						Space: contentSpace{Key: "ENG"},
+						History: contentHistory{
+							CreatedDate: "2026-04-10T10:00:00.000Z",
+							CreatedBy:   contentUser{AccountID: "user-123"},
+							LastUpdated: lastUpdated{
+								When: "2026-04-10T10:00:00.000Z",
+								By:   contentUser{AccountID: "user-123"},
+							},
+						},
+					},
+				},
+				Size: 1,
+			})
+		},
+		commentSearchKey: func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(searchResult{
+				Results: []contentResult{
+					{
+						ID:   "c-1",
+						Type: "comment",
+						History: contentHistory{
+							CreatedDate: "2026-04-11T11:00:00.000Z",
+							CreatedBy:   contentUser{AccountID: "user-123"},
+						},
+						Container: &contentContainer{ID: "p-9", Type: "blogpost", Title: "Their post", Space: contentSpace{Key: "BLOG"}},
+					},
+				},
+				Size: 1,
+			})
+		},
+	})
+
+	activities, err := c.CollectSince(context.Background(), time.Date(2026, 4, 9, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("CollectSince: %v", err)
+	}
+	if len(activities) != 2 {
+		t.Fatalf("expected 2 activities (1 page + 1 comment), got %d", len(activities))
+	}
+
+	var sawPage, sawComment bool
+	for _, a := range activities {
+		if a.SourceID == "confluence:page-1:created" {
+			sawPage = true
+		}
+		if a.SourceID == "confluence:comment:c-1" {
+			sawComment = true
+		}
+	}
+	if !sawPage {
+		t.Errorf("expected page activity")
+	}
+	if !sawComment {
+		t.Errorf("expected comment activity")
+	}
+}
+
+func TestCollectSince_URLFromTopLevelLinksBase(t *testing.T) {
+	// Real Atlassian: _links.base only at top level, per-page results only have webui.
+	// Regression test for empty URL bug.
+	_, c := newTestServer(t, map[string]http.HandlerFunc{
+		"/rest/api/content/search": func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(searchResult{
+				Results: []contentResult{
+					{
+						ID:    "6684673",
+						Type:  "page",
+						Title: "Onboarding: DEV setup",
+						Space: contentSpace{Key: "DRT", Name: "DRT"},
+						History: contentHistory{
+							CreatedDate: "2026-05-08T17:36:29Z",
+							CreatedBy:   contentUser{AccountID: "user-123"},
+							LastUpdated: lastUpdated{
+								When: "2026-05-08T17:36:29Z",
+								By:   contentUser{AccountID: "user-123"},
+							},
+						},
+						Links: contentLinks{
+							WebUI: "/spaces/DRT/pages/6684673/Onboarding+DEV+setup",
+						},
+					},
+				},
+				Size:  1,
+				Links: contentLinks{Base: "https://acme.atlassian.net/wiki"},
+			})
+		},
+	})
+
+	activities, err := c.CollectSince(context.Background(), time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("CollectSince: %v", err)
+	}
+	if len(activities) != 1 {
+		t.Fatalf("expected 1 activity, got %d", len(activities))
+	}
+
+	var meta pageMeta
+	if err := json.Unmarshal([]byte(activities[0].Metadata), &meta); err != nil {
+		t.Fatalf("metadata parse: %v", err)
+	}
+	want := "https://acme.atlassian.net/wiki/spaces/DRT/pages/6684673/Onboarding+DEV+setup"
+	if meta.URL != want {
+		t.Errorf("url = %q, want %q", meta.URL, want)
+	}
+}
+
+func TestCommentToActivity_NoContainer(t *testing.T) {
+	c := &Collector{accountID: "user-123"}
+	a := c.commentToActivity(contentResult{
+		ID:   "c-orphan",
+		Type: "comment",
+		History: contentHistory{
+			CreatedDate: "2026-04-12T11:00:00.000Z",
+			CreatedBy:   contentUser{AccountID: "user-123"},
+		},
+	})
+	if a.SourceID != "confluence:comment:c-orphan" {
+		t.Errorf("source_id = %q", a.SourceID)
+	}
+	if a.Title != "Commented on page" {
+		t.Errorf("title = %q (expected fallback)", a.Title)
 	}
 }
 
