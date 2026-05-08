@@ -106,6 +106,25 @@
     return parts.join(" · ");
   }
 
+  function activityURL(a: Activity): string {
+    if (!a.metadata) return "";
+    try {
+      const m = JSON.parse(a.metadata);
+      if (typeof m.url === "string" && m.url) return m.url;
+      if (typeof m.permalink === "string" && m.permalink) return m.permalink;
+    } catch { /* noop */ }
+    return "";
+  }
+
+  async function openExternal(url: string) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("open_path", { path: url });
+    } catch (err) {
+      console.error("failed to open url", url, err);
+    }
+  }
+
   onMount(() => {
     loadActivities();
     const unsub = lastSyncAt.subscribe((ts) => {
@@ -152,11 +171,16 @@
           <span class="count">{g.items.length} events</span>
         </div>
         {#each g.items as a, i (a.id ?? i)}
+          {@const url = activityURL(a)}
           <div class="row">
             <div class="time">{formatTime(a.timestamp)}</div>
             <SourceDot source={a.source} />
             <div class="row-main">
-              <div class="title">{a.title}</div>
+              {#if url}
+                <a class="title link" href={url} onclick={(e) => { e.preventDefault(); openExternal(url); }} title={url}>{a.title}</a>
+              {:else}
+                <div class="title">{a.title}</div>
+              {/if}
               {#if metaLine(a)}
                 <div class="meta">{metaLine(a)}</div>
               {/if}
@@ -253,6 +277,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  a.title.link {
+    display: block;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  a.title.link:hover {
+    color: var(--accent);
+    text-decoration: underline;
   }
   .meta {
     font-family: var(--font-mono);
