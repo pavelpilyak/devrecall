@@ -3162,6 +3162,15 @@ func newUpdateCmd() *cobra.Command {
 				exe = resolved
 			}
 
+			// When this devrecall lives inside the Homebrew cask bundle, an
+			// out-of-band file swap would break the next `brew upgrade` and
+			// skip the cask postflight that restarts the launchd daemon. So
+			// instead, hand off to `brew upgrade devrecall`, which updates
+			// both the GUI and the bundled CLI atomically.
+			if strings.Contains(exe, "/DevRecall.app/Contents/MacOS/") {
+				return runBrewUpgrade()
+			}
+
 			fmt.Println("Downloading and verifying...")
 			if err := update.Apply(rel, exe); err != nil {
 				return fmt.Errorf("applying update: %w", err)
@@ -3172,4 +3181,41 @@ func newUpdateCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip confirmation prompt")
 	return cmd
+}
+
+// runBrewUpgrade execs `brew upgrade devrecall` so a single command updates
+// both the GUI and the bundled CLI for cask users. Falls back to a printed
+// instruction if Homebrew can't be located.
+func runBrewUpgrade() error {
+	brew := findBrew()
+	if brew == "" {
+		fmt.Println("This devrecall is bundled inside DevRecall.app (Homebrew cask).")
+		fmt.Println("Update both the GUI and the CLI with:")
+		fmt.Println("  brew upgrade devrecall")
+		return nil
+	}
+	fmt.Println("Updating via Homebrew (GUI + CLI together)...")
+	c := exec.Command(brew, "upgrade", "devrecall")
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	c.Stdin = os.Stdin
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("brew upgrade devrecall: %w", err)
+	}
+	return nil
+}
+
+// findBrew returns the Homebrew binary path, preferring the well-known
+// install locations (Apple Silicon then Intel) before a $PATH lookup.
+// Returns "" if not found.
+func findBrew() string {
+	for _, p := range []string{"/opt/homebrew/bin/brew", "/usr/local/bin/brew"} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	if p, err := exec.LookPath("brew"); err == nil {
+		return p
+	}
+	return ""
 }

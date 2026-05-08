@@ -50,25 +50,44 @@ type Asset struct {
 	URL  string `json:"browser_download_url"`
 }
 
+// archAliases maps Go's runtime.GOARCH values to the alternate names
+// commonly used in release artifact filenames (e.g. tar.gz produced by
+// goreleaser or our release.yml — `arm64` → `aarch64`, `amd64` → `x86_64`).
+var archAliases = map[string][]string{
+	"arm64": {"arm64", "aarch64"},
+	"amd64": {"amd64", "x86_64", "x64"},
+	"386":   {"386", "i386", "x86"},
+}
+
 // FindAsset returns the asset matching the given OS and architecture, or nil
-// if none match. Matching is case-insensitive substring on both OS and arch.
+// if none match. Both OS and arch are matched as case-insensitive substrings.
+// arch is tried under common aliases (e.g. arm64 ↔ aarch64) so the lookup
+// works regardless of the naming convention used for release artifacts.
 func (r *Release) FindAsset(os, arch string) *Asset {
 	osLower := strings.ToLower(os)
-	archLower := strings.ToLower(arch)
-	for i := range r.Assets {
-		name := strings.ToLower(r.Assets[i].Name)
-		if strings.Contains(name, osLower) && strings.Contains(name, archLower) {
-			return &r.Assets[i]
+	aliases, ok := archAliases[strings.ToLower(arch)]
+	if !ok {
+		aliases = []string{strings.ToLower(arch)}
+	}
+	for _, alias := range aliases {
+		for i := range r.Assets {
+			name := strings.ToLower(r.Assets[i].Name)
+			if strings.Contains(name, osLower) && strings.Contains(name, alias) {
+				return &r.Assets[i]
+			}
 		}
 	}
 	return nil
 }
 
-// FindChecksums returns the checksums.txt (or SHA256SUMS) asset, or nil.
+// FindChecksums returns the checksums asset, or nil. Accepts the common
+// names used by goreleaser, our release.yml, and shasum-style outputs.
 func (r *Release) FindChecksums() *Asset {
 	for i := range r.Assets {
 		name := strings.ToLower(r.Assets[i].Name)
-		if name == "checksums.txt" || name == "sha256sums" || name == "sha256sums.txt" {
+		switch name {
+		case "checksums.txt", "checksums.sha256",
+			"sha256sums", "sha256sums.txt", "sha256sum.txt":
 			return &r.Assets[i]
 		}
 	}
@@ -178,7 +197,11 @@ func fetchChecksums(url string) (map[string]string, error) {
 			continue
 		}
 		// Allow `<hash>  <name>` and `<hash> *<name>` (binary mode).
+		// Some pipelines (e.g. our release.yml) feed a `find`-style path like
+		// "./devrecall-darwin-aarch64/devrecall-darwin-aarch64.tar.gz" into
+		// sha256sum — collapse to the basename so lookups by asset name work.
 		name := strings.TrimPrefix(fields[len(fields)-1], "*")
+		name = filepath.Base(name)
 		out[name] = fields[0]
 	}
 	return out, nil
@@ -219,8 +242,10 @@ func downloadVerified(url, expectedHex string) (string, error) {
 	return tmp.Name(), nil
 }
 
-// extractBinary extracts the first file named "devrecall" from a tar.gz archive
-// at archivePath, writing it to destPath with mode 0755. Returns nil on success.
+// extractBinary extracts the devrecall binary from a tar.gz archive at
+// archivePath, writing it to destPath with mode 0755. Accepts entries
+// named "devrecall" (legacy/goreleaser) or "devrecall-<os>-<arch>" /
+// "devrecall_<os>_<arch>" (release.yml format). Returns nil on success.
 func extractBinary(archivePath, destPath string) error {
 	f, err := os.Open(archivePath)
 	if err != nil {
@@ -243,8 +268,11 @@ func extractBinary(archivePath, destPath string) error {
 		if err != nil {
 			return fmt.Errorf("reading tar: %w", err)
 		}
+		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+			continue
+		}
 		base := filepath.Base(hdr.Name)
-		if base != "devrecall" {
+		if !isDevrecallBinaryName(base) {
 			continue
 		}
 		out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
@@ -258,6 +286,16 @@ func extractBinary(archivePath, destPath string) error {
 		}
 		return out.Close()
 	}
+}
+
+// isDevrecallBinaryName reports whether base is a plausible name for the
+// devrecall binary inside a release archive — bare "devrecall" or with a
+// platform suffix like "devrecall-darwin-aarch64".
+func isDevrecallBinaryName(base string) bool {
+	if base == "devrecall" || base == "devrecall.exe" {
+		return true
+	}
+	return strings.HasPrefix(base, "devrecall-") || strings.HasPrefix(base, "devrecall_")
 }
 
 // Apply downloads the asset, verifies its sha256 against the checksums file,

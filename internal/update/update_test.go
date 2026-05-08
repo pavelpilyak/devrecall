@@ -143,19 +143,63 @@ func TestFindAsset(t *testing.T) {
 	}
 }
 
-func TestFindChecksums(t *testing.T) {
+// TestFindAsset_RealReleaseShape mirrors the actual asset names produced
+// by .github/workflows/release.yml — `aarch64`/`x86_64`, not Go's
+// runtime.GOARCH values. Regression test for `update` failing with
+// "no release asset for darwin/arm64".
+func TestFindAsset_RealReleaseShape(t *testing.T) {
 	rel := &Release{Assets: []Asset{
-		{Name: "devrecall_0.5.0_linux_amd64.tar.gz"},
-		{Name: "checksums.txt"},
+		{Name: "devrecall-darwin-aarch64.tar.gz"},
+		{Name: "devrecall-darwin-x86_64.tar.gz"},
+		{Name: "devrecall-linux-aarch64.tar.gz"},
+		{Name: "devrecall-linux-x86_64.tar.gz"},
+		{Name: "checksums.sha256"},
 	}}
-	c := rel.FindChecksums()
-	if c == nil || c.Name != "checksums.txt" {
-		t.Errorf("checksums lookup failed: %+v", c)
-	}
 
-	rel = &Release{Assets: []Asset{{Name: "binary.tar.gz"}}}
-	if rel.FindChecksums() != nil {
-		t.Error("expected nil when no checksums asset")
+	cases := []struct {
+		os, arch, want string
+	}{
+		{"darwin", "arm64", "devrecall-darwin-aarch64.tar.gz"},
+		{"darwin", "amd64", "devrecall-darwin-x86_64.tar.gz"},
+		{"linux", "arm64", "devrecall-linux-aarch64.tar.gz"},
+		{"linux", "amd64", "devrecall-linux-x86_64.tar.gz"},
+	}
+	for _, tc := range cases {
+		a := rel.FindAsset(tc.os, tc.arch)
+		if a == nil || a.Name != tc.want {
+			t.Errorf("FindAsset(%q,%q) = %+v, want %q", tc.os, tc.arch, a, tc.want)
+		}
+	}
+}
+
+func TestFindChecksums(t *testing.T) {
+	cases := []struct {
+		assetName string
+		wantFound bool
+	}{
+		{"checksums.txt", true},
+		{"checksums.sha256", true},
+		{"sha256sums", true},
+		{"sha256sums.txt", true},
+		{"binary.tar.gz", false},
+	}
+	for _, tc := range cases {
+		rel := &Release{Assets: []Asset{
+			{Name: "devrecall_0.5.0_linux_amd64.tar.gz"},
+			{Name: tc.assetName},
+		}}
+		c := rel.FindChecksums()
+		if tc.wantFound {
+			if c == nil || c.Name != tc.assetName {
+				t.Errorf("FindChecksums for %q: got %+v, want match", tc.assetName, c)
+			}
+		} else {
+			// Filter to the case where only the non-matching asset is present.
+			rel = &Release{Assets: []Asset{{Name: tc.assetName}}}
+			if rel.FindChecksums() != nil {
+				t.Errorf("FindChecksums for %q: expected nil", tc.assetName)
+			}
+		}
 	}
 }
 
@@ -163,11 +207,17 @@ func TestFindChecksums(t *testing.T) {
 // "devrecall" with the given contents.
 func makeTarGz(t *testing.T, contents []byte) []byte {
 	t.Helper()
+	return makeTarGzWithName(t, "devrecall", contents)
+}
+
+// makeTarGzWithName returns a tar.gz containing one file with the given name.
+func makeTarGzWithName(t *testing.T, fileName string, contents []byte) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	hdr := &tar.Header{
-		Name: "devrecall",
+		Name: fileName,
 		Mode: 0o755,
 		Size: int64(len(contents)),
 	}
@@ -184,6 +234,40 @@ func makeTarGz(t *testing.T, contents []byte) []byte {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
+}
+
+// TestApply_SuffixedBinaryName covers the case where the binary inside the
+// archive is named "devrecall-<os>-<arch>" (release.yml format) rather than
+// bare "devrecall".
+func TestApply_SuffixedBinaryName(t *testing.T) {
+	binaryContents := []byte("new binary")
+	innerName := fmt.Sprintf("devrecall-%s-%s", runtime.GOOS, runtime.GOARCH)
+	archive := makeTarGzWithName(t, innerName, binaryContents)
+	assetName := fmt.Sprintf("devrecall-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	checksums := fmt.Sprintf("%s  %s\n", sha256Hex(archive), assetName)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/asset", func(w http.ResponseWriter, r *http.Request) { w.Write(archive) })
+	mux.HandleFunc("/checksums.sha256", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(checksums)) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	rel := &Release{
+		Assets: []Asset{
+			{Name: assetName, URL: srv.URL + "/asset"},
+			{Name: "checksums.sha256", URL: srv.URL + "/checksums.sha256"},
+		},
+	}
+	target := filepath.Join(t.TempDir(), "devrecall")
+	os.WriteFile(target, []byte("old"), 0o755)
+
+	if err := Apply(rel, target); err != nil {
+		t.Fatalf("Apply with suffixed binary: %v", err)
+	}
+	got, _ := os.ReadFile(target)
+	if !bytes.Equal(got, binaryContents) {
+		t.Errorf("binary not replaced: %q", got)
+	}
 }
 
 func sha256Hex(data []byte) string {
@@ -268,6 +352,45 @@ func TestApply_ChecksumMismatch(t *testing.T) {
 	got, _ := os.ReadFile(target)
 	if string(got) != "old" {
 		t.Errorf("binary should be untouched on checksum failure, got %q", got)
+	}
+}
+
+// TestApply_PathPrefixedChecksums covers the format produced by
+// `find . -type f -exec sha256sum {} +` in our release.yml, where each
+// hash line carries a path-prefixed name (./asset-name/asset-name.tar.gz)
+// rather than the bare asset filename.
+func TestApply_PathPrefixedChecksums(t *testing.T) {
+	binaryContents := []byte("new binary")
+	archive := makeTarGz(t, binaryContents)
+	assetName := fmt.Sprintf("devrecall-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	checksums := fmt.Sprintf("%s  ./%s/%s\n", sha256Hex(archive), assetName, assetName)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/asset", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(archive)
+	})
+	mux.HandleFunc("/checksums.sha256", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(checksums))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	rel := &Release{
+		Assets: []Asset{
+			{Name: assetName, URL: srv.URL + "/asset"},
+			{Name: "checksums.sha256", URL: srv.URL + "/checksums.sha256"},
+		},
+	}
+
+	target := filepath.Join(t.TempDir(), "devrecall")
+	os.WriteFile(target, []byte("old"), 0o755)
+
+	if err := Apply(rel, target); err != nil {
+		t.Fatalf("Apply with path-prefixed checksums: %v", err)
+	}
+	got, _ := os.ReadFile(target)
+	if !bytes.Equal(got, binaryContents) {
+		t.Errorf("binary not replaced: %q", got)
 	}
 }
 
