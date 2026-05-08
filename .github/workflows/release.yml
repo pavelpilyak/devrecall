@@ -140,6 +140,17 @@ jobs:
         working-directory: desktop
         run: pnpm build
 
+      # tauri-build validates `bundle.externalBin` paths exist at compile time
+      # (even for `cargo test`). The real binary is only staged in build-desktop
+      # — for the test job a zero-byte placeholder satisfies the check.
+      - name: Stub CLI sidecar
+        working-directory: desktop/src-tauri
+        run: |
+          host=$(rustc -vV | sed -n 's/host: //p')
+          mkdir -p binaries
+          touch "binaries/devrecall-${host}"
+          chmod +x "binaries/devrecall-${host}"
+
       - name: Run Rust tests
         working-directory: desktop/src-tauri
         run: cargo test
