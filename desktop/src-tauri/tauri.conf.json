@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/niclas-niclas/tauri-v2-schema/refs/heads/main/tauri.conf.schema.json",
   "productName": "DevRecall",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "identifier": "dev.devrecall.app",
   "build": {
     "frontendDist": "../dist",
