@@ -1,13 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Activity } from "../lib/api";
-  import { lastSyncAt, today } from "../lib/stores";
+  import { apiStatus, lastSyncAt, today } from "../lib/stores";
   import PanelHeader from "../components/ui/PanelHeader.svelte";
   import Chip from "../components/ui/Chip.svelte";
   import SourceDot from "../components/ui/SourceDot.svelte";
   import DateTimeField from "../components/ui/DateTimeField.svelte";
-
-  const SOURCES = ["all", "git", "github", "gitlab", "bitbucket", "slack", "calendar", "jira", "linear"] as const;
 
   let activities = $state<Activity[]>([]);
   let loading = $state(false);
@@ -18,6 +16,21 @@
   let afterDate = $state(defaultAfter());
   let beforeDate = $state(todayStr());
   let limit = $state(100);
+
+  // Render chips only for sources the user has actually connected. Always
+  // include "all", plus keep the currently selected filter visible even if
+  // it would otherwise be hidden (e.g. count just dropped to 0 mid-session).
+  // Falls back to just "all" until /api/status loads.
+  const sourceChips = $derived.by<string[]>(() => {
+    const status = $apiStatus;
+    if (!status?.sources?.length) return ["all"];
+    const enabled = status.sources.filter((s) => s.enabled).map((s) => s.name);
+    const out = ["all", ...enabled];
+    if (sourceFilter !== "all" && !out.includes(sourceFilter)) {
+      out.push(sourceFilter);
+    }
+    return out;
+  });
 
   function todayStr(): string {
     return new Date().toISOString().slice(0, 10);
@@ -144,7 +157,7 @@
   </PanelHeader>
 
   <div class="filters">
-    {#each SOURCES as s}
+    {#each sourceChips as s}
       <button
         class="chip"
         class:active={sourceFilter === s}
