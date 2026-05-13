@@ -647,6 +647,69 @@ func TestCollectSince_URLFromTopLevelLinksBase(t *testing.T) {
 	}
 }
 
+// TestCollectSince_CQLServerSideFilter verifies the queries push author
+// filtering into CQL so Atlassian does the work, not the client. Without
+// this filter, large instances make the sync hang for tens of minutes.
+func TestCollectSince_CQLServerSideFilter(t *testing.T) {
+	var pageCQL, commentCQL string
+	_, c := newTestServer(t, map[string]http.HandlerFunc{
+		"/rest/api/content/search": func(w http.ResponseWriter, r *http.Request) {
+			pageCQL = r.URL.Query().Get("cql")
+			json.NewEncoder(w).Encode(searchResult{Size: 0})
+		},
+		commentSearchKey: func(w http.ResponseWriter, r *http.Request) {
+			commentCQL = r.URL.Query().Get("cql")
+			json.NewEncoder(w).Encode(searchResult{Size: 0})
+		},
+	})
+
+	if _, err := c.CollectSince(context.Background(), time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("CollectSince: %v", err)
+	}
+
+	if !strings.Contains(pageCQL, "contributor = currentUser()") {
+		t.Errorf("page CQL missing contributor filter: %q", pageCQL)
+	}
+	if !strings.Contains(commentCQL, "creator = currentUser()") {
+		t.Errorf("comment CQL missing creator filter: %q", commentCQL)
+	}
+}
+
+// TestCollectSince_PaginationCap ensures runaway pagination terminates if
+// the server keeps reporting full pages.
+func TestCollectSince_PaginationCap(t *testing.T) {
+	calls := 0
+	_, c := newTestServer(t, map[string]http.HandlerFunc{
+		"/rest/api/content/search": func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			// Always claim a full page so the loop would never terminate.
+			results := make([]contentResult, perPage)
+			for i := range results {
+				results[i] = contentResult{
+					ID:    fmt.Sprintf("p-%d-%d", calls, i),
+					Type:  "page",
+					Title: "X",
+					History: contentHistory{
+						CreatedDate: "2026-05-08T10:00:00.000Z",
+						CreatedBy:   contentUser{AccountID: "user-123"},
+						LastUpdated: lastUpdated{When: "2026-05-08T10:00:00.000Z", By: contentUser{AccountID: "user-123"}},
+					},
+				}
+			}
+			json.NewEncoder(w).Encode(searchResult{Results: results, Size: perPage})
+		},
+	})
+
+	if _, err := c.CollectSince(context.Background(), time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("CollectSince: %v", err)
+	}
+	// Page query goes through maxPaginationPages, then comments query adds 1 more
+	// (returns empty since no comment handler registered).
+	if calls > maxPaginationPages+1 {
+		t.Errorf("expected pagination to stop near cap, got %d calls", calls)
+	}
+}
+
 func TestCommentToActivity_NoContainer(t *testing.T) {
 	c := &Collector{accountID: "user-123"}
 	a := c.commentToActivity(contentResult{

@@ -17,6 +17,10 @@ import (
 const (
 	defaultCloudBaseURL = "https://api.atlassian.com"
 	perPage             = 25
+	// maxPaginationPages caps the number of /search pages we walk to protect
+	// against Atlassian's offset-pagination cap (~10k results) and any API
+	// edge case where Size keeps reporting full but content doesn't advance.
+	maxPaginationPages = 100
 )
 
 // Collector fetches Confluence pages created or edited by the user.
@@ -196,16 +200,20 @@ func (c *Collector) ensureAccountID(ctx context.Context) error {
 }
 
 func (c *Collector) searchPages(ctx context.Context, since time.Time) ([]contentResult, error) {
-	// CQL: search for pages modified by the current user since the given time.
+	// CQL: pages/blogposts the current user contributed to within the window.
+	// `contributor` is server-side filtered so we avoid downloading the entire
+	// workspace's recent activity just to drop it client-side. On large
+	// instances this turns a tens-of-minutes scan into a handful of requests.
+	// We still defensively re-check on the client in case a result slips past.
 	cql := fmt.Sprintf(
-		"type in (page,blogpost) AND lastmodified >= \"%s\" ORDER BY lastmodified DESC",
+		"type in (page,blogpost) AND contributor = currentUser() AND lastmodified >= \"%s\" ORDER BY lastmodified DESC",
 		since.Format("2006-01-02"),
 	)
 
 	var all []contentResult
 	start := 0
 
-	for {
+	for page := 0; page < maxPaginationPages; page++ {
 		params := url.Values{
 			"cql":    {cql},
 			"expand": {"history,history.lastUpdated,space"},
@@ -221,10 +229,9 @@ func (c *Collector) searchPages(ctx context.Context, since time.Time) ([]content
 			c.linkBase = result.Links.Base
 		}
 
-		// Filter to only pages the current user created or last edited.
-		for _, page := range result.Results {
-			if c.isUserPage(page) {
-				all = append(all, page)
+		for _, p := range result.Results {
+			if c.isUserPage(p) {
+				all = append(all, p)
 			}
 		}
 
@@ -238,15 +245,18 @@ func (c *Collector) searchPages(ctx context.Context, since time.Time) ([]content
 }
 
 func (c *Collector) searchComments(ctx context.Context, since time.Time) ([]contentResult, error) {
+	// CQL: comments authored by the current user within the window.
+	// Server-side filter via `creator` keeps the response size tiny even on
+	// busy instances where tens of thousands of comments are written per week.
 	cql := fmt.Sprintf(
-		"type = comment AND lastmodified >= \"%s\" ORDER BY lastmodified DESC",
+		"type = comment AND creator = currentUser() AND lastmodified >= \"%s\" ORDER BY lastmodified DESC",
 		since.Format("2006-01-02"),
 	)
 
 	var all []contentResult
 	start := 0
 
-	for {
+	for page := 0; page < maxPaginationPages; page++ {
 		params := url.Values{
 			"cql":    {cql},
 			"expand": {"history,history.lastUpdated,space,container"},
