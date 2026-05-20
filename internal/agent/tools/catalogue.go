@@ -87,6 +87,31 @@ func mustJSON(v any) json.RawMessage {
 	return b
 }
 
+// maxToolLimit hard-caps the rows any single tool call will return, so an
+// agent asking for limit=10000 doesn't dump the whole DB into the context.
+const maxToolLimit = 200
+
+// clampLimit normalises a user-supplied limit: zero/negative → default,
+// anything over the hard cap → cap.
+func clampLimit(limit, def int) int {
+	if limit <= 0 {
+		limit = def
+	}
+	if limit > maxToolLimit {
+		limit = maxToolLimit
+	}
+	return limit
+}
+
+// paginationHint returns a string the agent can act on when more rows exist
+// beyond the current page. Empty string when there's nothing more.
+func paginationHint(hasMore bool, limit, offset int) string {
+	if !hasMore {
+		return ""
+	}
+	return fmt.Sprintf("showing %d rows; more available — call again with offset=%d", limit, offset+limit)
+}
+
 func parseFilterDates(start, end string) (time.Time, time.Time, error) {
 	after, err := parseDate(start)
 	if err != nil {
@@ -155,12 +180,9 @@ func listActivitiesTool(deps Deps) Tool {
 			if err != nil {
 				return nil, err
 			}
-			limit := a.Limit
-			if limit <= 0 {
-				limit = 50
-			}
-			// Fetch limit+offset, slice in Go.
-			fetch := limit + a.Offset
+			limit := clampLimit(a.Limit, 50)
+			// Fetch one extra row so we can detect whether more exist.
+			fetch := limit + a.Offset + 1
 			rows, err := deps.DB.ListActivities(storage.ActivityFilter{
 				Source:     models.Source(a.Source),
 				Type:       models.ActivityType(a.Type),
@@ -179,13 +201,19 @@ func listActivitiesTool(deps Deps) Tool {
 					rows = rows[a.Offset:]
 				}
 			}
-			if len(rows) > limit {
+			hasMore := len(rows) > limit
+			if hasMore {
 				rows = rows[:limit]
 			}
-			return mustJSON(map[string]any{
+			result := map[string]any{
 				"activities": toSummaries(rows),
 				"count":      len(rows),
-			}), nil
+				"has_more":   hasMore,
+			}
+			if hint := paginationHint(hasMore, limit, a.Offset); hint != "" {
+				result["hint"] = hint
+			}
+			return mustJSON(result), nil
 		},
 	}
 }
@@ -310,26 +338,33 @@ func searchActivitiesTool(deps Deps) Tool {
 			if err != nil {
 				return nil, err
 			}
-			limit := a.Limit
-			if limit <= 0 {
-				limit = 20
-			}
+			limit := clampLimit(a.Limit, 20)
+			// Fetch one extra to detect "more available" without a count query.
 			matches, err := deps.DB.SearchFTS(a.Query, storage.ActivityFilter{
 				Source: models.Source(a.Source),
 				After:  after,
 				Before: before,
-			}, limit)
+			}, limit+1)
 			if err != nil {
 				return nil, fmt.Errorf("fts search: %w", err)
+			}
+			hasMore := len(matches) > limit
+			if hasMore {
+				matches = matches[:limit]
 			}
 			out := make([]activitySummary, 0, len(matches))
 			for _, m := range matches {
 				out = append(out, toSummary(m.Activity))
 			}
-			return mustJSON(map[string]any{
+			result := map[string]any{
 				"activities": out,
 				"count":      len(out),
-			}), nil
+				"has_more":   hasMore,
+			}
+			if hasMore {
+				result["hint"] = fmt.Sprintf("more matches exist; narrow your query or raise limit (cap=%d)", maxToolLimit)
+			}
+			return mustJSON(result), nil
 		},
 	}
 }
@@ -378,13 +413,14 @@ func semanticSearchActivitiesTool(deps Deps) Tool {
 			if err != nil {
 				return nil, fmt.Errorf("embed query: %w", err)
 			}
-			limit := a.Limit
-			if limit <= 0 {
-				limit = 10
-			}
-			matches, err := deps.DB.SearchSimilar(vec, limit, after, before)
+			limit := clampLimit(a.Limit, 10)
+			matches, err := deps.DB.SearchSimilar(vec, limit+1, after, before)
 			if err != nil {
 				return nil, fmt.Errorf("vector search: %w", err)
+			}
+			hasMore := len(matches) > limit
+			if hasMore {
+				matches = matches[:limit]
 			}
 			type scored struct {
 				activitySummary
@@ -394,10 +430,15 @@ func semanticSearchActivitiesTool(deps Deps) Tool {
 			for _, m := range matches {
 				out = append(out, scored{activitySummary: toSummary(m.Activity), Score: m.Score})
 			}
-			return mustJSON(map[string]any{
+			result := map[string]any{
 				"activities": out,
 				"count":      len(out),
-			}), nil
+				"has_more":   hasMore,
+			}
+			if hasMore {
+				result["hint"] = fmt.Sprintf("more matches exist; narrow your query or raise limit (cap=%d)", maxToolLimit)
+			}
+			return mustJSON(result), nil
 		},
 	}
 }
@@ -714,14 +755,25 @@ func getRelatedActivitiesTool(deps Deps) Tool {
 					"related": []activitySummary{},
 				}), nil
 			}
-			related, err := deps.DB.FindByIssueKeys(keys, a.ID, a.Limit)
+			limit := clampLimit(a.Limit, 50)
+			// Fetch one extra to detect more.
+			related, err := deps.DB.FindByIssueKeys(keys, a.ID, limit+1)
 			if err != nil {
 				return nil, fmt.Errorf("find related: %w", err)
 			}
-			return mustJSON(map[string]any{
-				"keys":    keys,
-				"related": toSummaries(related),
-			}), nil
+			hasMore := len(related) > limit
+			if hasMore {
+				related = related[:limit]
+			}
+			result := map[string]any{
+				"keys":     keys,
+				"related":  toSummaries(related),
+				"has_more": hasMore,
+			}
+			if hasMore {
+				result["hint"] = fmt.Sprintf("more related activities exist; raise limit (cap=%d)", maxToolLimit)
+			}
+			return mustJSON(result), nil
 		},
 	}
 }

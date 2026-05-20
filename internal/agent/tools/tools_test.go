@@ -639,6 +639,63 @@ func TestGetRelatedActivities_LinksAcrossSourcesByIssueKey(t *testing.T) {
 	}
 }
 
+func TestListActivities_HasMoreAndHint(t *testing.T) {
+	reg, db, ids := newTestRegistry(t)
+	selfID := ids["self"]
+
+	// Add enough rows to exceed limit=2.
+	for i := 0; i < 5; i++ {
+		_, err := db.InsertActivity(models.Activity{
+			Source:     models.SourceGit,
+			SourceID:   "/r:bulk" + strconv.Itoa(i),
+			IdentityID: selfID,
+			Type:       models.TypeCommit,
+			Title:      "bulk " + strconv.Itoa(i),
+			Timestamp:  time.Date(2026, 4, 8, i, 0, 0, 0, time.UTC),
+		})
+		if err != nil {
+			t.Fatalf("insert bulk %d: %v", i, err)
+		}
+	}
+
+	out, err := reg.Execute(context.Background(), "list_activities", json.RawMessage(`{"limit":2}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var got struct {
+		Activities []activitySummary `json:"activities"`
+		Count      int               `json:"count"`
+		HasMore    bool              `json:"has_more"`
+		Hint       string            `json:"hint"`
+	}
+	decodeResult(t, out, &got)
+
+	if got.Count != 2 {
+		t.Errorf("count = %d, want 2", got.Count)
+	}
+	if !got.HasMore {
+		t.Errorf("expected has_more=true with 2-of-many")
+	}
+	if !strings.Contains(got.Hint, "offset=2") {
+		t.Errorf("hint missing offset suggestion: %q", got.Hint)
+	}
+}
+
+func TestClampLimit_RespectsHardCap(t *testing.T) {
+	if got := clampLimit(0, 50); got != 50 {
+		t.Errorf("zero → default: got %d", got)
+	}
+	if got := clampLimit(-3, 50); got != 50 {
+		t.Errorf("negative → default: got %d", got)
+	}
+	if got := clampLimit(10000, 50); got != maxToolLimit {
+		t.Errorf("over cap → maxToolLimit: got %d", got)
+	}
+	if got := clampLimit(20, 50); got != 20 {
+		t.Errorf("under cap → user value: got %d", got)
+	}
+}
+
 func TestResolvePerson_Empty(t *testing.T) {
 	reg, _, _ := newTestRegistry(t)
 	_, err := reg.Execute(context.Background(), "resolve_person", json.RawMessage(`{"name_or_email":"   "}`))
