@@ -134,6 +134,61 @@ func TestParseLog_MalformedEntrySkipped(t *testing.T) {
 	}
 }
 
+func TestParseLog_BodyCapturedAsContent(t *testing.T) {
+	raw := recordSep + "\n" +
+		"sha1" + fieldSep + "2026-03-27T10:00:00Z" + fieldSep + "Fix auth retry" + fieldSep + "Pavel" + fieldSep + "p@x.com\n" +
+		"\n" +
+		"The 401 path wasn't refreshing the JWT.\n" +
+		"Now it retries once after refresh, fails fast otherwise.\n" +
+		"\n" +
+		"Refs PROJ-123\n" +
+		" 2 files changed, 8 insertions(+), 1 deletion(-)\n"
+
+	activities, err := parseLog("repo", "/repo", "", []byte(raw))
+	if err != nil {
+		t.Fatalf("parseLog: %v", err)
+	}
+	if len(activities) != 1 {
+		t.Fatalf("got %d activities, want 1", len(activities))
+	}
+	if activities[0].Title != "Fix auth retry" {
+		t.Errorf("title = %q", activities[0].Title)
+	}
+	wantBody := "The 401 path wasn't refreshing the JWT.\nNow it retries once after refresh, fails fast otherwise.\nRefs PROJ-123"
+	if activities[0].Content != wantBody {
+		t.Errorf("content = %q\nwant     %q", activities[0].Content, wantBody)
+	}
+
+	// Ticket key from the body should be extracted (not just subject/branch).
+	var meta commitMeta
+	if err := json.Unmarshal([]byte(activities[0].Metadata), &meta); err != nil {
+		t.Fatalf("metadata: %v", err)
+	}
+	found := false
+	for _, k := range meta.IssueKeys {
+		if k == "PROJ-123" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("issue_keys missing PROJ-123: %v", meta.IssueKeys)
+	}
+}
+
+func TestParseLog_NoBody(t *testing.T) {
+	raw := recordSep + "\n" +
+		"sha2" + fieldSep + "2026-03-27T10:00:00Z" + fieldSep + "One-liner" + fieldSep + "Pavel" + fieldSep + "p@x.com\n" +
+		" 1 file changed, 1 insertion(+)\n"
+
+	activities, err := parseLog("repo", "/repo", "", []byte(raw))
+	if err != nil {
+		t.Fatalf("parseLog: %v", err)
+	}
+	if activities[0].Content != "" {
+		t.Errorf("expected empty content, got %q", activities[0].Content)
+	}
+}
+
 func TestParseLog_DeletionsOnly(t *testing.T) {
 	raw := recordSep + "\n" +
 		"ddd" + fieldSep + "2026-03-27T12:00:00Z" + fieldSep + "Delete stuff" + fieldSep + "Pavel" + fieldSep + "p@x.com\n" +

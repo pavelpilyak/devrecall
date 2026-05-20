@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pavelpilyak/devrecall/internal/collector/ratelimit"
@@ -21,6 +24,10 @@ const (
 	// against Atlassian's offset-pagination cap (~10k results) and any API
 	// edge case where Size keeps reporting full but content doesn't advance.
 	maxPaginationPages = 100
+	// maxBodyBytes caps how much page/comment body text we store per row.
+	// Big enough for design docs and RFCs, small enough to keep the DB lean
+	// and embeddings tractable.
+	maxBodyBytes = 4096
 )
 
 // Collector fetches Confluence pages created or edited by the user.
@@ -125,7 +132,20 @@ type contentResult struct {
 	Space     contentSpace      `json:"space,omitempty"`
 	History   contentHistory    `json:"history,omitempty"`
 	Links     contentLinks      `json:"_links,omitempty"`
+	Body      contentBody       `json:"body,omitempty"`
 	Container *contentContainer `json:"container,omitempty"` // parent for comments
+}
+
+// contentBody holds the page/comment body in storage format (XHTML-like).
+// Atlassian also returns view/export_view/atlas_doc_format, but storage is
+// the canonical representation and the cheapest to request.
+type contentBody struct {
+	Storage contentBodyValue `json:"storage,omitempty"`
+}
+
+type contentBodyValue struct {
+	Value          string `json:"value"`
+	Representation string `json:"representation"`
 }
 
 // contentContainer is a slim view of a comment's parent page/blogpost.
@@ -216,7 +236,7 @@ func (c *Collector) searchPages(ctx context.Context, since time.Time) ([]content
 	for page := 0; page < maxPaginationPages; page++ {
 		params := url.Values{
 			"cql":    {cql},
-			"expand": {"history,history.lastUpdated,space"},
+			"expand": {"history,history.lastUpdated,space,body.storage"},
 			"limit":  {strconv.Itoa(perPage)},
 			"start":  {strconv.Itoa(start)},
 		}
@@ -259,7 +279,7 @@ func (c *Collector) searchComments(ctx context.Context, since time.Time) ([]cont
 	for page := 0; page < maxPaginationPages; page++ {
 		params := url.Values{
 			"cql":    {cql},
-			"expand": {"history,history.lastUpdated,space,container"},
+			"expand": {"history,history.lastUpdated,space,container,body.storage"},
 			"limit":  {strconv.Itoa(perPage)},
 			"start":  {strconv.Itoa(start)},
 		}
@@ -333,6 +353,7 @@ func (c *Collector) pageToActivity(page contentResult) models.Activity {
 		SourceID:  fmt.Sprintf("confluence:%s:%s", page.ID, action),
 		Type:      models.TypeDocument,
 		Title:     title,
+		Content:   bodyToPlainText(page.Body.Storage.Value),
 		Metadata:  string(metaJSON),
 		Timestamp: ts,
 	}
@@ -393,6 +414,7 @@ func (c *Collector) commentToActivity(comment contentResult) models.Activity {
 		SourceID:  fmt.Sprintf("confluence:comment:%s", comment.ID),
 		Type:      models.TypeDocument,
 		Title:     title,
+		Content:   bodyToPlainText(comment.Body.Storage.Value),
 		Metadata:  string(metaJSON),
 		Timestamp: ts,
 	}
@@ -475,4 +497,34 @@ func capitalize(s string) string {
 		return s
 	}
 	return string(s[0]-32) + s[1:]
+}
+
+// htmlTagRe matches XML/HTML tags. Confluence storage format is well-formed
+// XHTML-like, so this is good enough — we don't need a full parser.
+var htmlTagRe = regexp.MustCompile(`<[^>]+>`)
+
+// whitespaceRe collapses runs of whitespace (incl. newlines from tag-strip).
+var whitespaceRe = regexp.MustCompile(`\s+`)
+
+// bodyToPlainText converts Confluence storage format (XHTML) to plain text:
+// strip tags, decode entities, collapse whitespace, cap at maxBodyBytes.
+// Truncation appends an ellipsis so the agent can tell content was cut.
+func bodyToPlainText(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	// Replace common block tags with newlines before stripping so paragraphs
+	// don't collide into one wall of text.
+	s := strings.NewReplacer(
+		"</p>", "\n", "</li>", "\n", "</h1>", "\n", "</h2>", "\n",
+		"</h3>", "\n", "</h4>", "\n", "<br/>", "\n", "<br />", "\n", "<br>", "\n",
+	).Replace(raw)
+	s = htmlTagRe.ReplaceAllString(s, "")
+	s = html.UnescapeString(s)
+	s = whitespaceRe.ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+	if len(s) > maxBodyBytes {
+		s = s[:maxBodyBytes] + "…"
+	}
+	return s
 }

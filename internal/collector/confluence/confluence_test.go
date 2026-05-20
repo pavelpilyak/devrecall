@@ -728,6 +728,82 @@ func TestCommentToActivity_NoContainer(t *testing.T) {
 	}
 }
 
+func TestBodyToPlainText(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"<p>Hello world</p>", "Hello world"},
+		{"<p>One</p><p>Two</p>", "One Two"},
+		{"<h1>Title</h1><p>Body</p>", "Title Body"},
+		{"<ul><li>A</li><li>B</li></ul>", "A B"},
+		{"Plain text", "Plain text"},
+		{"Hello &amp; world", "Hello & world"},
+		{"<p>Line 1<br/>Line 2</p>", "Line 1 Line 2"},
+		{"   <p>  spacious  </p>   ", "spacious"},
+		{"<p>&lt;script&gt;alert()&lt;/script&gt;</p>", "<script>alert()</script>"},
+	}
+	for _, tc := range cases {
+		if got := bodyToPlainText(tc.in); got != tc.want {
+			t.Errorf("bodyToPlainText(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestBodyToPlainText_TruncatesAtCap(t *testing.T) {
+	body := "<p>" + strings.Repeat("x", maxBodyBytes+500) + "</p>"
+	got := bodyToPlainText(body)
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("expected ellipsis on truncation, got suffix %q", got[len(got)-3:])
+	}
+	if len(got) > maxBodyBytes+len("…")+3 { // +3 byte slack for utf-8 ellipsis
+		t.Errorf("len = %d, want <= %d", len(got), maxBodyBytes+len("…")+3)
+	}
+}
+
+func TestCollectSince_PageBodyStored(t *testing.T) {
+	_, c := newTestServer(t, map[string]http.HandlerFunc{
+		"/rest/api/content/search": func(w http.ResponseWriter, r *http.Request) {
+			// Confirm we asked for body.storage in expand.
+			if !strings.Contains(r.URL.Query().Get("expand"), "body.storage") {
+				t.Errorf("expand missing body.storage: %q", r.URL.Query().Get("expand"))
+			}
+			json.NewEncoder(w).Encode(searchResult{
+				Results: []contentResult{
+					{
+						ID:    "p-1",
+						Type:  "page",
+						Title: "RFC",
+						Space: contentSpace{Key: "ENG"},
+						History: contentHistory{
+							CreatedDate: "2026-05-08T10:00:00.000Z",
+							CreatedBy:   contentUser{AccountID: "user-123"},
+							LastUpdated: lastUpdated{When: "2026-05-08T10:00:00.000Z", By: contentUser{AccountID: "user-123"}},
+						},
+						Body: contentBody{Storage: contentBodyValue{
+							Value:          "<p>Auth bug fix: refresh JWT on 401</p>",
+							Representation: "storage",
+						}},
+					},
+				},
+				Size: 1,
+			})
+		},
+	})
+
+	activities, err := c.CollectSince(context.Background(), time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("CollectSince: %v", err)
+	}
+	if len(activities) != 1 {
+		t.Fatalf("expected 1 activity, got %d", len(activities))
+	}
+	want := "Auth bug fix: refresh JWT on 401"
+	if activities[0].Content != want {
+		t.Errorf("Content = %q, want %q", activities[0].Content, want)
+	}
+}
+
 func TestCapitalize(t *testing.T) {
 	tests := []struct {
 		in, want string

@@ -25,7 +25,7 @@ import (
 
 // Defaults applied when LoopOptions fields are zero.
 const (
-	DefaultMaxSteps    = 8
+	DefaultMaxSteps    = 15
 	DefaultToolTimeout = 5 * time.Second
 )
 

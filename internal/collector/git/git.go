@@ -36,8 +36,15 @@ const fieldSep = "‡"
 const recordSep = "‡‡‡"
 
 // logFormat is the --format string passed to git log.
-// Fields: SHA, ISO date, subject, author name, author email.
-var logFormat = strings.Join([]string{"%H", "%aI", "%s", "%an", "%ae"}, fieldSep)
+// Fields: SHA, ISO date, subject, author name, author email — all on the
+// first line. %n%b appends the commit body on subsequent lines, ending at
+// the shortstat line (or end of block).
+var logFormat = strings.Join([]string{"%H", "%aI", "%s", "%an", "%ae"}, fieldSep) + "%n%b"
+
+// maxBodyBytes caps how much commit body text we store per row. Generous
+// enough for typical design-doc-style commits, small enough to keep the DB
+// and embeddings tractable. Truncated bodies get an ellipsis suffix.
+const maxBodyBytes = 4096
 
 // statRe matches the summary line of --shortstat output.
 var statRe = regexp.MustCompile(
@@ -158,20 +165,36 @@ func parseCommit(repoName, repoPath, branch, block string) (models.Activity, err
 	authorName := fields[3]
 	authorEmail := fields[4]
 
-	// Parse optional shortstat line.
+	// After the header line, every subsequent non-empty line is either the
+	// shortstat (matched by statRe) or part of the commit body.
+	var bodyLines []string
 	var filesChanged, insertions, deletions int
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if m := statRe.FindStringSubmatch(line); m != nil {
+		raw := scanner.Text()
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		if m := statRe.FindStringSubmatch(trimmed); m != nil {
 			filesChanged, _ = strconv.Atoi(m[1])
 			insertions, _ = strconv.Atoi(m[2])
 			deletions, _ = strconv.Atoi(m[3])
-			break
+			continue
 		}
+		bodyLines = append(bodyLines, raw)
+	}
+	body := strings.TrimSpace(strings.Join(bodyLines, "\n"))
+	if len(body) > maxBodyBytes {
+		body = body[:maxBodyBytes] + "…"
 	}
 
-	// Extract ticket keys from commit message and branch name.
-	issueKeys := ticketlink.Extract(subject, branch)
+	// Extract ticket keys from the full commit message (subject + body) and
+	// branch name — keys mentioned only in the body weren't caught before.
+	fullMessage := subject
+	if body != "" {
+		fullMessage = subject + "\n" + body
+	}
+	issueKeys := ticketlink.Extract(fullMessage, branch)
 
 	meta := commitMeta{
 		Repo:         repoName,
@@ -187,10 +210,11 @@ func parseCommit(repoName, repoPath, branch, block string) (models.Activity, err
 
 	return models.Activity{
 		Source:    models.SourceGit,
-		SourceID: repoPath + ":" + sha,
-		Type:     models.TypeCommit,
-		Title:    subject,
-		Metadata: string(metaJSON),
+		SourceID:  repoPath + ":" + sha,
+		Type:      models.TypeCommit,
+		Title:     subject,
+		Content:   body,
+		Metadata:  string(metaJSON),
 		Timestamp: ts,
 	}, nil
 }
