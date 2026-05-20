@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +98,7 @@ func TestRegistry_Names(t *testing.T) {
 		"search_activities",
 		"semantic_search_activities",
 		"get_activity",
+		"get_related_activities",
 		"list_summaries",
 		"get_summary",
 		"list_identities",
@@ -555,6 +557,85 @@ func TestResolvePerson(t *testing.T) {
 	decodeResult(t, out, &got)
 	if got.Identity != nil {
 		t.Errorf("expected nil for unknown person, got %+v", got.Identity)
+	}
+}
+
+func TestGetRelatedActivities_LinksAcrossSourcesByIssueKey(t *testing.T) {
+	reg, db, _ := newTestRegistry(t)
+
+	// Source activity: a Jira ticket carrying metadata.issue_key.
+	jiraID, err := db.InsertActivity(models.Activity{
+		Source:    models.SourceJira,
+		SourceID:  "jira:PROJ-1",
+		Type:      models.TypeTicket,
+		Title:     "PROJ-1: auth retry",
+		Metadata:  `{"issue_key":"PROJ-1","url":"https://x/PROJ-1"}`,
+		Timestamp: time.Date(2026, 4, 5, 8, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("insert jira: %v", err)
+	}
+	// Git commit carrying the same key in metadata.issue_keys (array).
+	if _, err := db.InsertActivity(models.Activity{
+		Source:    models.SourceGit,
+		SourceID:  "/r:sha1",
+		Type:      models.TypeCommit,
+		Title:     "Fix retry",
+		Metadata:  `{"sha":"sha1","issue_keys":["PROJ-1"]}`,
+		Timestamp: time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("insert git: %v", err)
+	}
+	// GitHub PR also referencing PROJ-1.
+	if _, err := db.InsertActivity(models.Activity{
+		Source:    models.SourceGitHub,
+		SourceID:  "octo/api#1",
+		Type:      models.TypePullRequest,
+		Title:     "PR: PROJ-1 retry fix",
+		Metadata:  `{"pr_number":1,"issue_keys":["PROJ-1"]}`,
+		Timestamp: time.Date(2026, 4, 7, 10, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("insert pr: %v", err)
+	}
+	// Unrelated commit on a different ticket — should not appear in results.
+	if _, err := db.InsertActivity(models.Activity{
+		Source:    models.SourceGit,
+		SourceID:  "/r:sha2",
+		Type:      models.TypeCommit,
+		Title:     "Unrelated",
+		Metadata:  `{"sha":"sha2","issue_keys":["OTHER-9"]}`,
+		Timestamp: time.Date(2026, 4, 8, 11, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("insert unrelated: %v", err)
+	}
+
+	args := json.RawMessage(`{"id":` + strconv.FormatInt(jiraID, 10) + `}`)
+	out, err := reg.Execute(context.Background(), "get_related_activities", args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	var got struct {
+		Keys    []string          `json:"keys"`
+		Related []activitySummary `json:"related"`
+	}
+	decodeResult(t, out, &got)
+
+	if len(got.Keys) != 1 || got.Keys[0] != "PROJ-1" {
+		t.Errorf("keys = %v, want [PROJ-1]", got.Keys)
+	}
+	if len(got.Related) != 2 {
+		t.Fatalf("related = %d, want 2 (git + github), got %+v", len(got.Related), got.Related)
+	}
+	seen := map[string]bool{}
+	for _, r := range got.Related {
+		seen[r.Source] = true
+		if r.ID == jiraID {
+			t.Errorf("source activity should be excluded from related")
+		}
+	}
+	if !seen["git"] || !seen["github"] {
+		t.Errorf("expected both git and github in related; got %+v", seen)
 	}
 }
 

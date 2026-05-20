@@ -23,6 +23,7 @@ func buildCatalogue(deps Deps) []Tool {
 		searchActivitiesTool(deps),
 		semanticSearchActivitiesTool(deps),
 		getActivityTool(deps),
+		getRelatedActivitiesTool(deps),
 		listSummariesTool(deps),
 		getSummaryTool(deps),
 		listIdentitiesTool(deps),
@@ -632,6 +633,95 @@ func resolvePersonTool(deps Deps) Tool {
 				return mustJSON(map[string]any{"identity": nil}), nil
 			}
 			return mustJSON(map[string]any{"identity": best}), nil
+		},
+	}
+}
+
+// ─── get_related_activities ──────────────────────────────────────────────────
+
+type getRelatedActivitiesArgs struct {
+	ID    int64 `json:"id"`
+	Limit int   `json:"limit"`
+}
+
+// extractIssueKeys pulls a unified list of ticket keys from an activity's
+// metadata, accepting both the singular `issue_key` (Jira) and plural
+// `issue_keys` (everything else) shapes.
+func extractIssueKeys(metadata string) []string {
+	if metadata == "" {
+		return nil
+	}
+	var parsed struct {
+		IssueKey  string   `json:"issue_key"`
+		IssueKeys []string `json:"issue_keys"`
+	}
+	if err := json.Unmarshal([]byte(metadata), &parsed); err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	if parsed.IssueKey != "" {
+		k := strings.ToUpper(parsed.IssueKey)
+		seen[k] = true
+		out = append(out, k)
+	}
+	for _, k := range parsed.IssueKeys {
+		k = strings.ToUpper(k)
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func getRelatedActivitiesTool(deps Deps) Tool {
+	schema := json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"id":{"type":"integer","description":"Activity ID to find relatives for"},
+			"limit":{"type":"integer","description":"Max related activities to return (default 50)"}
+		},
+		"required":["id"],
+		"additionalProperties":false
+	}`)
+	return Tool{
+		Name:        "get_related_activities",
+		Description: "Find activities that share a ticket key with the given activity — e.g. given a Jira ticket, returns the commits / PRs / Linear issues / Confluence pages that reference the same key. Use this to assemble the full timeline around one piece of work.",
+		Schema:      schema,
+		Execute: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+			var a getRelatedActivitiesArgs
+			if err := json.Unmarshal(args, &a); err != nil {
+				return nil, fmt.Errorf("get_related_activities args: %w", err)
+			}
+			if a.ID <= 0 {
+				return nil, errors.New("get_related_activities: id is required")
+			}
+			rows, err := deps.DB.GetActivitiesByIDs([]int64{a.ID})
+			if err != nil {
+				return nil, fmt.Errorf("load source activity: %w", err)
+			}
+			if len(rows) == 0 {
+				return mustJSON(map[string]any{
+					"keys":    []string{},
+					"related": []activitySummary{},
+				}), nil
+			}
+			keys := extractIssueKeys(rows[0].Metadata)
+			if len(keys) == 0 {
+				return mustJSON(map[string]any{
+					"keys":    []string{},
+					"related": []activitySummary{},
+				}), nil
+			}
+			related, err := deps.DB.FindByIssueKeys(keys, a.ID, a.Limit)
+			if err != nil {
+				return nil, fmt.Errorf("find related: %w", err)
+			}
+			return mustJSON(map[string]any{
+				"keys":    keys,
+				"related": toSummaries(related),
+			}), nil
 		},
 	}
 }

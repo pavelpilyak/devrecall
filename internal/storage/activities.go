@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -350,6 +351,56 @@ func (db *DB) GetActivitiesByIDs(ids []int64) ([]models.Activity, error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get activities by ids: %w", err)
+	}
+	defer rows.Close()
+
+	return scanActivities(rows)
+}
+
+// FindByIssueKeys returns activities whose metadata references any of the
+// given ticket keys, either via the singular `issue_key` field (Jira) or as
+// an element of the `issue_keys` array (git, GitHub, GitLab, Bitbucket,
+// Linear, Confluence). Excludes excludeID so callers can ask for "related to
+// this row, but not this row itself." Sorted by timestamp DESC.
+func (db *DB) FindByIssueKeys(keys []string, excludeID int64, limit int) ([]models.Activity, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	keysJSON, err := json.Marshal(keys)
+	if err != nil {
+		return nil, fmt.Errorf("marshal keys: %w", err)
+	}
+
+	// Some rows have metadata="" (older inserts) or NULL — json_extract on
+	// either errors with "malformed JSON". Use json_valid as a guard and fall
+	// back to an empty object before any json_extract calls.
+	const query = `
+		WITH safe AS (
+		  SELECT a.id, a.source, a.source_id, COALESCE(a.identity_id, 0) AS identity_id,
+		         a.type, a.title, COALESCE(a.content, '') AS content,
+		         COALESCE(a.metadata, '') AS metadata, a.timestamp,
+		         CASE WHEN json_valid(a.metadata) THEN a.metadata ELSE '{}' END AS m
+		  FROM activities a
+		  WHERE a.id != ?
+		)
+		SELECT id, source, source_id, identity_id, type, title, content, metadata, timestamp
+		FROM safe
+		WHERE
+		  json_extract(m, '$.issue_key') IN (SELECT value FROM json_each(?))
+		  OR EXISTS (
+		    SELECT 1
+		    FROM json_each(COALESCE(json_extract(m, '$.issue_keys'), '[]')) j
+		    WHERE j.value IN (SELECT value FROM json_each(?))
+		  )
+		ORDER BY timestamp DESC
+		LIMIT ?`
+
+	rows, err := db.Query(query, excludeID, string(keysJSON), string(keysJSON), limit)
+	if err != nil {
+		return nil, fmt.Errorf("find by issue keys: %w", err)
 	}
 	defer rows.Close()
 
