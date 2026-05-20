@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pavelpilyak/devrecall/internal/collector/ratelimit"
+	"github.com/pavelpilyak/devrecall/internal/collector/ticketlink"
 	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
@@ -129,6 +130,7 @@ type prMeta struct {
 	Additions     int      `json:"additions"`
 	Deletions     int      `json:"deletions"`
 	CommitSHAs    []string `json:"commit_shas,omitempty"`
+	IssueKeys     []string `json:"issue_keys,omitempty"`
 	URL           string   `json:"url"`
 }
 
@@ -187,6 +189,7 @@ func (c *Collector) collectPRsAuthored(ctx context.Context, since time.Time) ([]
 			Additions:     pr.Additions,
 			Deletions:     pr.Deletions,
 			CommitSHAs:    commitSHAs,
+			IssueKeys:     ticketlink.ExtractFromMessage(pr.Title + "\n" + pr.Body),
 			URL:           pr.HTMLURL,
 		}
 		metaJSON, _ := json.Marshal(meta)
@@ -208,11 +211,12 @@ func (c *Collector) collectPRsAuthored(ctx context.Context, since time.Time) ([]
 // --- PR reviews ---
 
 type reviewMeta struct {
-	Repo     string `json:"repo"`
-	PRNumber int    `json:"pr_number"`
-	PRTitle  string `json:"pr_title"`
-	State    string `json:"state"` // APPROVED, CHANGES_REQUESTED, COMMENTED
-	URL      string `json:"url"`
+	Repo      string   `json:"repo"`
+	PRNumber  int      `json:"pr_number"`
+	PRTitle   string   `json:"pr_title"`
+	State     string   `json:"state"` // APPROVED, CHANGES_REQUESTED, COMMENTED
+	IssueKeys []string `json:"issue_keys,omitempty"`
+	URL       string   `json:"url"`
 }
 
 type ghReview struct {
@@ -263,11 +267,12 @@ func (c *Collector) collectPRsReviewed(ctx context.Context, since time.Time) ([]
 			seen[key] = true
 
 			meta := reviewMeta{
-				Repo:     repo,
-				PRNumber: item.Number,
-				PRTitle:  item.Title,
-				State:    review.State,
-				URL:      review.HTMLURL,
+				Repo:      repo,
+				PRNumber:  item.Number,
+				PRTitle:   item.Title,
+				State:     review.State,
+				IssueKeys: ticketlink.ExtractFromMessage(item.Title + "\n" + item.Body),
+				URL:       review.HTMLURL,
 			}
 			metaJSON, _ := json.Marshal(meta)
 
@@ -314,12 +319,13 @@ type ghLabel struct {
 }
 
 type issueMeta struct {
-	Repo     string   `json:"repo"`
-	Number   int      `json:"number"`
-	State    string   `json:"state"`
-	Labels   []string `json:"labels,omitempty"`
-	Assignee string   `json:"assignee,omitempty"`
-	URL      string   `json:"url"`
+	Repo      string   `json:"repo"`
+	Number    int      `json:"number"`
+	State     string   `json:"state"`
+	Labels    []string `json:"labels,omitempty"`
+	Assignee  string   `json:"assignee,omitempty"`
+	IssueKeys []string `json:"issue_keys,omitempty"`
+	URL       string   `json:"url"`
 }
 
 func (c *Collector) collectIssues(ctx context.Context, since time.Time) ([]models.Activity, error) {
@@ -350,12 +356,13 @@ func (c *Collector) collectIssues(ctx context.Context, since time.Time) ([]model
 		}
 
 		meta := issueMeta{
-			Repo:     repo,
-			Number:   item.Number,
-			State:    item.State,
-			Labels:   labels,
-			Assignee: assignee,
-			URL:      item.HTMLURL,
+			Repo:      repo,
+			Number:    item.Number,
+			State:     item.State,
+			Labels:    labels,
+			Assignee:  assignee,
+			IssueKeys: ticketlink.ExtractFromMessage(item.Title + "\n" + item.Body),
+			URL:       item.HTMLURL,
 		}
 		metaJSON, _ := json.Marshal(meta)
 

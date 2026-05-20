@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/pavelpilyak/devrecall/internal/collector/ratelimit"
+	"github.com/pavelpilyak/devrecall/internal/collector/ticketlink"
 	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
@@ -83,6 +85,7 @@ func (c *Collector) CollectSince(ctx context.Context, since time.Time) ([]models
 				Status:          issue.State.Name,
 				Priority:        issue.Priority,
 				Labels:          labelNames(issue.Labels.Nodes),
+				IssueKeys:       issueKeysFor(issue),
 				URL:             issue.URL,
 			}
 			if issue.Project != nil {
@@ -208,13 +211,15 @@ type issueMeta struct {
 	Priority        int      `json:"priority"`
 	Labels          []string `json:"labels,omitempty"`
 	Cycle           string   `json:"cycle,omitempty"`
+	IssueKeys       []string `json:"issue_keys,omitempty"`
 	URL             string   `json:"url"`
 }
 
 type commentMeta struct {
-	IssueIdentifier string `json:"issue_identifier"`
-	CommentID       string `json:"comment_id"`
-	URL             string `json:"url"`
+	IssueIdentifier string   `json:"issue_identifier"`
+	CommentID       string   `json:"comment_id"`
+	IssueKeys       []string `json:"issue_keys,omitempty"`
+	URL             string   `json:"url"`
 }
 
 // --- Collection methods ---
@@ -334,6 +339,7 @@ func (c *Collector) extractTransitions(issue linearIssue, since time.Time) []mod
 			Labels:          labelNames(issue.Labels.Nodes),
 			FromStatus:      entry.FromState.Name,
 			ToStatus:        entry.ToState.Name,
+			IssueKeys:       issueKeysFor(issue),
 			URL:             issue.URL,
 		}
 		if issue.Project != nil {
@@ -375,6 +381,7 @@ func (c *Collector) extractComments(issue linearIssue, since time.Time) []models
 		meta := commentMeta{
 			IssueIdentifier: issue.Identifier,
 			CommentID:       comment.ID,
+			IssueKeys:       issueKeysFor(issue),
 			URL:             issue.URL,
 		}
 		metaJSON, _ := json.Marshal(meta)
@@ -442,4 +449,26 @@ func labelNames(labels []linearLabel) []string {
 		names[i] = l.Name
 	}
 	return names
+}
+
+// issueKeysFor returns the keys that link this Linear issue to other sources:
+// the Linear identifier itself (e.g. ENG-123 — which can match a Jira ticket
+// of the same shape or a key referenced in a git branch/commit) plus any
+// extra keys mentioned in the issue title. Deduplicated. We don't fetch the
+// Linear description body, so cross-references there are not picked up.
+func issueKeysFor(issue linearIssue) []string {
+	seen := map[string]bool{}
+	var out []string
+	if issue.Identifier != "" {
+		key := strings.ToUpper(issue.Identifier)
+		seen[key] = true
+		out = append(out, key)
+	}
+	for _, k := range ticketlink.ExtractFromMessage(issue.Title) {
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	return out
 }

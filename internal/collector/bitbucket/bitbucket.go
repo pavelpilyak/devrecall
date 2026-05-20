@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pavelpilyak/devrecall/internal/collector/ratelimit"
+	"github.com/pavelpilyak/devrecall/internal/collector/ticketlink"
 	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
@@ -143,15 +144,17 @@ type prMeta struct {
 	Reviewers     []string `json:"reviewers,omitempty"`
 	CommentsCount int      `json:"comments_count"`
 	CommitSHAs    []string `json:"commit_shas,omitempty"`
+	IssueKeys     []string `json:"issue_keys,omitempty"`
 	URL           string   `json:"url"`
 }
 
 type reviewMeta struct {
-	Repo     string `json:"repo"`
-	PRNumber int    `json:"pr_number"`
-	PRTitle  string `json:"pr_title"`
-	Approved bool   `json:"approved"`
-	URL      string `json:"url"`
+	Repo      string   `json:"repo"`
+	PRNumber  int      `json:"pr_number"`
+	PRTitle   string   `json:"pr_title"`
+	Approved  bool     `json:"approved"`
+	IssueKeys []string `json:"issue_keys,omitempty"`
+	URL       string   `json:"url"`
 }
 
 // --- Collection methods ---
@@ -264,6 +267,7 @@ func (c *Collector) prsToActivities(ctx context.Context, prs []bbPullRequest, re
 				Reviewers:     reviewerNames,
 				CommentsCount: pr.CommentCount,
 				CommitSHAs:    commitSHAs,
+				IssueKeys:     ticketlink.ExtractFromMessage(pr.Title + "\n" + pr.Description),
 				URL:           pr.Links.HTML.Href,
 			}
 			metaJSON, _ := json.Marshal(meta)
@@ -281,10 +285,11 @@ func (c *Collector) prsToActivities(ctx context.Context, prs []bbPullRequest, re
 
 		if isReviewer && !isAuthor {
 			meta := reviewMeta{
-				Repo:     repo.FullName,
-				PRNumber: pr.ID,
-				PRTitle:  pr.Title,
-				URL:      pr.Links.HTML.Href,
+				Repo:      repo.FullName,
+				PRNumber:  pr.ID,
+				PRTitle:   pr.Title,
+				IssueKeys: ticketlink.ExtractFromMessage(pr.Title + "\n" + pr.Description),
+				URL:       pr.Links.HTML.Href,
 			}
 			metaJSON, _ := json.Marshal(meta)
 

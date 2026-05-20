@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pavelpilyak/devrecall/internal/collector/ratelimit"
+	"github.com/pavelpilyak/devrecall/internal/collector/ticketlink"
 	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
@@ -164,23 +165,26 @@ type mrMeta struct {
 	Reviewers     []string `json:"reviewers,omitempty"`
 	CommentsCount int      `json:"comments_count"`
 	CommitSHAs    []string `json:"commit_shas,omitempty"`
+	IssueKeys     []string `json:"issue_keys,omitempty"`
 	URL           string   `json:"url"`
 }
 
 type approvalMeta struct {
-	Project  string `json:"project"`
-	MRNumber int    `json:"mr_number"`
-	MRTitle  string `json:"mr_title"`
-	URL      string `json:"url"`
+	Project   string   `json:"project"`
+	MRNumber  int      `json:"mr_number"`
+	MRTitle   string   `json:"mr_title"`
+	IssueKeys []string `json:"issue_keys,omitempty"`
+	URL       string   `json:"url"`
 }
 
 type issueMeta struct {
-	Project  string   `json:"project"`
-	Number   int      `json:"number"`
-	State    string   `json:"state"`
-	Labels   []string `json:"labels,omitempty"`
-	Assignee string   `json:"assignee,omitempty"`
-	URL      string   `json:"url"`
+	Project   string   `json:"project"`
+	Number    int      `json:"number"`
+	State     string   `json:"state"`
+	Labels    []string `json:"labels,omitempty"`
+	Assignee  string   `json:"assignee,omitempty"`
+	IssueKeys []string `json:"issue_keys,omitempty"`
+	URL       string   `json:"url"`
 }
 
 // --- Collection methods ---
@@ -261,6 +265,7 @@ func (c *Collector) collectMRsAuthored(ctx context.Context, proj glProject, sinc
 			Reviewers:     reviewerNames,
 			CommentsCount: mr.UserNotesCount,
 			CommitSHAs:    commitSHAs,
+			IssueKeys:     ticketlink.ExtractFromMessage(mr.Title + "\n" + mr.Description),
 			URL:           mr.WebURL,
 		}
 		metaJSON, _ := json.Marshal(meta)
@@ -320,10 +325,11 @@ func (c *Collector) collectMRsReviewed(ctx context.Context, proj glProject, sinc
 		}
 
 		meta := approvalMeta{
-			Project:  proj.PathWithNamespace,
-			MRNumber: mr.IID,
-			MRTitle:  mr.Title,
-			URL:      mr.WebURL,
+			Project:   proj.PathWithNamespace,
+			MRNumber:  mr.IID,
+			MRTitle:   mr.Title,
+			IssueKeys: ticketlink.ExtractFromMessage(mr.Title + "\n" + mr.Description),
+			URL:       mr.WebURL,
 		}
 		metaJSON, _ := json.Marshal(meta)
 
@@ -378,12 +384,13 @@ func (c *Collector) collectIssues(ctx context.Context, proj glProject, since tim
 			}
 
 			meta := issueMeta{
-				Project:  proj.PathWithNamespace,
-				Number:   issue.IID,
-				State:    issue.State,
-				Labels:   issue.Labels,
-				Assignee: assignee,
-				URL:      issue.WebURL,
+				Project:   proj.PathWithNamespace,
+				Number:    issue.IID,
+				State:     issue.State,
+				Labels:    issue.Labels,
+				Assignee:  assignee,
+				IssueKeys: ticketlink.ExtractFromMessage(issue.Title + "\n" + issue.Description),
+				URL:       issue.WebURL,
 			}
 			metaJSON, _ := json.Marshal(meta)
 
