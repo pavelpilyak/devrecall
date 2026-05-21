@@ -6,6 +6,8 @@
   import Chip from "../components/ui/Chip.svelte";
   import SourceDot from "../components/ui/SourceDot.svelte";
   import DateTimeField from "../components/ui/DateTimeField.svelte";
+  import Btn from "../components/ui/Btn.svelte";
+  import Icon from "../components/ui/Icon.svelte";
 
   let activities = $state<Activity[]>([]);
   let loading = $state(false);
@@ -138,12 +140,42 @@
     }
   }
 
+  // Track the per-source counts we last saw so we can detect new activity
+  // landing in the DB out-of-band (e.g. from the launchd background daemon,
+  // which writes silently and never touches lastSyncAt).
+  let lastKnownTotal = $state(0);
+
+  function totalFromStatus(): number {
+    const status = $apiStatus;
+    if (!status?.sources) return 0;
+    return status.sources.reduce((acc, s) => acc + (s.count || 0), 0);
+  }
+
   onMount(() => {
     loadActivities();
-    const unsub = lastSyncAt.subscribe((ts) => {
+    // Manual sync from the titlebar bumps lastSyncAt → refresh immediately.
+    const unsubSync = lastSyncAt.subscribe((ts) => {
       if (ts > 0) loadActivities();
     });
-    return unsub;
+    // App.svelte polls /api/status every 30s. When the total activity count
+    // grows (background daemon synced), refresh in place — no manual click
+    // required.
+    const unsubStatus = apiStatus.subscribe(() => {
+      const cur = totalFromStatus();
+      if (cur === 0) return;
+      if (lastKnownTotal === 0) {
+        lastKnownTotal = cur;
+        return;
+      }
+      if (cur !== lastKnownTotal) {
+        lastKnownTotal = cur;
+        loadActivities();
+      }
+    });
+    return () => {
+      unsubSync();
+      unsubStatus();
+    };
   });
 </script>
 
@@ -153,6 +185,12 @@
       <DateTimeField bind:value={afterDate} mode="date" onchange={loadActivities} />
       <span class="arrow">→</span>
       <DateTimeField bind:value={beforeDate} mode="date" onchange={loadActivities} />
+      <Btn size="sm" disabled={loading} onclick={loadActivities} title="Reload the timeline from the database">
+        {#snippet children()}
+          <Icon name={loading ? "loader" : "refresh-cw"} size={12} />
+          <span>Refresh</span>
+        {/snippet}
+      </Btn>
     {/snippet}
   </PanelHeader>
 
