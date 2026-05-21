@@ -75,6 +75,23 @@
     }
   }
 
+  // Manual refresh flashes a brief "Refreshed" confirmation since the
+  // request usually completes in tens of milliseconds — without feedback
+  // the click looks like nothing happened.
+  let justRefreshed = $state(false);
+  let refreshedTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  async function manualRefresh() {
+    await loadActivities();
+    if (error) return;
+    justRefreshed = true;
+    if (refreshedTimeout) clearTimeout(refreshedTimeout);
+    refreshedTimeout = setTimeout(() => {
+      justRefreshed = false;
+      refreshedTimeout = null;
+    }, 1200);
+  }
+
   type Group = { day: string; items: Activity[] };
 
   const groups = $derived.by<Group[]>(() => {
@@ -185,12 +202,14 @@
       <DateTimeField bind:value={afterDate} mode="date" onchange={loadActivities} />
       <span class="arrow">→</span>
       <DateTimeField bind:value={beforeDate} mode="date" onchange={loadActivities} />
-      <Btn size="sm" disabled={loading} onclick={loadActivities} title="Reload the timeline from the database">
-        {#snippet children()}
-          <Icon name={loading ? "loader" : "refresh-cw"} size={12} />
-          <span>Refresh</span>
-        {/snippet}
-      </Btn>
+      <span class="refresh-wrap" class:flash={justRefreshed}>
+        <Btn size="sm" disabled={loading} onclick={manualRefresh} title="Reload the timeline from the database">
+          {#snippet children()}
+            <Icon name={loading ? "loader" : justRefreshed ? "check" : "refresh-cw"} size={12} />
+            <span>{justRefreshed ? "Refreshed" : "Refresh"}</span>
+          {/snippet}
+        </Btn>
+      </span>
     {/snippet}
   </PanelHeader>
 
@@ -253,6 +272,26 @@
   .scroll { flex: 1; overflow: auto; background: var(--ink-1); }
 
   .arrow { font-family: var(--font-mono); font-size: 11px; color: var(--fg-4); }
+
+  /* Refresh button gets a single brief pulse on successful manual
+     reload so a sub-100ms request still gives the eye something to
+     latch onto. */
+  .refresh-wrap {
+    display: inline-flex;
+    border-radius: var(--r-2);
+    transition: box-shadow var(--dur-1) var(--ease-std);
+  }
+  .refresh-wrap.flash {
+    animation: refreshFlash 1.2s var(--ease-std);
+  }
+  @keyframes refreshFlash {
+    0%   { box-shadow: 0 0 0 0 var(--accent-line); transform: scale(1); }
+    20%  { box-shadow: 0 0 0 4px var(--accent-wash); transform: scale(1.04); }
+    100% { box-shadow: 0 0 0 0 transparent; transform: scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .refresh-wrap.flash { animation: none; }
+  }
 
   .filters {
     display: flex;
