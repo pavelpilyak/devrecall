@@ -55,6 +55,7 @@ func main() {
 		newStandupCmd(),
 		newWeekCmd(),
 		newSyncCmd(),
+		newBackfillCmd(),
 		newStatusCmd(),
 		newChatCmd(),
 		newSummarizeCmd(),
@@ -614,17 +615,79 @@ func hasSlackThreads(activities []models.Activity) bool {
 	return false
 }
 
+// defaultSyncWindow matches the rolling-window used by daily `devrecall sync`
+// and the streaming sync triggered by the desktop app. The `backfill` command
+// overrides this with a deeper lookback for one-shot historical pulls.
+const defaultSyncWindow = 7 * 24 * time.Hour
+
 func newSyncCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "sync",
 		Short: "Sync activity from all configured sources",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSync(cmd.Context())
+			return runSync(cmd.Context(), defaultSyncWindow, "")
 		},
 	}
 }
 
-func runSync(ctx context.Context) error {
+func newBackfillCmd() *cobra.Command {
+	var since string
+	var source string
+	cmd := &cobra.Command{
+		Use:   "backfill",
+		Short: "One-shot deep pull from one or all sources",
+		Long: `Runs the same collectors as `+"`devrecall sync`"+`, but with a wider lookback
+window — useful when you've just connected a source and want history older
+than the default 7 days.
+
+Examples:
+  devrecall backfill --since 90d
+  devrecall backfill --since 1y --source confluence
+
+Source must be one of: git, slack, calendar, github, gitlab, bitbucket,
+jira, confluence, linear. Omit to backfill all enabled sources.
+
+Local git always reads the full repo history regardless of --since; for
+git the flag is a no-op.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			lookback, err := parseLookback(since)
+			if err != nil {
+				return err
+			}
+			return runSync(cmd.Context(), lookback, strings.ToLower(strings.TrimSpace(source)))
+		},
+	}
+	cmd.Flags().StringVar(&since, "since", "90d", "Lookback window (e.g. 30d, 90d, 6m, 1y)")
+	cmd.Flags().StringVar(&source, "source", "", "Restrict to a single source (default: all enabled)")
+	return cmd
+}
+
+// parseLookback turns user-friendly duration strings like "90d", "6m", "1y"
+// into a time.Duration. Reuses parseOlderThan's grammar for consistency.
+func parseLookback(s string) (time.Duration, error) {
+	if strings.TrimSpace(s) == "" {
+		return defaultSyncWindow, nil
+	}
+	d, err := parseOlderThan(s)
+	if err != nil {
+		return 0, fmt.Errorf("--since: %w", err)
+	}
+	return d, nil
+}
+
+// wantsSource reports whether the given source should run under the current
+// filter. Empty filter ⇒ all sources.
+func wantsSource(filter, name string) bool {
+	return filter == "" || filter == name
+}
+
+// runSync collects fresh activity from every enabled source whose name passes
+// sourceFilter (empty = all). Lookback is the window passed to each remote
+// collector's CollectSince — git ignores it and always reads full history.
+func runSync(ctx context.Context, lookback time.Duration, sourceFilter string) error {
+	since := time.Now().Add(-lookback)
+
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -648,7 +711,7 @@ func runSync(ctx context.Context) error {
 	totalStored := 0
 
 	// Sync git.
-	if cfg.Git.Enabled {
+	if cfg.Git.Enabled && wantsSource(sourceFilter, "git") {
 		repos := cfg.Git.Repos
 		if len(cfg.Git.ScanPaths) > 0 {
 			fmt.Fprintf(os.Stderr, "Scanning for repos...")
@@ -683,12 +746,12 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync Slack.
-	if cfg.Slack.Enabled && cfg.Slack.TeamID != "" {
+	if cfg.Slack.Enabled && cfg.Slack.TeamID != "" && wantsSource(sourceFilter, "slack") {
 		var token auth.SlackToken
 		if err := tokenStore.Load("slack", cfg.Slack.TeamID, &token); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting Slack messages...\n")
 			sc := slackcollector.New(token.AccessToken)
-			activities, err := sc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
+			activities, err := sc.CollectSince(ctx, since)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Slack sync warning: %v\n", err)
 				db.SetSyncError("slack", err.Error())
@@ -720,7 +783,7 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync Google Calendar.
-	if cfg.Calendar.Enabled && cfg.Calendar.Email != "" {
+	if cfg.Calendar.Enabled && cfg.Calendar.Email != "" && wantsSource(sourceFilter, "calendar") {
 		gtoken, gtokenErr := loadGoogleToken(tokenStore, cfg.Calendar.Email)
 		if gtokenErr == nil {
 			fmt.Fprintf(os.Stderr, "Collecting calendar events...\n")
@@ -733,7 +796,7 @@ func runSync(ctx context.Context) error {
 				if err != nil {
 					// Sync token expired — do initial sync.
 					fmt.Fprintf(os.Stderr, "Calendar: sync token expired, doing full sync...\n")
-					acts, newToken, err = cc.InitialSync(ctx, 7*24*time.Hour)
+					acts, newToken, err = cc.InitialSync(ctx, lookback)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "Calendar sync failed: %v\n", err)
 						db.SetSyncError("calendar", err.Error())
@@ -746,7 +809,7 @@ func runSync(ctx context.Context) error {
 					db.SetSyncState("calendar", newToken)
 				}
 			} else {
-				acts, newToken, err := cc.InitialSync(ctx, 7*24*time.Hour)
+				acts, newToken, err := cc.InitialSync(ctx, lookback)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Calendar sync failed: %v\n", err)
 					db.SetSyncError("calendar", err.Error())
@@ -779,12 +842,12 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync GitHub.
-	if cfg.GitHub.Enabled && cfg.GitHub.Username != "" {
+	if cfg.GitHub.Enabled && cfg.GitHub.Username != "" && wantsSource(sourceFilter, "github") {
 		var ghToken auth.GitHubToken
 		if err := tokenStore.Load("github", cfg.GitHub.Username, &ghToken); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting GitHub activity...\n")
 			gc := ghcollector.New(ghToken.AccessToken, cfg.GitHub.Username)
-			activities, err := gc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
+			activities, err := gc.CollectSince(ctx, since)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "GitHub sync warning: %v\n", err)
 				db.SetSyncError("github", err.Error())
@@ -806,12 +869,12 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync GitLab.
-	if cfg.GitLab.Enabled && cfg.GitLab.Username != "" {
+	if cfg.GitLab.Enabled && cfg.GitLab.Username != "" && wantsSource(sourceFilter, "gitlab") {
 		var glToken auth.GitLabToken
 		if err := tokenStore.Load("gitlab", cfg.GitLab.Username, &glToken); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting GitLab activity...\n")
 			gc := glcollector.New(glToken.AccessToken, cfg.GitLab.Username, cfg.GitLab.BaseURL)
-			activities, err := gc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
+			activities, err := gc.CollectSince(ctx, since)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "GitLab sync warning: %v\n", err)
 				db.SetSyncError("gitlab", err.Error())
@@ -833,12 +896,12 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync Bitbucket.
-	if cfg.Bitbucket.Enabled && cfg.Bitbucket.Username != "" {
+	if cfg.Bitbucket.Enabled && cfg.Bitbucket.Username != "" && wantsSource(sourceFilter, "bitbucket") {
 		var bbToken auth.BitbucketToken
 		if err := tokenStore.Load("bitbucket", cfg.Bitbucket.Username, &bbToken); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting Bitbucket activity...\n")
 			bc := bbcollector.New(bbToken.Username, bbToken.AppPassword, bbToken.UUID, cfg.Bitbucket.Workspace)
-			activities, err := bc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
+			activities, err := bc.CollectSince(ctx, since)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Bitbucket sync warning: %v\n", err)
 				db.SetSyncError("bitbucket", err.Error())
@@ -860,7 +923,7 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync Jira.
-	if cfg.Jira.Enabled && cfg.Jira.Email != "" {
+	if cfg.Jira.Enabled && cfg.Jira.Email != "" && wantsSource(sourceFilter, "jira") {
 		var atlToken auth.AtlassianToken
 		if err := tokenStore.Load("jira", cfg.Jira.Email, &atlToken); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting Jira activity...\n")
@@ -873,7 +936,7 @@ func runSync(ctx context.Context) error {
 				fmt.Fprintf(os.Stderr, "Jira: no base URL or cloud site in token\n")
 			}
 			if jc != nil {
-				activities, err := jc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
+				activities, err := jc.CollectSince(ctx, since)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Jira sync warning: %v\n", err)
 					db.SetSyncError("jira", err.Error())
@@ -896,12 +959,12 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync Linear.
-	if cfg.Linear.Enabled && cfg.Linear.Email != "" {
+	if cfg.Linear.Enabled && cfg.Linear.Email != "" && wantsSource(sourceFilter, "linear") {
 		var lt auth.LinearToken
 		if err := tokenStore.Load("linear", cfg.Linear.Email, &lt); err == nil {
 			fmt.Fprintf(os.Stderr, "Collecting Linear activity...\n")
 			lc := linearcollector.New(lt.AccessToken)
-			activities, err := lc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
+			activities, err := lc.CollectSince(ctx, since)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Linear sync warning: %v\n", err)
 				db.SetSyncError("linear", err.Error())
@@ -923,7 +986,7 @@ func runSync(ctx context.Context) error {
 	}
 
 	// Sync Confluence (reuses Atlassian/Jira auth).
-	if cfg.Confluence.Enabled {
+	if cfg.Confluence.Enabled && wantsSource(sourceFilter, "confluence") {
 		var atlToken auth.AtlassianToken
 		tokenKey := cfg.Jira.Email // reuse Jira token key
 		if tokenKey == "" {
@@ -941,7 +1004,7 @@ func runSync(ctx context.Context) error {
 				cc = nil
 			}
 			if cc != nil {
-				activities, err := cc.CollectSince(ctx, time.Now().AddDate(0, 0, -7))
+				activities, err := cc.CollectSince(ctx, since)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Confluence sync warning: %v\n", err)
 					db.SetSyncError("confluence", err.Error())
