@@ -307,7 +307,7 @@
 
       <SettingsSection title="About">
         {#snippet children()}
-          <SettingsRow titleText="DevRecall Desktop" meta="v0.1.13 · Tauri 2 · run `brew upgrade` to update both the app and the CLI" />
+          <SettingsRow titleText="DevRecall Desktop" meta="v0.1.14 · run `brew upgrade devrecall` to update" />
           <SettingsRow titleText="Relay" meta="cf-worker · OAuth callbacks only · never user data">
             {#snippet right()}
               <Chip variant="accent">
