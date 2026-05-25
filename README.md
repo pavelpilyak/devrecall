@@ -3,10 +3,15 @@
 **Your developer activity, aggregated on-device.** No cloud sync. No telemetry.
 Your data never leaves your machine.
 
-DevRecall pulls from Git, Slack, Google Calendar, Jira, Linear, and
-GitHub/GitLab/Bitbucket; stores it in a local SQLite database; and turns it
-into standups, weekly reports, brag docs, and a chat that actually knows what
-you worked on.
+DevRecall pulls from Git, Slack, Google Calendar, Jira, Linear, Confluence,
+and GitHub/GitLab/Bitbucket; stores it in a local SQLite database; and turns
+it into standups, weekly reports, brag docs, and a chat that actually knows
+what you worked on.
+
+Also ships an [MCP server](https://docs.devrecall.dev/integrations/mcp/) so
+Claude Code, Cursor, Codex, Continue, and Zed gain memory of everything
+you've shipped — `/devrecall:recall what auth bug did I fix in February`
+returns cited commits, PRs, and tickets inline.
 
 <p align="center">
   <img src=".github/assets/chat.jpg" alt="DevRecall desktop app — chat over your local work history" width="820">
@@ -29,6 +34,7 @@ you worked on.
 | Slack             | Your messages, threads you participated in     |
 | Google Calendar   | Meetings attended, organized, declined         |
 | Jira / Linear     | Issue transitions, comments, sprint membership |
+| Confluence        | Pages, blogposts, and comments you authored    |
 
 ## Install
 
