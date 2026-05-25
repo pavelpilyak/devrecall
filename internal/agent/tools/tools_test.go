@@ -99,6 +99,10 @@ func TestRegistry_Names(t *testing.T) {
 		"semantic_search_activities",
 		"get_activity",
 		"get_related_activities",
+		"who_worked_on",
+		"recent_decisions",
+		"prep_meeting",
+		"log_event",
 		"list_summaries",
 		"get_summary",
 		"list_identities",
@@ -701,5 +705,202 @@ func TestResolvePerson_Empty(t *testing.T) {
 	_, err := reg.Execute(context.Background(), "resolve_person", json.RawMessage(`{"name_or_email":"   "}`))
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestLogEvent_InsertsManualNote(t *testing.T) {
+	reg, db, _ := newTestRegistry(t)
+
+	out, err := reg.Execute(context.Background(), "log_event", json.RawMessage(`{
+		"text":"Decided to switch to ULIDs",
+		"tags":["arch","decision"],
+		"people":["anna"]
+	}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var got logEventResult
+	decodeResult(t, out, &got)
+	if got.ActivityID <= 0 {
+		t.Errorf("expected positive id, got %d", got.ActivityID)
+	}
+	if got.Title != "Decided to switch to ULIDs" {
+		t.Errorf("title = %q", got.Title)
+	}
+
+	// Confirm the row landed in the DB.
+	rows, err := db.GetActivitiesByIDs([]int64{got.ActivityID})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("readback: %v / rows=%d", err, len(rows))
+	}
+	if rows[0].Source != models.SourceManual || rows[0].Type != models.TypeNote {
+		t.Errorf("source/type = %s/%s, want manual/note", rows[0].Source, rows[0].Type)
+	}
+	if !strings.Contains(rows[0].Metadata, `"tags":["arch","decision"]`) {
+		t.Errorf("metadata missing tags: %q", rows[0].Metadata)
+	}
+}
+
+func TestLogEvent_EmptyTextRejected(t *testing.T) {
+	reg, _, _ := newTestRegistry(t)
+	_, err := reg.Execute(context.Background(), "log_event", json.RawMessage(`{"text":"   "}`))
+	if err == nil {
+		t.Fatal("expected error for empty text")
+	}
+}
+
+func TestWhoWorkedOn_FiltersByIdentity(t *testing.T) {
+	reg, _, ids := newTestRegistry(t)
+	selfID := ids["self"]
+	annaID := ids["anna"]
+
+	// Fixture inserts mix self/anna activities; who_worked_on(anna) should
+	// return only anna's rows.
+	out, err := reg.Execute(context.Background(), "who_worked_on", json.RawMessage(
+		`{"identity_id":`+strconv.FormatInt(annaID, 10)+`}`,
+	))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var got struct {
+		IdentityID int64             `json:"identity_id"`
+		Activities []activitySummary `json:"activities"`
+		Count      int               `json:"count"`
+	}
+	decodeResult(t, out, &got)
+	if got.Count == 0 {
+		t.Fatalf("expected anna activities, got 0")
+	}
+	for _, a := range got.Activities {
+		if a.IdentityID != annaID {
+			t.Errorf("returned activity %d has identity %d, want %d (anna)", a.ID, a.IdentityID, annaID)
+		}
+	}
+	if got.IdentityID != annaID {
+		t.Errorf("identity_id = %d, want %d", got.IdentityID, annaID)
+	}
+	_ = selfID
+}
+
+func TestWhoWorkedOn_ResolvesByName(t *testing.T) {
+	reg, _, _ := newTestRegistry(t)
+
+	out, err := reg.Execute(context.Background(), "who_worked_on", json.RawMessage(`{"name_or_email":"anna"}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var got struct {
+		IdentityID int64 `json:"identity_id"`
+		Count      int   `json:"count"`
+	}
+	decodeResult(t, out, &got)
+	if got.IdentityID == 0 {
+		t.Fatal("expected name resolution to populate identity_id")
+	}
+}
+
+func TestWhoWorkedOn_MissingIdentifier(t *testing.T) {
+	reg, _, _ := newTestRegistry(t)
+	_, err := reg.Execute(context.Background(), "who_worked_on", json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("expected error when neither identity_id nor name_or_email given")
+	}
+}
+
+func TestRecentDecisions_MergesNotesAndFTSMatches(t *testing.T) {
+	reg, db, _ := newTestRegistry(t)
+
+	// Seed: one type=note manual entry and one commit whose title contains "decision".
+	if _, err := db.InsertActivity(models.Activity{
+		Source:    models.SourceManual,
+		SourceID:  "manual:n1",
+		Type:      models.TypeNote,
+		Title:     "Decided to switch to gRPC",
+		Content:   "Decided to switch to gRPC after benchmarks.",
+		Timestamp: time.Date(2026, 4, 7, 14, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("insert note: %v", err)
+	}
+	if _, err := db.InsertActivity(models.Activity{
+		Source:    models.SourceGit,
+		SourceID:  "repo:dec1",
+		Type:      models.TypeCommit,
+		Title:     "ADR-014: cache layer",
+		Content:   "ADR-014 introduces a Redis cache.",
+		Timestamp: time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("insert commit: %v", err)
+	}
+
+	out, err := reg.Execute(context.Background(), "recent_decisions", json.RawMessage(`{"limit":20}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var got struct {
+		Activities []activitySummary `json:"activities"`
+		Count      int               `json:"count"`
+	}
+	decodeResult(t, out, &got)
+	if got.Count < 2 {
+		t.Fatalf("expected at least 2 decisions, got %d", got.Count)
+	}
+	seen := map[string]bool{}
+	for _, a := range got.Activities {
+		seen[a.Title] = true
+	}
+	if !seen["Decided to switch to gRPC"] {
+		t.Errorf("expected manual note in results")
+	}
+	if !seen["ADR-014: cache layer"] {
+		t.Errorf("expected ADR-shaped commit in results")
+	}
+}
+
+func TestPrepMeeting_ByActivityID(t *testing.T) {
+	reg, db, _ := newTestRegistry(t)
+
+	// Seed a calendar event whose metadata names anna as an attendee.
+	annaEmail := "anna@example.com"
+	calMeta := `{"attendees":[{"email":"` + annaEmail + `","display_name":"Anna"}],"url":"https://meet.example.com/abc"}`
+	mid, err := db.InsertActivity(models.Activity{
+		Source:    models.SourceCalendar,
+		SourceID:  "cal:evt1",
+		Type:      models.TypeMeeting,
+		Title:     "1:1 with Anna",
+		Metadata:  calMeta,
+		Timestamp: time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("insert meeting: %v", err)
+	}
+
+	out, err := reg.Execute(context.Background(), "prep_meeting", json.RawMessage(
+		`{"activity_id":`+strconv.FormatInt(mid, 10)+`}`,
+	))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var got prepMeetingResult
+	decodeResult(t, out, &got)
+	if got.MeetingID != mid {
+		t.Errorf("meeting_id = %d, want %d", got.MeetingID, mid)
+	}
+	if got.URL != "https://meet.example.com/abc" {
+		t.Errorf("url = %q", got.URL)
+	}
+	if len(got.Attendees) != 1 || got.Attendees[0].Email != annaEmail {
+		t.Fatalf("attendees = %+v", got.Attendees)
+	}
+	// Anna's identity is in the fixture, so recent activity should populate.
+	if got.Attendees[0].IdentityID == 0 {
+		t.Errorf("expected anna's identity_id populated")
+	}
+}
+
+func TestPrepMeeting_MissingIdentifier(t *testing.T) {
+	reg, _, _ := newTestRegistry(t)
+	_, err := reg.Execute(context.Background(), "prep_meeting", json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("expected error when neither activity_id nor date given")
 	}
 }

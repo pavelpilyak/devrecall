@@ -106,6 +106,10 @@ func (db *DB) ListActivities(f ActivityFilter) ([]models.Activity, error) {
 		query += " AND type = ?"
 		args = append(args, f.Type)
 	}
+	if f.IdentityID > 0 {
+		query += " AND identity_id = ?"
+		args = append(args, f.IdentityID)
+	}
 	if !f.After.IsZero() {
 		query += " AND timestamp >= ?"
 		args = append(args, f.After.UTC().Format(time.RFC3339))
