@@ -70,6 +70,7 @@ func main() {
 		newIdentityCmd(),
 		newServeCmd(),
 		newDaemonCmd(),
+		newMCPCmd(),
 		newUpdateCmd(),
 	)
 
