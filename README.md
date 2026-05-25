@@ -8,10 +8,11 @@ and GitHub/GitLab/Bitbucket; stores it in a local SQLite database; and turns
 it into standups, weekly reports, brag docs, and a chat that actually knows
 what you worked on.
 
-Also ships an [MCP server](https://docs.devrecall.dev/integrations/mcp/) so
-Claude Code, Cursor, Codex, Continue, and Zed gain memory of everything
-you've shipped — `/devrecall:recall what auth bug did I fix in February`
-returns cited commits, PRs, and tickets inline.
+Also ships an [MCP server](https://docs.devrecall.dev/integrations/mcp/) —
+any MCP-compatible coding tool (Claude Code, Cursor, Codex, Continue, Zed)
+can spawn it as a stdio subprocess and gain memory of everything you've
+shipped. `/devrecall:recall what auth bug did I fix in February` returns
+cited commits, PRs, and tickets inline.
 
 <p align="center">
   <img src=".github/assets/chat.jpg" alt="DevRecall desktop app — chat over your local work history" width="820">
