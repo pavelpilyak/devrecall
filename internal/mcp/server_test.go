@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -51,7 +52,7 @@ func newRig(t *testing.T, seed func(*storage.DB)) *testRig {
 	serverIn, clientWrite := io.Pipe()
 	clientRead, serverOut := io.Pipe()
 
-	server := NewServer(registry, "test-version", serverIn, serverOut)
+	server := NewServer(registry, db, "test-version", serverIn, serverOut)
 
 	rig := &testRig{
 		t:           t,
@@ -312,9 +313,8 @@ func TestUnknownMethod_ReturnsMethodNotFound(t *testing.T) {
 	}
 }
 
-func TestResourcesAndPromptsList_EmptyResponses(t *testing.T) {
+func TestResourcesList_AlwaysEmpty(t *testing.T) {
 	r := newRig(t, nil)
-
 	r.send(`{"jsonrpc":"2.0","id":1,"method":"resources/list"}`)
 	resp := r.recv()
 	if resp.Error != nil {
@@ -323,13 +323,153 @@ func TestResourcesAndPromptsList_EmptyResponses(t *testing.T) {
 	if !strings.Contains(string(resp.Result), `"resources":[]`) {
 		t.Errorf("resources/list = %s, want empty list", string(resp.Result))
 	}
+}
 
-	r.send(`{"jsonrpc":"2.0","id":2,"method":"prompts/list"}`)
-	resp = r.recv()
+func TestResourcesTemplatesList_AdvertisesAllTemplates(t *testing.T) {
+	r := newRig(t, nil)
+	r.send(`{"jsonrpc":"2.0","id":1,"method":"resources/templates/list"}`)
+	resp := r.recv()
+	if resp.Error != nil {
+		t.Fatalf("templates list errored: %+v", resp.Error)
+	}
+	var got ListResourceTemplatesResult
+	if err := json.Unmarshal(resp.Result, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := []string{"standup://{date}", "activity://{id}", "timeline://{period}"}
+	if len(got.ResourceTemplates) != len(want) {
+		t.Fatalf("got %d templates, want %d", len(got.ResourceTemplates), len(want))
+	}
+	for i, uri := range want {
+		if got.ResourceTemplates[i].URITemplate != uri {
+			t.Errorf("[%d] uriTemplate = %q, want %q", i, got.ResourceTemplates[i].URITemplate, uri)
+		}
+	}
+}
+
+func TestResourcesRead_ActivityURI(t *testing.T) {
+	r := newRig(t, func(db *storage.DB) {
+		if _, err := db.InsertActivity(models.Activity{
+			Source:    models.SourceGit,
+			SourceID:  "test:abc",
+			Type:      models.TypeCommit,
+			Title:     "Test commit",
+			Timestamp: time.Date(2026, 5, 25, 10, 0, 0, 0, time.UTC),
+		}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	})
+	r.send(`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"activity://1"}}`)
+	resp := r.recv()
+	if resp.Error != nil {
+		t.Fatalf("read errored: %+v", resp.Error)
+	}
+	var got ReadResourceResult
+	json.Unmarshal(resp.Result, &got)
+	if len(got.Contents) != 1 || got.Contents[0].URI != "activity://1" {
+		t.Fatalf("contents = %+v", got.Contents)
+	}
+	if !strings.Contains(got.Contents[0].Text, "Test commit") {
+		t.Errorf("body missing seeded title: %q", got.Contents[0].Text)
+	}
+}
+
+func TestResourcesRead_StandupURI(t *testing.T) {
+	r := newRig(t, func(db *storage.DB) {
+		for i := 0; i < 3; i++ {
+			if _, err := db.InsertActivity(models.Activity{
+				Source:    models.SourceGit,
+				SourceID:  fmt.Sprintf("test:%d", i),
+				Type:      models.TypeCommit,
+				Title:     fmt.Sprintf("commit %d", i),
+				Timestamp: time.Date(2026, 5, 25, 9+i, 0, 0, 0, time.UTC),
+			}); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+	})
+	r.send(`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"standup://2026-05-25"}}`)
+	resp := r.recv()
+	if resp.Error != nil {
+		t.Fatalf("read errored: %+v", resp.Error)
+	}
+	var got ReadResourceResult
+	json.Unmarshal(resp.Result, &got)
+	if !strings.Contains(got.Contents[0].Text, `"count":3`) {
+		t.Errorf("expected count=3 in body, got %q", got.Contents[0].Text)
+	}
+}
+
+func TestResourcesRead_BadURIs(t *testing.T) {
+	r := newRig(t, nil)
+	for _, uri := range []string{"bogus", "ghost://x", "activity://abc", "standup://nope"} {
+		r.send(fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":%q}}`, uri))
+		resp := r.recv()
+		if resp.Error == nil {
+			t.Errorf("expected error for uri=%q, got result %s", uri, string(resp.Result))
+		} else if resp.Error.Code != ErrInvalidParams {
+			t.Errorf("uri=%q: code = %d, want %d", uri, resp.Error.Code, ErrInvalidParams)
+		}
+	}
+}
+
+func TestPromptsList_ReturnsAllPrompts(t *testing.T) {
+	r := newRig(t, nil)
+	r.send(`{"jsonrpc":"2.0","id":1,"method":"prompts/list"}`)
+	resp := r.recv()
 	if resp.Error != nil {
 		t.Fatalf("prompts/list errored: %+v", resp.Error)
 	}
-	if !strings.Contains(string(resp.Result), `"prompts":[]`) {
-		t.Errorf("prompts/list = %s, want empty list", string(resp.Result))
+	var got ListPromptsResult
+	json.Unmarshal(resp.Result, &got)
+	want := []string{"devrecall-recall", "devrecall-context", "devrecall-log"}
+	if len(got.Prompts) != len(want) {
+		t.Fatalf("got %d prompts, want %d", len(got.Prompts), len(want))
+	}
+	for i, name := range want {
+		if got.Prompts[i].Name != name {
+			t.Errorf("[%d] name = %q, want %q", i, got.Prompts[i].Name, name)
+		}
+	}
+}
+
+func TestPromptsGet_RendersWithArguments(t *testing.T) {
+	r := newRig(t, nil)
+	r.send(`{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"devrecall-recall","arguments":{"query":"auth bug"}}}`)
+	resp := r.recv()
+	if resp.Error != nil {
+		t.Fatalf("get errored: %+v", resp.Error)
+	}
+	var got GetPromptResult
+	json.Unmarshal(resp.Result, &got)
+	if len(got.Messages) != 1 {
+		t.Fatalf("messages = %+v", got.Messages)
+	}
+	if got.Messages[0].Role != "user" {
+		t.Errorf("role = %q, want user", got.Messages[0].Role)
+	}
+	if !strings.Contains(got.Messages[0].Content.Text, "auth bug") {
+		t.Errorf("rendered text missing query: %q", got.Messages[0].Content.Text)
+	}
+}
+
+func TestPromptsGet_MissingRequiredArg(t *testing.T) {
+	r := newRig(t, nil)
+	r.send(`{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"devrecall-recall","arguments":{}}}`)
+	resp := r.recv()
+	if resp.Error == nil {
+		t.Fatal("expected error for missing query arg")
+	}
+	if resp.Error.Code != ErrInvalidParams {
+		t.Errorf("code = %d, want %d", resp.Error.Code, ErrInvalidParams)
+	}
+}
+
+func TestPromptsGet_UnknownPrompt(t *testing.T) {
+	r := newRig(t, nil)
+	r.send(`{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"bogus"}}`)
+	resp := r.recv()
+	if resp.Error == nil {
+		t.Fatal("expected error for unknown prompt")
 	}
 }

@@ -66,15 +66,25 @@ type InitializeResult struct {
 	ServerInfo      ServerInfo         `json:"serverInfo"`
 }
 
-// ServerCapabilities advertises which protocol surfaces we support. Only
-// `tools` for now; resources and prompts arrive in Phase 2.
+// ServerCapabilities advertises which protocol surfaces we support.
 type ServerCapabilities struct {
-	Tools *ToolsCapability `json:"tools,omitempty"`
+	Tools     *ToolsCapability     `json:"tools,omitempty"`
+	Prompts   *PromptsCapability   `json:"prompts,omitempty"`
+	Resources *ResourcesCapability `json:"resources,omitempty"`
 }
 
 type ToolsCapability struct {
 	// ListChanged would let the server push tool-list updates. Our tool set
 	// is static for the process lifetime, so omit.
+}
+
+type PromptsCapability struct {
+	// Same shape — we don't push prompt-list updates.
+}
+
+type ResourcesCapability struct {
+	Subscribe   bool `json:"subscribe,omitempty"`
+	ListChanged bool `json:"listChanged,omitempty"`
 }
 
 type ServerInfo struct {
@@ -113,4 +123,75 @@ type CallToolResult struct {
 type ContentBlock struct {
 	Type string `json:"type"`           // "text" / "image" / "resource"
 	Text string `json:"text,omitempty"` // populated when Type == "text"
+}
+
+// --- prompts/list, prompts/get ---
+
+type PromptArgument struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+type PromptDescriptor struct {
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Arguments   []PromptArgument `json:"arguments,omitempty"`
+}
+
+type ListPromptsResult struct {
+	Prompts []PromptDescriptor `json:"prompts"`
+}
+
+type GetPromptParams struct {
+	Name      string            `json:"name"`
+	Arguments map[string]string `json:"arguments,omitempty"`
+}
+
+type PromptMessage struct {
+	Role    string       `json:"role"` // "user" / "assistant" / "system"
+	Content ContentBlock `json:"content"`
+}
+
+type GetPromptResult struct {
+	Description string          `json:"description,omitempty"`
+	Messages    []PromptMessage `json:"messages"`
+}
+
+// --- resources/list, resources/templates/list, resources/read ---
+
+type ResourceDescriptor struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
+type ResourceTemplate struct {
+	URITemplate string `json:"uriTemplate"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
+type ListResourcesResult struct {
+	Resources []ResourceDescriptor `json:"resources"`
+}
+
+type ListResourceTemplatesResult struct {
+	ResourceTemplates []ResourceTemplate `json:"resourceTemplates"`
+}
+
+type ReadResourceParams struct {
+	URI string `json:"uri"`
+}
+
+type ResourceContent struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+}
+
+type ReadResourceResult struct {
+	Contents []ResourceContent `json:"contents"`
 }

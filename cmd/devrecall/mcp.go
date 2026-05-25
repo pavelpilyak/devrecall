@@ -64,7 +64,7 @@ Codex, Continue and Zed all support MCP servers spawned via stdio.`,
 				Embedder: embedder,
 			})
 
-			server := mcp.NewServer(registry, version, os.Stdin, os.Stdout)
+			server := mcp.NewServer(registry, db, version, os.Stdin, os.Stdout)
 			return server.Serve(cmd.Context())
 		},
 	}

@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/pavelpilyak/devrecall/internal/agent/tools"
+	"github.com/pavelpilyak/devrecall/internal/storage"
 )
 
 // Server runs the MCP stdio loop. It reads newline-delimited JSON-RPC
@@ -21,6 +22,7 @@ import (
 // the wire — we serialize via an internal mutex.
 type Server struct {
 	registry *tools.Registry
+	db       *storage.DB // used by resource handlers; tools go through registry
 	info     ServerInfo
 
 	in  *bufio.Reader
@@ -28,11 +30,13 @@ type Server struct {
 	mu  sync.Mutex // serializes writes to out
 }
 
-// NewServer wires a server against a tool registry, the binary version, and
-// an io pair. Callers usually pass os.Stdin and os.Stdout.
-func NewServer(registry *tools.Registry, version string, in io.Reader, out io.Writer) *Server {
+// NewServer wires a server against a tool registry, the storage handle (for
+// resource handlers), the binary version, and an io pair. Callers usually
+// pass os.Stdin and os.Stdout.
+func NewServer(registry *tools.Registry, db *storage.DB, version string, in io.Reader, out io.Writer) *Server {
 	return &Server{
 		registry: registry,
+		db:       db,
 		info:     ServerInfo{Name: "devrecall", Version: version},
 		in:       bufio.NewReader(in),
 		out:      out,
@@ -115,9 +119,19 @@ func (s *Server) dispatch(ctx context.Context, req Request) (json.RawMessage, *R
 		return s.handleToolsList()
 	case "tools/call":
 		return s.handleToolsCall(ctx, req.Params)
-	case "resources/list", "prompts/list":
-		// Phase 2 surfaces — advertise as empty so clients don't error.
-		return s.emptyList(req.Method), nil
+	case "prompts/list":
+		b, _ := json.Marshal(listPrompts())
+		return b, nil
+	case "prompts/get":
+		return s.handlePromptsGet(req.Params)
+	case "resources/list":
+		// We expose templated resources only — no concrete URIs to enumerate.
+		return json.RawMessage(`{"resources":[]}`), nil
+	case "resources/templates/list":
+		b, _ := json.Marshal(ListResourceTemplatesResult{ResourceTemplates: resourceTemplates})
+		return b, nil
+	case "resources/read":
+		return s.handleResourcesRead(req.Params)
 	default:
 		return nil, &RPCError{Code: ErrMethodNotFound, Message: "method not found: " + req.Method}
 	}
@@ -135,7 +149,9 @@ func (s *Server) handleInitialize(params json.RawMessage) (json.RawMessage, *RPC
 	result := InitializeResult{
 		ProtocolVersion: ProtocolVersion,
 		Capabilities: ServerCapabilities{
-			Tools: &ToolsCapability{},
+			Tools:     &ToolsCapability{},
+			Prompts:   &PromptsCapability{},
+			Resources: &ResourcesCapability{},
 		},
 		ServerInfo: s.info,
 	}
@@ -186,14 +202,39 @@ func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (j
 	return b, nil
 }
 
-func (s *Server) emptyList(method string) json.RawMessage {
-	switch method {
-	case "resources/list":
-		return json.RawMessage(`{"resources":[]}`)
-	case "prompts/list":
-		return json.RawMessage(`{"prompts":[]}`)
+func (s *Server) handlePromptsGet(params json.RawMessage) (json.RawMessage, *RPCError) {
+	var p GetPromptParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: ErrInvalidParams, Message: "prompts/get: " + err.Error()}
 	}
-	return json.RawMessage(`{}`)
+	if p.Name == "" {
+		return nil, &RPCError{Code: ErrInvalidParams, Message: "prompts/get: name is required"}
+	}
+	result, rpcErr := getPrompt(p.Name, p.Arguments)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	b, _ := json.Marshal(result)
+	return b, nil
+}
+
+func (s *Server) handleResourcesRead(params json.RawMessage) (json.RawMessage, *RPCError) {
+	var p ReadResourceParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: ErrInvalidParams, Message: "resources/read: " + err.Error()}
+	}
+	if p.URI == "" {
+		return nil, &RPCError{Code: ErrInvalidParams, Message: "resources/read: uri is required"}
+	}
+	if s.db == nil {
+		return nil, &RPCError{Code: ErrInternal, Message: "resources/read: server has no DB handle"}
+	}
+	result, rpcErr := readResource(p.URI, s.db)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	b, _ := json.Marshal(result)
+	return b, nil
 }
 
 // --- wire writers ---
