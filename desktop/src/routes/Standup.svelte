@@ -77,10 +77,10 @@
     loadStandup();
   }
 
-  const eyebrow = "Standup";
+  const eyebrow = "Daily";
   const titleText = $derived.by(() => {
     const d = new Date(date + "T00:00:00");
-    return `Standup for ${d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}`;
+    return `Daily for ${d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}`;
   });
   const metaText = $derived.by(() => {
     if (!report) return `${date} · tap generate to summarize`;
@@ -89,7 +89,7 @@
 </script>
 
 <div class="route-body">
-  <PanelHeader title="Standup" meta="daily summary">
+  <PanelHeader title="Daily" meta="what you shipped">
     {#snippet actions()}
       <Btn size="sm" variant="ghost" onclick={() => changeDate(-1)}>
         {#snippet children()}<Icon name="chevron-left" size={12} />{/snippet}
@@ -120,14 +120,14 @@
   <div class="scroll">
     {#if !generated}
       <div class="cta">
-        <div class="cta-eyebrow">Standup</div>
+        <div class="cta-eyebrow">Daily</div>
         <h1 class="cta-title">{titleText}</h1>
         <div class="cta-meta">{date}</div>
         <div class="cta-btn">
           <Btn variant="primary" onclick={generate}>
             {#snippet children()}
               <Icon name="sparkles" size={14} />
-              <span>Generate standup</span>
+              <span>Generate recap</span>
             {/snippet}
           </Btn>
         </div>

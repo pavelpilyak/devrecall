@@ -26,7 +26,7 @@
 
   const navItems: { id: Tab; label: string; icon: string; kbd?: string }[] = [
     { id: "chat", label: "Chat", icon: "message-square", kbd: "g c" },
-    { id: "standup", label: "Standup", icon: "zap", kbd: "g s" },
+    { id: "standup", label: "Daily", icon: "zap", kbd: "g s" },
     { id: "weekly", label: "Weekly", icon: "calendar", kbd: "g w" },
     { id: "review", label: "Review", icon: "file-text", kbd: "g r" },
     { id: "timeline", label: "Timeline", icon: "list", kbd: "g t" },
@@ -45,14 +45,14 @@
 
   const commands = [
     { group: "Navigate", cmd: "Go to Chat", icon: "message-square", kbd: ["g", "c"], run: () => setRoute("chat") },
-    { group: "Navigate", cmd: "Go to Standup", icon: "zap", kbd: ["g", "s"], run: () => setRoute("standup") },
+    { group: "Navigate", cmd: "Go to Daily", icon: "zap", kbd: ["g", "s"], run: () => setRoute("standup") },
     { group: "Navigate", cmd: "Go to Weekly", icon: "calendar", kbd: ["g", "w"], run: () => setRoute("weekly") },
     { group: "Navigate", cmd: "Go to Review", icon: "file-text", kbd: ["g", "r"], run: () => setRoute("review") },
     { group: "Navigate", cmd: "Go to Timeline", icon: "list", kbd: ["g", "t"], run: () => setRoute("timeline") },
     { group: "Navigate", cmd: "Go to Search", icon: "search", run: () => setRoute("search") },
     { group: "Navigate", cmd: "Go to Log", icon: "edit-3", run: () => setRoute("log") },
     { group: "Navigate", cmd: "Open Settings", icon: "settings", kbd: ["⌘", ","], run: () => setRoute("settings") },
-    { group: "Actions", cmd: "Generate standup", icon: "zap", kbd: ["⌘", "G"], run: () => setRoute("standup") },
+    { group: "Actions", cmd: "Generate daily recap", icon: "zap", kbd: ["⌘", "G"], run: () => setRoute("standup") },
     { group: "Actions", cmd: "Generate weekly summary", icon: "calendar", kbd: ["⌘", "⇧", "W"], run: () => setRoute("weekly") },
     { group: "Actions", cmd: "Sync all sources", icon: "refresh-cw", kbd: ["⌘", "R"], run: () => triggerSync() },
   ];
