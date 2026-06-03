@@ -307,7 +307,7 @@
 
       <SettingsSection title="About">
         {#snippet children()}
-          <SettingsRow titleText="DevRecall Desktop" meta="v0.1.15 · run `brew upgrade devrecall` to update" />
+          <SettingsRow titleText="DevRecall Desktop" meta="v0.1.16 · run `brew upgrade devrecall` to update" />
           <SettingsRow titleText="Relay" meta="cf-worker · OAuth callbacks only · never user data">
             {#snippet right()}
               <Chip variant="accent">
