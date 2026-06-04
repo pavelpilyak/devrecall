@@ -232,6 +232,32 @@
       }
     })();
 
+    // Vim-style "g <letter>" leader shortcuts. The set of follow-up keys is
+    // derived from navItems' kbd hints ("g c" → "c" navigates to chat), so
+    // the sidebar labels and the handler can't drift out of sync.
+    const leaderRoutes: Record<string, Tab> = (() => {
+      const out: Record<string, Tab> = {};
+      for (const item of navItems) {
+        const m = item.kbd?.match(/^g\s+(\w)$/i);
+        if (m) out[m[1].toLowerCase()] = item.id;
+      }
+      return out;
+    })();
+    let leaderArmed = false;
+    let leaderTimer: ReturnType<typeof setTimeout> | undefined;
+    function disarmLeader() {
+      leaderArmed = false;
+      if (leaderTimer) clearTimeout(leaderTimer);
+      leaderTimer = undefined;
+    }
+
+    function isTextInput(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false;
+      if (target.isContentEditable) return true;
+      const tag = target.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    }
+
     function onKeydown(e: KeyboardEvent) {
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "k") {
@@ -244,8 +270,38 @@
         setRoute("settings");
         return;
       }
-      if (e.key === "Escape" && !paletteOpen) {
+      if (e.key === "Escape") {
+        if (paletteOpen) return; // palette handles its own Esc
+        if (leaderArmed) {
+          disarmLeader();
+          return;
+        }
         window.close();
+        return;
+      }
+
+      // Skip leader-key handling while typing in an input, while the
+      // palette is open, or when modifier keys are held.
+      if (paletteOpen || mod || e.altKey || isTextInput(e.target)) {
+        disarmLeader();
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+      if (leaderArmed) {
+        const route = leaderRoutes[key];
+        disarmLeader();
+        if (route) {
+          e.preventDefault();
+          setRoute(route);
+        }
+        return;
+      }
+      if (key === "g") {
+        leaderArmed = true;
+        // Auto-disarm after a short window so a stray "g" doesn't swallow
+        // the next single-letter input forever.
+        leaderTimer = setTimeout(disarmLeader, 1200);
       }
     }
     window.addEventListener("keydown", onKeydown);
