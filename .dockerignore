@@ -1,0 +1,14 @@
+# Anything not consumed by the Go build for `devrecall mcp`.
+.git
+.github
+bin
+desktop
+relay
+scripts
+docs
+*.md
+LICENSE
+Makefile
+.vscode
+.idea
+.DS_Store
