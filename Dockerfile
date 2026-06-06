@@ -7,11 +7,17 @@
 # Sanity-check the build locally:
 #   docker build -t devrecall-mcp .
 #   docker run --rm -i devrecall-mcp <<< '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}'
+#
+# Why debian-bookworm and not alpine: alpine's GCC 13 turns several
+# pointer-cast warnings in sqlite-vec.c into errors. Bookworm ships GCC 12
+# which is what the upstream CGO bindings test against.
 
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26-bookworm AS builder
 
-# CGO is required for SQLite + FTS5 + sqlite-vec.
-RUN apk add --no-cache gcc musl-dev sqlite-dev
+# CGO needs a C toolchain + SQLite headers (for FTS5).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libc6-dev libsqlite3-dev \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
 
@@ -20,7 +26,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Only the Go source paths the CLI compiles from. Desktop / docs / relay
-# stay out of the build context.
+# stay out of the build context via .dockerignore.
 COPY cmd/    ./cmd/
 COPY internal/ ./internal/
 COPY pkg/    ./pkg/
@@ -34,23 +40,27 @@ RUN go build \
 
 # ---- runtime ----
 
-FROM alpine:3.20
+FROM debian:bookworm-slim
 
 # ca-certificates so the embedder can lazily fetch its ONNX model from
 # Hugging Face if `semantic_search_activities` is ever called. The MCP
 # server starts fine without the model — only that one tool errors.
-RUN apk add --no-cache ca-certificates \
- && addgroup -S devrecall \
- && adduser  -S devrecall -G devrecall
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd -r devrecall \
+ && useradd  -r -g devrecall -m -d /home/devrecall devrecall
 
 USER devrecall
 WORKDIR /home/devrecall
 
-# DevRecall opens ~/.devrecall/devrecall.db on startup and creates the
-# file if absent; pre-create the directory so the FS perms are right.
-RUN mkdir -p .devrecall
-
 COPY --from=builder /out/devrecall /usr/local/bin/devrecall
+
+# Bootstrap a default config + empty DB so `devrecall mcp` starts cleanly
+# in glama.ai's sandbox (where no user has run `config init` yet). The
+# server still works on real installs — it opens the user's existing
+# ~/.devrecall/devrecall.db on startup.
+RUN devrecall config init
 
 # Stdio MCP server — no listening port, no exposed surface.
 ENTRYPOINT ["devrecall", "mcp"]
