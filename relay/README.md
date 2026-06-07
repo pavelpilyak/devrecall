@@ -2,8 +2,6 @@
 
 Cloudflare Worker that handles OAuth callbacks for DevRecall. The relay never sees raw user data — it only passes through OAuth tokens during authentication.
 
-See [docs/cloud-relay.md](../docs/cloud-relay.md) for full architecture.
-
 ## Endpoints
 
 | Method | Path | Purpose |
