@@ -62,5 +62,9 @@ COPY --from=builder /out/devrecall /usr/local/bin/devrecall
 # ~/.devrecall/devrecall.db on startup.
 RUN devrecall config init
 
-# Stdio MCP server — no listening port, no exposed surface.
-ENTRYPOINT ["devrecall", "mcp"]
+# Stdio MCP server — no listening port, no exposed surface. The subcommand
+# is a CMD (not folded into ENTRYPOINT) so platforms like glama.ai that
+# supply their own command argument override `mcp` cleanly instead of
+# appending it (which would run `devrecall mcp mcp`).
+ENTRYPOINT ["devrecall"]
+CMD ["mcp"]
