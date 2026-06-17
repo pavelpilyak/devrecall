@@ -104,6 +104,9 @@ fn main() {
                 }
             });
 
+            // Keep it alive: revive the server if it ever dies mid-session.
+            server::spawn_watchdog(app.handle().clone());
+
             // Open devtools in debug builds.
             #[cfg(debug_assertions)]
             if let Some(window) = app.get_webview_window("main") {
