@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -257,6 +259,70 @@ func TestCollect_SkipsBrokenRepos(t *testing.T) {
 	}
 	if len(activities) != 1 {
 		t.Fatalf("got %d activities, want 1", len(activities))
+	}
+}
+
+func TestCollect_NoSelfEmail_CollectsNothing(t *testing.T) {
+	origRunGit := runGit
+	t.Cleanup(func() { runGit = origRunGit })
+
+	cases := map[string][]string{
+		"nil emails":    nil,
+		"empty slice":   {},
+		"blank strings": {"", "  "},
+	}
+	for name, emails := range cases {
+		t.Run(name, func(t *testing.T) {
+			called := false
+			runGit = func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+				called = true
+				return nil, nil
+			}
+
+			c := New([]string{"/fake/repo"}, emails)
+			activities, err := c.Collect(context.Background())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(activities) != 0 {
+				t.Fatalf("got %d activities, want 0", len(activities))
+			}
+			// Crucial: with no identity we must NOT run an unfiltered log that
+			// would sweep in every contributor's commits.
+			if called {
+				t.Error("runGit ran without a self-email; would ingest all authors")
+			}
+		})
+	}
+}
+
+func TestCollect_DropsBlankAuthorsFromFilter(t *testing.T) {
+	origRunGit := runGit
+	t.Cleanup(func() { runGit = origRunGit })
+
+	var logArgs []string
+	runGit = func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "rev-parse" {
+			return []byte("main\n"), nil
+		}
+		logArgs = args
+		return []byte(""), nil
+	}
+
+	c := New([]string{"/fake/repo"}, []string{"pavel@test.com", "  ", "work@test.com"})
+	if _, err := c.Collect(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var authors []string
+	for _, a := range logArgs {
+		if strings.HasPrefix(a, "--author=") {
+			authors = append(authors, a)
+		}
+	}
+	want := []string{"--author=pavel@test.com", "--author=work@test.com"}
+	if !reflect.DeepEqual(authors, want) {
+		t.Errorf("author args = %v, want %v (blank entry must be dropped, never an empty --author=)", authors, want)
 	}
 }
 

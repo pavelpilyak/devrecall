@@ -70,9 +70,19 @@ func (c *Collector) Name() models.Source {
 // configured emails. Repos that fail (e.g. missing directory) are skipped
 // with no error — partial results are better than none.
 func (c *Collector) Collect(ctx context.Context) ([]models.Activity, error) {
+	// Without at least one self-email we cannot tell the user's commits from
+	// their teammates'. `git log --all` with no --author would ingest every
+	// contributor across every branch, so collect nothing rather than pollute
+	// the timeline with other people's work. (This guards a fresh machine
+	// where neither config nor `git config user.email` yields an identity.)
+	authors := nonEmptyEmails(c.emails)
+	if len(authors) == 0 {
+		return nil, nil
+	}
+
 	var all []models.Activity
 	for _, repo := range c.repos {
-		activities, err := c.collectRepo(ctx, repo)
+		activities, err := c.collectRepo(ctx, repo, authors)
 		if err != nil {
 			continue // skip broken repos
 		}
@@ -81,14 +91,14 @@ func (c *Collector) Collect(ctx context.Context) ([]models.Activity, error) {
 	return all, nil
 }
 
-func (c *Collector) collectRepo(ctx context.Context, repoPath string) ([]models.Activity, error) {
+func (c *Collector) collectRepo(ctx context.Context, repoPath string, authors []string) ([]models.Activity, error) {
 	args := []string{
 		"log",
 		"--all",
 		"--format=" + recordSep + "%n" + logFormat,
 		"--shortstat",
 	}
-	for _, email := range c.emails {
+	for _, email := range authors {
 		args = append(args, "--author="+email)
 	}
 
@@ -102,6 +112,18 @@ func (c *Collector) collectRepo(ctx context.Context, repoPath string) ([]models.
 
 	repoName := filepath.Base(repoPath)
 	return parseLog(repoName, repoPath, branch, out)
+}
+
+// nonEmptyEmails trims and drops blank entries so a stray "" in config can't
+// turn into an empty `--author=` regex that matches every author.
+func nonEmptyEmails(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if t := strings.TrimSpace(s); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // currentBranch returns the current branch name, or empty string on error.
