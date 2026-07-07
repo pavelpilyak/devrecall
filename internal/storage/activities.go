@@ -88,10 +88,16 @@ type ActivityFilter struct {
 	Source     models.Source
 	Type       models.ActivityType
 	IdentityID int64
+	Tag        string // matches an enrichment tag (exact, lowercase)
 	After      time.Time
 	Before     time.Time
 	Limit      int
 }
+
+// tagFilterClause returns a SQL fragment restricting an activity ID column
+// to activities enriched with the given tag.
+const tagFilterClause = ` IN (
+	SELECT e.activity_id FROM enrichments e, json_each(e.tags) jt WHERE jt.value = ?)`
 
 // ListActivities returns activities matching the filter, ordered by timestamp descending.
 func (db *DB) ListActivities(f ActivityFilter) ([]models.Activity, error) {
@@ -109,6 +115,10 @@ func (db *DB) ListActivities(f ActivityFilter) ([]models.Activity, error) {
 	if f.IdentityID > 0 {
 		query += " AND identity_id = ?"
 		args = append(args, f.IdentityID)
+	}
+	if f.Tag != "" {
+		query += " AND id" + tagFilterClause
+		args = append(args, strings.ToLower(f.Tag))
 	}
 	if !f.After.IsZero() {
 		query += " AND timestamp >= ?"
@@ -260,6 +270,10 @@ func (db *DB) SearchFTS(query string, filter ActivityFilter, limit int) ([]FTSMa
 	if filter.IdentityID > 0 {
 		sqlQuery += " AND a.identity_id = ?"
 		args = append(args, filter.IdentityID)
+	}
+	if filter.Tag != "" {
+		sqlQuery += " AND a.id" + tagFilterClause
+		args = append(args, strings.ToLower(filter.Tag))
 	}
 
 	sqlQuery += " ORDER BY rank LIMIT ?"

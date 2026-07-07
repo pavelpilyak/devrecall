@@ -33,6 +33,7 @@ import (
 	"github.com/pavelpilyak/devrecall/internal/identity"
 	"github.com/pavelpilyak/devrecall/internal/update"
 	"github.com/pavelpilyak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/pipeline"
 	"github.com/pavelpilyak/devrecall/internal/privacy"
 	"github.com/pavelpilyak/devrecall/internal/storage"
 	"github.com/pavelpilyak/devrecall/internal/summarizer"
@@ -423,6 +424,13 @@ func runStandup(dateFlag string) error {
 		}
 	}
 
+	// Link work items and enrich the freshly synced activities so the
+	// standup can group by ticket. Embedding is skipped here to keep
+	// standup latency down; the next full sync catches up.
+	pipeline.PostSync(context.Background(), db, cfg, tokenStore, pipeline.Options{
+		Link: true, Enrich: true, Log: os.Stderr,
+	})
+
 	// Query activities for the target date (all sources).
 	fmt.Fprintf(os.Stderr, "Generating standup for %s...\n", targetDate.Format("2006-01-02"))
 	activities, err := db.ListActivities(storage.ActivityFilter{
@@ -460,7 +468,7 @@ func runStandup(dateFlag string) error {
 	var s summarizer.Summarizer
 	if llmProvider != nil {
 		fmt.Fprintf(os.Stderr, "Generating standup with %s...\n", llmProvider.Name())
-		ls := summarizer.NewLLMSummarizer(llmProvider).WithPromptLoader(promptLoader())
+		ls := summarizer.NewLLMSummarizer(llmProvider).WithPromptLoader(promptLoader()).WithWorkItems(db)
 		if slackUserID != "" {
 			ls.WithSelfUIDs(slackUserID)
 		}
@@ -550,7 +558,7 @@ func runWeek(weeksBack int) error {
 	var s summarizer.Summarizer
 	if p, llmErr := llm.FromConfig(cfg, tokenStore); llmErr == nil {
 		fmt.Fprintf(os.Stderr, "Generating weekly summary with %s...\n", p.Name())
-		s = summarizer.NewLLMSummarizer(p).WithPromptLoader(promptLoader()).WithPromptLoader(promptLoader())
+		s = summarizer.NewLLMSummarizer(p).WithPromptLoader(promptLoader()).WithWorkItems(db)
 	} else {
 		s = summarizer.NewTemplateSummarizer()
 	}
@@ -1029,76 +1037,15 @@ func runSync(ctx context.Context, lookback time.Duration, sourceFilter string) e
 
 	fmt.Fprintf(os.Stderr, "\nSync complete. %d new activities stored.\n", totalStored)
 
-	// Embed unembedded activities for vector search.
-	if err := runEmbedMissing(ctx, db, cfg, tokenStore); err != nil {
-		fmt.Fprintf(os.Stderr, "Embedding warning: %v\n", err)
-	}
+	// Post-sync knowledge-base pass: work-item linking, LLM enrichment,
+	// and embeddings for the freshly stored activities.
+	pipeline.PostSync(ctx, db, cfg, tokenStore, pipeline.Options{
+		Link: true, Enrich: true, Embed: true, Log: os.Stderr,
+	})
 
 	// Quarterly auto-snapshot: check if any completed quarters lack a summary.
 	if err := runQuarterlyAutoSnapshot(ctx, db, cfg, tokenStore, dir); err != nil {
 		fmt.Fprintf(os.Stderr, "Quarterly snapshot warning: %v\n", err)
-	}
-
-	return nil
-}
-
-func runEmbedMissing(ctx context.Context, db *storage.DB, cfg *config.Config, tokenStore auth.TokenStore) error {
-	embedder, err := embedding.FromConfig(cfg, tokenStore)
-	if err != nil {
-		// Embedding not configured — skip silently.
-		return nil
-	}
-
-	const batchSize = 50
-	totalEmbedded := 0
-
-	for {
-		ids, err := db.ListUnembeddedActivityIDs(batchSize)
-		if err != nil {
-			return fmt.Errorf("list unembedded: %w", err)
-		}
-		if len(ids) == 0 {
-			break
-		}
-
-		if totalEmbedded == 0 {
-			// Count total unembedded for progress on first batch.
-			allIDs, _ := db.ListUnembeddedActivityIDs(0)
-			fmt.Fprintf(os.Stderr, "Embedding %d activities...\n", len(allIDs))
-		}
-
-		activities, err := db.GetActivitiesByIDs(ids)
-		if err != nil {
-			return fmt.Errorf("get activities: %w", err)
-		}
-
-		// Build texts for embedding.
-		texts := make([]string, len(activities))
-		for i, a := range activities {
-			text := a.Title
-			if a.Content != "" {
-				text += " " + a.Content
-			}
-			texts[i] = text
-		}
-
-		vectors, err := embedder.EmbedBatch(ctx, texts)
-		if err != nil {
-			return fmt.Errorf("embed batch: %w", err)
-		}
-
-		for i, a := range activities {
-			if err := db.InsertEmbedding(a.ID, embedder.Name(), vectors[i]); err != nil {
-				return fmt.Errorf("store embedding for activity %d: %w", a.ID, err)
-			}
-		}
-
-		totalEmbedded += len(activities)
-		fmt.Fprintf(os.Stderr, "  Embedded %d activities...\n", totalEmbedded)
-	}
-
-	if totalEmbedded > 0 {
-		fmt.Fprintf(os.Stderr, "Embedding complete: %d activities.\n", totalEmbedded)
 	}
 
 	return nil
@@ -1111,7 +1058,7 @@ func runQuarterlyAutoSnapshot(ctx context.Context, db *storage.DB, cfg *config.C
 		return nil
 	}
 
-	sum := summarizer.NewLLMSummarizer(llmProvider).WithPromptLoader(promptLoader())
+	sum := summarizer.NewLLMSummarizer(llmProvider).WithPromptLoader(promptLoader()).WithWorkItems(db)
 	gen := summarizer.NewPeriodicGenerator(db, sum, llmProvider)
 
 	now := time.Now().UTC()
@@ -1351,7 +1298,7 @@ func runSummarize(periodFlag, sinceFlag string) error {
 		return fmt.Errorf("LLM not configured — run 'devrecall auth' for your provider first: %w", err)
 	}
 
-	sum := summarizer.NewLLMSummarizer(llmProvider).WithPromptLoader(promptLoader())
+	sum := summarizer.NewLLMSummarizer(llmProvider).WithPromptLoader(promptLoader()).WithWorkItems(db)
 	gen := summarizer.NewPeriodicGenerator(db, sum, llmProvider)
 
 	now := time.Now().UTC()
@@ -1500,7 +1447,7 @@ func runBrag(period string) error {
 	var s summarizer.Summarizer
 	if p, llmErr := llm.FromConfig(cfg, tokenStore); llmErr == nil {
 		fmt.Fprintf(os.Stderr, "Generating with %s...\n", p.Name())
-		s = summarizer.NewLLMSummarizer(p).WithPromptLoader(promptLoader())
+		s = summarizer.NewLLMSummarizer(p).WithPromptLoader(promptLoader()).WithWorkItems(db)
 	} else {
 		s = summarizer.NewTemplateSummarizer()
 	}
@@ -1582,7 +1529,7 @@ func runPerfReview(period string) error {
 	var s summarizer.Summarizer
 	if p, llmErr := llm.FromConfig(cfg, tokenStore); llmErr == nil {
 		fmt.Fprintf(os.Stderr, "Generating with %s...\n", p.Name())
-		s = summarizer.NewLLMSummarizer(p).WithPromptLoader(promptLoader())
+		s = summarizer.NewLLMSummarizer(p).WithPromptLoader(promptLoader()).WithWorkItems(db)
 	} else {
 		s = summarizer.NewTemplateSummarizer()
 	}

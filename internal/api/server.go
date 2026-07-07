@@ -22,6 +22,7 @@ import (
 	"github.com/pavelpilyak/devrecall/internal/collector/git"
 	"github.com/pavelpilyak/devrecall/internal/config"
 	"github.com/pavelpilyak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/pipeline"
 	"github.com/pavelpilyak/devrecall/internal/privacy"
 	"github.com/pavelpilyak/devrecall/internal/storage"
 	"github.com/pavelpilyak/devrecall/internal/summarizer"
@@ -289,7 +290,7 @@ func (s *Server) handleStandup(w http.ResponseWriter, r *http.Request) {
 
 	var sum summarizer.Summarizer
 	if p, llmErr := llm.FromConfig(s.Cfg(), s.tokenStore); llmErr == nil {
-		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader())
+		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader()).WithWorkItems(s.db)
 	} else {
 		sum = summarizer.NewTemplateSummarizer()
 	}
@@ -342,7 +343,7 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 
 	var sum summarizer.Summarizer
 	if p, llmErr := llm.FromConfig(s.Cfg(), s.tokenStore); llmErr == nil {
-		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader())
+		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader()).WithWorkItems(s.db)
 	} else {
 		sum = summarizer.NewTemplateSummarizer()
 	}
@@ -385,7 +386,7 @@ func (s *Server) handleBrag(w http.ResponseWriter, r *http.Request) {
 
 	var sum summarizer.Summarizer
 	if p, llmErr := llm.FromConfig(s.Cfg(), s.tokenStore); llmErr == nil {
-		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader())
+		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader()).WithWorkItems(s.db)
 	} else {
 		sum = summarizer.NewTemplateSummarizer()
 	}
@@ -433,7 +434,7 @@ func (s *Server) handlePerfReview(w http.ResponseWriter, r *http.Request) {
 
 	var sum summarizer.Summarizer
 	if p, llmErr := llm.FromConfig(s.Cfg(), s.tokenStore); llmErr == nil {
-		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader())
+		sum = summarizer.NewLLMSummarizer(p).WithPromptLoader(s.promptLoader()).WithWorkItems(s.db)
 	} else {
 		sum = summarizer.NewTemplateSummarizer()
 	}
@@ -653,6 +654,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 	synced := s.syncGit(r.Context())
+
+	pipeline.PostSync(r.Context(), s.db, s.Cfg(), s.tokenStore, pipeline.Options{
+		Link: true, Enrich: true, Embed: true, Log: os.Stderr,
+	})
 
 	counts, err := s.db.CountActivitiesBySource()
 	if err != nil {

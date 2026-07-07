@@ -16,6 +16,8 @@ const standupSystemPrompt = `You are a developer standup report generator. Given
 
 Rules:
 - Group related work together (e.g., multiple commits on the same feature)
+- Activities may be grouped under "### <work item>" headers: treat each header as ONE narrative unit — the ticket, its commits, PRs, and discussions describe the same piece of work, so report them as a single accomplishment, not separate bullets
+- Status facts in a work-item header (e.g. "moved to Done") are metadata: fold them into the outcome ("shipped X, now Done"); NEVER emit a standalone line like "Moved PROJ-123 to Done"
 - This is a FIRST-PERSON standup: only report what "You" did, asked, or decided — not what others said
 - In Slack threads, messages from "You" are the standup author; other participants are teammates
 - Accurately reflect the tense: if something was planned or will be done, use future tense; if completed, use past tense
@@ -38,6 +40,8 @@ const weeklySystemPrompt = `You are a developer weekly summary generator. Given 
 Rules:
 - Start with a brief 2-3 sentence overview of the week
 - Group work by themes/projects, not by day
+- Activities may be grouped under "### <work item>" headers: a work item appearing on several days is ONE piece of work — merge it into a single narrative across the week
+- Status facts in a work-item header (e.g. "moved to Done") are metadata: fold them into the outcome; NEVER emit a standalone line like "Moved PROJ-123 to Done"
 - Include key accomplishments and decisions made
 - When activities include [link](url) references, preserve them inline so the reader can click through to the source
 - Include a meeting time breakdown at the end: total hours in meetings, broken down by meeting type (1:1, standup, ceremony, etc.)
@@ -48,12 +52,20 @@ Rules:
 
 Respond ONLY with the weekly summary text, no preamble or explanation.`
 
+// WorkItemStore resolves which work items activities belong to, so the
+// prompt can group a ticket with its commits, PRs, and discussions.
+// Satisfied by *storage.DB.
+type WorkItemStore interface {
+	ListActivityWorkItems(ids []int64) (map[int64][]models.WorkItemRef, error)
+}
+
 // LLMSummarizer generates standups using an LLM provider.
 type LLMSummarizer struct {
-	provider llm.Provider
-	fallback *TemplateSummarizer
-	selfUIDs []string       // user IDs across sources (e.g., Slack UID) to label "You" in prompts
-	prompts  *PromptLoader  // optional custom prompt loader
+	provider  llm.Provider
+	fallback  *TemplateSummarizer
+	selfUIDs  []string       // user IDs across sources (e.g., Slack UID) to label "You" in prompts
+	prompts   *PromptLoader  // optional custom prompt loader
+	workItems WorkItemStore  // optional: enables work-item grouping in prompts
 }
 
 // NewLLMSummarizer creates an LLM-powered summarizer with template fallback.
@@ -77,6 +89,33 @@ func (s *LLMSummarizer) WithPromptLoader(loader *PromptLoader) *LLMSummarizer {
 	return s
 }
 
+// WithWorkItems enables work-item grouping: activities that share a ticket
+// (or PR) render as one block in the prompt, so the LLM connects the Jira
+// ticket, its commits, and the PR into a single narrative. Nil store keeps
+// the flat date-grouped prompt.
+func (s *LLMSummarizer) WithWorkItems(store WorkItemStore) *LLMSummarizer {
+	s.workItems = store
+	return s
+}
+
+// activityWorkItems fetches work-item refs for the given activities, or
+// nil when no store is configured (or lookup fails — grouping is an
+// enhancement, never a reason to fail a summary).
+func (s *LLMSummarizer) activityWorkItems(activities []models.Activity) map[int64][]models.WorkItemRef {
+	if s.workItems == nil {
+		return nil
+	}
+	ids := make([]int64, len(activities))
+	for i, a := range activities {
+		ids[i] = a.ID
+	}
+	refs, err := s.workItems.ListActivityWorkItems(ids)
+	if err != nil {
+		return nil
+	}
+	return refs
+}
+
 // Standup generates a standup report using the LLM.
 // Falls back to template-based generation on LLM failure.
 func (s *LLMSummarizer) Standup(activities []models.Activity) (string, error) {
@@ -88,7 +127,7 @@ func (s *LLMSummarizer) Standup(activities []models.Activity) (string, error) {
 	for _, uid := range s.selfUIDs {
 		selfSet[uid] = true
 	}
-	prompt := buildActivitiesPrompt(activities, selfSet)
+	prompt := buildActivitiesPrompt(activities, selfSet, s.activityWorkItems(activities))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -124,7 +163,7 @@ func (s *LLMSummarizer) WeeklySummary(activities []models.Activity) (string, err
 	for _, uid := range s.selfUIDs {
 		selfSet[uid] = true
 	}
-	prompt := buildActivitiesPrompt(activities, selfSet)
+	prompt := buildActivitiesPrompt(activities, selfSet, s.activityWorkItems(activities))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -221,7 +260,7 @@ func buildBragPrompt(activities []models.Activity, childSummaries []models.Summa
 	if len(activities) > 0 {
 		b.WriteString("Raw activities:\n\n")
 		selfSet := make(map[string]bool)
-		b.WriteString(buildActivitiesPrompt(activities, selfSet))
+		b.WriteString(buildActivitiesPrompt(activities, selfSet, nil))
 	}
 
 	if b.Len() == 0 {
@@ -347,9 +386,29 @@ func formatLink(url string) string {
 	return fmt.Sprintf(" [link](%s)", url)
 }
 
+// transitionToStatus returns the target status when the activity is a
+// pure status transition (e.g. a Jira changelog entry "moved to Done"),
+// or "" for regular activities.
+func transitionToStatus(a models.Activity) string {
+	if a.Metadata == "" {
+		return ""
+	}
+	var meta struct {
+		ToStatus string `json:"to_status"`
+	}
+	if err := json.Unmarshal([]byte(a.Metadata), &meta); err != nil {
+		return ""
+	}
+	return meta.ToStatus
+}
+
 // buildActivitiesPrompt formats activities into a structured prompt for the LLM.
 // selfUIDs maps user IDs that belong to the standup author (labeled "You" in output).
-func buildActivitiesPrompt(activities []models.Activity, selfUIDs map[string]bool) string {
+// workItems, when non-nil, groups each date's activities under work-item headers
+// (ticket + its commits, PRs, and discussions as one block); status-transition
+// activities then surface as header facts instead of bullets. A nil map keeps
+// the flat per-date list.
+func buildActivitiesPrompt(activities []models.Activity, selfUIDs map[string]bool, workItems map[int64][]models.WorkItemRef) string {
 	var b strings.Builder
 	b.WriteString("Here are my work activities:\n\n")
 
@@ -381,73 +440,185 @@ func buildActivitiesPrompt(activities []models.Activity, selfUIDs map[string]boo
 			fmt.Fprintf(&b, "## %s (%s)\n", t.Weekday(), d.date)
 		}
 
-		for _, a := range d.activities {
-			switch a.Source {
-			case models.SourceGit:
-				var meta commitMeta
-				json.Unmarshal([]byte(a.Metadata), &meta)
-				fmt.Fprintf(&b, "- [Git commit] %s: %s", meta.Repo, a.Title)
-				if meta.FilesChanged > 0 {
-					fmt.Fprintf(&b, " (%d files, +%d/-%d)", meta.FilesChanged, meta.Insertions, meta.Deletions)
-				}
-				b.WriteString("\n")
-
-			case models.SourceCalendar:
-				var meta calendarMeta
-				json.Unmarshal([]byte(a.Metadata), &meta)
-				link := extractURL(a)
-				details := formatDuration(meta.DurationMin)
-				if meta.MeetingType != "" {
-					details += ", " + meta.MeetingType
-				}
-				nonSelfCount := 0
-				for _, att := range meta.Attendees {
-					if !att.Self {
-						nonSelfCount++
-					}
-				}
-				if nonSelfCount > 0 {
-					details += fmt.Sprintf(", %d attendees", nonSelfCount)
-				}
-				if meta.ResponseStatus == "declined" {
-					details += ", declined"
-				}
-				// Show scheduled time for today's meetings.
-				if d.date == todayStr && meta.Start != "" && !meta.IsAllDay {
-					if st, err := time.Parse(time.RFC3339, meta.Start); err == nil {
-						fmt.Fprintf(&b, "- [Calendar meeting] %s — %s (%s)%s\n", st.Local().Format("15:04"), a.Title, details, formatLink(link))
-						break
-					}
-				}
-				fmt.Fprintf(&b, "- [Calendar meeting] %s (%s)%s\n", a.Title, details, formatLink(link))
-
-			case models.SourceSlack:
-				var meta slackFullMeta
-				json.Unmarshal([]byte(a.Metadata), &meta)
-				link := formatLink(meta.Permalink)
-				if len(meta.ThreadMsgs) > 1 {
-					// Thread with messages — give the LLM the full conversation.
-					fmt.Fprintf(&b, "- [Slack thread] #%s (%d messages):%s\n", meta.ChannelName, len(meta.ThreadMsgs), link)
-					for _, m := range meta.ThreadMsgs {
-						label := m.User
-						if selfUIDs[m.User] {
-							label = "You"
-						}
-						fmt.Fprintf(&b, "    %s: %s\n", label, m.Text)
-					}
-				} else if a.Content != "" {
-					fmt.Fprintf(&b, "- [Slack message] #%s: %s%s\n", meta.ChannelName, a.Content, link)
-				} else {
-					fmt.Fprintf(&b, "- [Slack message] #%s: %s%s\n", meta.ChannelName, a.Title, link)
-				}
-
-			default:
-				link := formatLink(extractURL(a))
-				fmt.Fprintf(&b, "- [%s] %s%s\n", a.Source, a.Title, link)
+		if workItems == nil {
+			for _, a := range d.activities {
+				writeActivityLine(&b, a, selfUIDs, d.date == todayStr)
 			}
+		} else {
+			writeWorkItemBlocks(&b, d.activities, selfUIDs, d.date == todayStr, workItems)
 		}
 		b.WriteString("\n")
 	}
 
 	return b.String()
+}
+
+// writeWorkItemBlocks renders one date's activities grouped by work item:
+// each item becomes a "### KEY — Title [status facts]" block containing its
+// activities, followed by an "Other activity" block for unlinked ones.
+// Status-transition activities never render as bullets — the transition is
+// already a fact on the block header.
+func writeWorkItemBlocks(b *strings.Builder, activities []models.Activity, selfUIDs map[string]bool, isToday bool, workItems map[int64][]models.WorkItemRef) {
+	type block struct {
+		ref  models.WorkItemRef
+		acts []models.Activity
+	}
+	var blocks []*block
+	blockIndex := make(map[string]int)
+	var residual []models.Activity
+
+	for _, a := range activities {
+		refs := workItems[a.ID]
+		if len(refs) == 0 {
+			if transitionToStatus(a) == "" {
+				residual = append(residual, a)
+			}
+			continue
+		}
+		// An activity referencing several work items renders once, under
+		// the first, annotated with the others — no double-counting.
+		primary := refs[0]
+		idx, ok := blockIndex[primary.Key]
+		if !ok {
+			idx = len(blocks)
+			blockIndex[primary.Key] = idx
+			blocks = append(blocks, &block{ref: primary})
+		}
+		blocks[idx].acts = append(blocks[idx].acts, a)
+	}
+
+	for _, blk := range blocks {
+		header := blk.ref.Key
+		if blk.ref.Title != "" && blk.ref.Title != blk.ref.Key {
+			header += " — " + blk.ref.Title
+		}
+		facts := []string{blk.ref.Kind}
+		if blk.ref.Status != "" {
+			fact := "status: " + blk.ref.Status
+			if !blk.ref.StatusChangedAt.IsZero() {
+				fact += ", moved to " + blk.ref.Status + " on " + blk.ref.StatusChangedAt.Format("2006-01-02")
+			}
+			facts = append(facts, fact)
+		}
+		fmt.Fprintf(b, "### %s  [%s]\n", header, strings.Join(facts, " · "))
+
+		wrote := false
+		for _, a := range blk.acts {
+			if transitionToStatus(a) != "" {
+				continue // the header already carries the status fact
+			}
+			writeActivityLine(b, a, selfUIDs, isToday)
+			if extra := alsoKeys(workItems[a.ID]); extra != "" {
+				replaceLastLineSuffix(b, extra)
+			}
+			wrote = true
+		}
+		if !wrote {
+			b.WriteString("- (status update only — no other activity)\n")
+		}
+	}
+
+	if len(residual) > 0 {
+		if len(blocks) > 0 {
+			b.WriteString("### Other activity\n")
+		}
+		for _, a := range residual {
+			writeActivityLine(b, a, selfUIDs, isToday)
+		}
+	}
+}
+
+// alsoKeys formats secondary work-item keys as " (also KEY2, KEY3)".
+func alsoKeys(refs []models.WorkItemRef) string {
+	if len(refs) < 2 {
+		return ""
+	}
+	keys := make([]string, 0, len(refs)-1)
+	for _, r := range refs[1:] {
+		keys = append(keys, r.Key)
+	}
+	return " (also " + strings.Join(keys, ", ") + ")"
+}
+
+// replaceLastLineSuffix appends suffix to the last written line, keeping
+// the trailing newline (activity lines may span multiple physical lines
+// for Slack threads, so appending at write time isn't possible).
+func replaceLastLineSuffix(b *strings.Builder, suffix string) {
+	s := b.String()
+	if !strings.HasSuffix(s, "\n") {
+		b.WriteString(suffix)
+		return
+	}
+	trimmed := s[:len(s)-1]
+	b.Reset()
+	b.WriteString(trimmed)
+	b.WriteString(suffix)
+	b.WriteString("\n")
+}
+
+// writeActivityLine renders one activity as a prompt bullet, per-source.
+func writeActivityLine(b *strings.Builder, a models.Activity, selfUIDs map[string]bool, isToday bool) {
+	switch a.Source {
+	case models.SourceGit:
+		var meta commitMeta
+		json.Unmarshal([]byte(a.Metadata), &meta)
+		fmt.Fprintf(b, "- [Git commit] %s: %s", meta.Repo, a.Title)
+		if meta.FilesChanged > 0 {
+			fmt.Fprintf(b, " (%d files, +%d/-%d)", meta.FilesChanged, meta.Insertions, meta.Deletions)
+		}
+		b.WriteString("\n")
+
+	case models.SourceCalendar:
+		var meta calendarMeta
+		json.Unmarshal([]byte(a.Metadata), &meta)
+		link := extractURL(a)
+		details := formatDuration(meta.DurationMin)
+		if meta.MeetingType != "" {
+			details += ", " + meta.MeetingType
+		}
+		nonSelfCount := 0
+		for _, att := range meta.Attendees {
+			if !att.Self {
+				nonSelfCount++
+			}
+		}
+		if nonSelfCount > 0 {
+			details += fmt.Sprintf(", %d attendees", nonSelfCount)
+		}
+		if meta.ResponseStatus == "declined" {
+			details += ", declined"
+		}
+		// Show scheduled time for today's meetings.
+		if isToday && meta.Start != "" && !meta.IsAllDay {
+			if st, err := time.Parse(time.RFC3339, meta.Start); err == nil {
+				fmt.Fprintf(b, "- [Calendar meeting] %s — %s (%s)%s\n", st.Local().Format("15:04"), a.Title, details, formatLink(link))
+				return
+			}
+		}
+		fmt.Fprintf(b, "- [Calendar meeting] %s (%s)%s\n", a.Title, details, formatLink(link))
+
+	case models.SourceSlack:
+		var meta slackFullMeta
+		json.Unmarshal([]byte(a.Metadata), &meta)
+		link := formatLink(meta.Permalink)
+		if len(meta.ThreadMsgs) > 1 {
+			// Thread with messages — give the LLM the full conversation.
+			fmt.Fprintf(b, "- [Slack thread] #%s (%d messages):%s\n", meta.ChannelName, len(meta.ThreadMsgs), link)
+			for _, m := range meta.ThreadMsgs {
+				label := m.User
+				if selfUIDs[m.User] {
+					label = "You"
+				}
+				fmt.Fprintf(b, "    %s: %s\n", label, m.Text)
+			}
+		} else if a.Content != "" {
+			fmt.Fprintf(b, "- [Slack message] #%s: %s%s\n", meta.ChannelName, a.Content, link)
+		} else {
+			fmt.Fprintf(b, "- [Slack message] #%s: %s%s\n", meta.ChannelName, a.Title, link)
+		}
+
+	default:
+		link := formatLink(extractURL(a))
+		fmt.Fprintf(b, "- [%s] %s%s\n", a.Source, a.Title, link)
+	}
 }

@@ -143,6 +143,45 @@ CREATE TABLE IF NOT EXISTS embeddings (
     vector      BLOB    NOT NULL, -- little-endian float32 array
     created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Work items: one row per unit of work, linking a ticket to its commits,
+-- PRs, and discussions across sources. key is the identity: a ticket key
+-- ("PROJ-123") when one exists, otherwise "pr:<source>:<source_id>" for
+-- PRs with no ticket reference.
+CREATE TABLE IF NOT EXISTS work_items (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    key               TEXT    NOT NULL UNIQUE,
+    kind              TEXT    NOT NULL,            -- 'ticket' | 'pr'
+    title             TEXT    NOT NULL DEFAULT '', -- ticket summary > PR title > first commit subject
+    status            TEXT,                        -- latest known status ('Done', 'In Review', ...)
+    status_changed_at TEXT,                        -- timestamp of the transition that set status
+    url               TEXT,
+    first_seen        TEXT    NOT NULL,            -- min(activity.timestamp) across linked activities
+    last_seen         TEXT    NOT NULL,            -- max(activity.timestamp)
+    updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS activity_work_items (
+    activity_id  INTEGER NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+    work_item_id INTEGER NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+    link_kind    TEXT    NOT NULL DEFAULT 'issue_key', -- 'issue_key' | 'pr_sha' | 'self'
+    PRIMARY KEY (activity_id, work_item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_awi_work_item ON activity_work_items(work_item_id);
+CREATE INDEX IF NOT EXISTS idx_awi_activity  ON activity_work_items(activity_id);
+
+-- LLM-generated per-activity enrichment: one-line factual digest + tags.
+-- Row presence marks an activity as enriched (same idempotency pattern as
+-- embeddings). model records provenance: provider name, or 'deterministic'
+-- (rule-based pre-fill) / 'fallback' (LLM output unusable).
+CREATE TABLE IF NOT EXISTS enrichments (
+    activity_id INTEGER PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE,
+    digest      TEXT    NOT NULL,
+    tags        TEXT    NOT NULL DEFAULT '[]',  -- JSON array of lowercase strings
+    entities    TEXT,                           -- optional JSON: {"people":[],"systems":[]}
+    model       TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
 `
 
 // vecSchema creates the vec0 virtual table for KNN search.

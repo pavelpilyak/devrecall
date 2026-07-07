@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
+	"github.com/pavelpilyak/devrecall/internal/pipeline"
 )
 
 // syncStreamWait is how long handleSyncStream waits for in-flight
@@ -59,6 +61,16 @@ func (s *Server) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 		}
 		writeSyncEvent(w, flusher, "freshness", ev)
 	}
+
+	// Post-sync knowledge-base pass (work items, enrichment, embeddings)
+	// before the terminal event, so a follow-up standup/chat sees linked
+	// and digested activities. Clients that don't know the event ignore it.
+	writeSyncEvent(w, flusher, "pipeline", map[string]any{"status": "running"})
+	pipeline.PostSync(r.Context(), s.db, s.Cfg(), s.tokenStore, pipeline.Options{
+		Link: true, Enrich: true, Embed: true, Log: os.Stderr,
+	})
+	writeSyncEvent(w, flusher, "pipeline", map[string]any{"status": "done"})
+
 	writeSyncEvent(w, flusher, "done", map[string]any{"total_added": totalAdded})
 }
 

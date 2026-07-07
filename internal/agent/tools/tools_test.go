@@ -99,6 +99,8 @@ func TestRegistry_Names(t *testing.T) {
 		"semantic_search_activities",
 		"get_activity",
 		"get_related_activities",
+		"get_work_item",
+		"list_work_items",
 		"who_worked_on",
 		"recent_decisions",
 		"prep_meeting",

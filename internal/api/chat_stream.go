@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/pavelpilyak/devrecall/internal/agent"
 	agenttools "github.com/pavelpilyak/devrecall/internal/agent/tools"
 	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
 	"github.com/pavelpilyak/devrecall/internal/embedding"
 	"github.com/pavelpilyak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/workitem"
 )
 
 const chatStreamSystemPrompt = `You are DevRecall, a developer work-memory assistant. You answer questions about the user's work history by calling the read-only tools provided to you.
@@ -140,13 +142,31 @@ func (s *Server) runChatFreshness(r *http.Request, w http.ResponseWriter, flushe
 	if checker == nil || len(syncers) == 0 {
 		return
 	}
+	added := 0
 	for ev := range checker.Run(r.Context(), syncers, force) {
+		if ev.Status == freshness.StatusSynced {
+			added += ev.Added
+		}
 		payload, err := json.Marshal(ev)
 		if err != nil {
 			continue
 		}
 		fmt.Fprintf(w, "event: freshness\ndata: %s\n\n", payload)
 		flusher.Flush()
+	}
+	s.linkAfterFreshness(added)
+}
+
+// linkAfterFreshness re-materializes work items when a freshness sync
+// brought in new activities, so agent tools see up-to-date links. Only
+// the deterministic linking stage runs here — LLM enrichment latency is
+// unacceptable mid-chat; the next full sync catches up.
+func (s *Server) linkAfterFreshness(added int) {
+	if added == 0 {
+		return
+	}
+	if _, err := workitem.Materialize(s.db); err != nil {
+		fmt.Fprintf(os.Stderr, "Work-item linking warning: %v\n", err)
 	}
 }
 
@@ -159,7 +179,15 @@ func (s *Server) runChatFreshnessBuffered(ctx context.Context, force bool) []fre
 	if checker == nil || len(syncers) == 0 {
 		return nil
 	}
-	return freshness.Collect(checker.Run(ctx, syncers, force))
+	events := freshness.Collect(checker.Run(ctx, syncers, force))
+	added := 0
+	for _, ev := range events {
+		if ev.Status == freshness.StatusSynced {
+			added += ev.Added
+		}
+	}
+	s.linkAfterFreshness(added)
+	return events
 }
 
 // chatFreshness returns the freshness checker + syncers used by the

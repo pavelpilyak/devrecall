@@ -109,15 +109,8 @@ func (ts *ThreadSummarizer) summarizeThread(ctx context.Context, msgs []slackcol
 
 // parseThreadSummary extracts a ThreadSummary from the LLM response JSON.
 func parseThreadSummary(resp string) (*slackcollector.ThreadSummary, error) {
-	// Strip markdown code fences if present.
-	resp = strings.TrimSpace(resp)
-	resp = strings.TrimPrefix(resp, "```json")
-	resp = strings.TrimPrefix(resp, "```")
-	resp = strings.TrimSuffix(resp, "```")
-	resp = strings.TrimSpace(resp)
-
 	var result slackcollector.ThreadSummary
-	if err := json.Unmarshal([]byte(resp), &result); err != nil {
+	if err := json.Unmarshal([]byte(llm.ExtractJSON(resp)), &result); err != nil {
 		return nil, fmt.Errorf("parsing LLM response: %w", err)
 	}
 

@@ -55,6 +55,33 @@ type Identity struct {
 	IsSelf bool   `json:"is_self"`
 }
 
+// WorkItem is a unit of work linking related activities across sources:
+// a ticket with its commits, PRs, and discussions. Key is the identity —
+// a ticket key like "PROJ-123", or "pr:<source>:<source_id>" for PRs
+// that reference no ticket.
+type WorkItem struct {
+	ID              int64     `json:"id"`
+	Key             string    `json:"key"`
+	Kind            string    `json:"kind"` // "ticket" | "pr"
+	Title           string    `json:"title"`
+	Status          string    `json:"status,omitempty"`
+	StatusChangedAt time.Time `json:"status_changed_at,omitempty"`
+	URL             string    `json:"url,omitempty"`
+	FirstSeen       time.Time `json:"first_seen"`
+	LastSeen        time.Time `json:"last_seen"`
+}
+
+// WorkItemRef is a lightweight reference to a work item, used when
+// annotating activities without loading the full row set.
+type WorkItemRef struct {
+	ID              int64     `json:"id"`
+	Key             string    `json:"key"`
+	Kind            string    `json:"kind"`
+	Title           string    `json:"title"`
+	Status          string    `json:"status,omitempty"`
+	StatusChangedAt time.Time `json:"status_changed_at,omitempty"`
+}
+
 // Summary is an AI-generated aggregation of activities over a period.
 type Summary struct {
 	ID            int64  `json:"id"`

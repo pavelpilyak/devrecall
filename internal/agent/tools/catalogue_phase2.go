@@ -216,7 +216,7 @@ func whoWorkedOnTool(deps Deps) Tool {
 			}
 			result := map[string]any{
 				"identity_id": identityID,
-				"activities":  toSummaries(rows),
+				"activities":  toSummaries(deps, rows),
 				"count":       len(rows),
 				"has_more":    hasMore,
 			}
@@ -340,7 +340,7 @@ func recentDecisionsTool(deps Deps) Tool {
 				merged = merged[:limit]
 			}
 			result := map[string]any{
-				"activities": toSummaries(merged),
+				"activities": toSummaries(deps, merged),
 				"count":      len(merged),
 				"has_more":   hasMore,
 			}
@@ -464,7 +464,7 @@ func prepMeetingTool(deps Deps) Tool {
 						Limit:      perPerson,
 					})
 					if err == nil {
-						entry.RecentActivity = toSummaries(rows)
+						entry.RecentActivity = toSummaries(deps, rows)
 					}
 				}
 				result.Attendees = append(result.Attendees, entry)
