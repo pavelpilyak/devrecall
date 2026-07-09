@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pavelpilyak/devrecall/internal/storage"
+	"github.com/pavelpilyak/devrecall/internal/workitem"
 	"github.com/pavelpilyak/devrecall/pkg/models"
 )
 
@@ -24,6 +25,8 @@ func buildCatalogue(deps Deps) []Tool {
 		semanticSearchActivitiesTool(deps),
 		getActivityTool(deps),
 		getRelatedActivitiesTool(deps),
+		getWorkItemTool(deps),
+		listWorkItemsTool(deps),
 		whoWorkedOnTool(deps),
 		recentDecisionsTool(deps),
 		prepMeetingTool(deps),
@@ -54,6 +57,8 @@ func parseDate(s string) (time.Time, error) {
 
 // activitySummary is the shallow row shape returned by list/search tools.
 // Full content is omitted; the model can fetch it via get_activity.
+// Digest/Tags come from the enrichment pass and WorkItems from work-item
+// linking — all empty when those passes haven't covered the row yet.
 type activitySummary struct {
 	ID         int64     `json:"id"`
 	Source     string    `json:"source"`
@@ -61,6 +66,9 @@ type activitySummary struct {
 	Title      string    `json:"title"`
 	Timestamp  time.Time `json:"timestamp"`
 	IdentityID int64     `json:"identity_id,omitempty"`
+	Digest     string    `json:"digest,omitempty"`
+	Tags       []string  `json:"tags,omitempty"`
+	WorkItems  []string  `json:"work_items,omitempty"`
 }
 
 func toSummary(a models.Activity) activitySummary {
@@ -74,12 +82,43 @@ func toSummary(a models.Activity) activitySummary {
 	}
 }
 
-func toSummaries(activities []models.Activity) []activitySummary {
+// annotateSummaries fills Digest/Tags/WorkItems from the enrichments and
+// work-item tables in two batched queries. Lookup failures degrade to
+// plain summaries — annotation is never a reason to fail a tool call.
+func annotateSummaries(deps Deps, sums []activitySummary) []activitySummary {
+	if len(sums) == 0 {
+		return sums
+	}
+	ids := make([]int64, len(sums))
+	for i, s := range sums {
+		ids[i] = s.ID
+	}
+	enrichments, err := deps.DB.GetEnrichmentsByActivityIDs(ids)
+	if err != nil {
+		enrichments = nil
+	}
+	refs, err := deps.DB.ListActivityWorkItems(ids)
+	if err != nil {
+		refs = nil
+	}
+	for i := range sums {
+		if e, ok := enrichments[sums[i].ID]; ok {
+			sums[i].Digest = e.Digest
+			sums[i].Tags = e.Tags
+		}
+		for _, r := range refs[sums[i].ID] {
+			sums[i].WorkItems = append(sums[i].WorkItems, r.Key)
+		}
+	}
+	return sums
+}
+
+func toSummaries(deps Deps, activities []models.Activity) []activitySummary {
 	out := make([]activitySummary, len(activities))
 	for i, a := range activities {
 		out[i] = toSummary(a)
 	}
-	return out
+	return annotateSummaries(deps, out)
 }
 
 func mustJSON(v any) json.RawMessage {
@@ -153,6 +192,7 @@ type listActivitiesArgs struct {
 	Source     string `json:"source"`
 	Type       string `json:"type"`
 	IdentityID int64  `json:"identity_id"`
+	Tag        string `json:"tag"`
 	Limit      int    `json:"limit"`
 	Offset     int    `json:"offset"`
 }
@@ -166,6 +206,7 @@ func listActivitiesTool(deps Deps) Tool {
 			"source":{"type":"string","description":"Filter by source: git, slack, calendar, github, gitlab, bitbucket, jira, confluence, linear, manual"},
 			"type":{"type":"string","description":"Filter by activity type: commit, message, meeting, ticket, review, pull_request, merge_request, issue, note"},
 			"identity_id":{"type":"integer","description":"Filter by identity (person) ID"},
+			"tag":{"type":"string","description":"Filter by enrichment tag, e.g. feature, bugfix, refactor, review, testing, docs, deploy, release, incident, planning, discussion, decision, meeting, dependency, security, performance, status-change"},
 			"limit":{"type":"integer","description":"Max rows to return (default 50)"},
 			"offset":{"type":"integer","description":"Number of leading rows to skip"}
 		},
@@ -191,6 +232,7 @@ func listActivitiesTool(deps Deps) Tool {
 				Source:     models.Source(a.Source),
 				Type:       models.ActivityType(a.Type),
 				IdentityID: a.IdentityID,
+				Tag:        a.Tag,
 				After:      after,
 				Before:     before,
 				Limit:      fetch,
@@ -210,7 +252,7 @@ func listActivitiesTool(deps Deps) Tool {
 				rows = rows[:limit]
 			}
 			result := map[string]any{
-				"activities": toSummaries(rows),
+				"activities": toSummaries(deps, rows),
 				"count":      len(rows),
 				"has_more":   hasMore,
 			}
@@ -310,6 +352,7 @@ type searchActivitiesArgs struct {
 	Start  string `json:"start"`
 	End    string `json:"end"`
 	Source string `json:"source"`
+	Tag    string `json:"tag"`
 	Limit  int    `json:"limit"`
 }
 
@@ -321,6 +364,7 @@ func searchActivitiesTool(deps Deps) Tool {
 			"start":{"type":"string"},
 			"end":{"type":"string"},
 			"source":{"type":"string"},
+			"tag":{"type":"string","description":"Filter matches by enrichment tag (e.g. bugfix, decision, incident)"},
 			"limit":{"type":"integer"}
 		},
 		"required":["query"],
@@ -346,6 +390,7 @@ func searchActivitiesTool(deps Deps) Tool {
 			// Fetch one extra to detect "more available" without a count query.
 			matches, err := deps.DB.SearchFTS(a.Query, storage.ActivityFilter{
 				Source: models.Source(a.Source),
+				Tag:    a.Tag,
 				After:  after,
 				Before: before,
 			}, limit+1)
@@ -690,34 +735,10 @@ type getRelatedActivitiesArgs struct {
 }
 
 // extractIssueKeys pulls a unified list of ticket keys from an activity's
-// metadata, accepting both the singular `issue_key` (Jira) and plural
-// `issue_keys` (everything else) shapes.
+// metadata. The implementation lives in internal/workitem so the linker
+// and the tool catalogue share one definition.
 func extractIssueKeys(metadata string) []string {
-	if metadata == "" {
-		return nil
-	}
-	var parsed struct {
-		IssueKey  string   `json:"issue_key"`
-		IssueKeys []string `json:"issue_keys"`
-	}
-	if err := json.Unmarshal([]byte(metadata), &parsed); err != nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	var out []string
-	if parsed.IssueKey != "" {
-		k := strings.ToUpper(parsed.IssueKey)
-		seen[k] = true
-		out = append(out, k)
-	}
-	for _, k := range parsed.IssueKeys {
-		k = strings.ToUpper(k)
-		if !seen[k] {
-			seen[k] = true
-			out = append(out, k)
-		}
-	}
-	return out
+	return workitem.ExtractIssueKeys(metadata)
 }
 
 func getRelatedActivitiesTool(deps Deps) Tool {
@@ -752,6 +773,46 @@ func getRelatedActivitiesTool(deps Deps) Tool {
 					"related": []activitySummary{},
 				}), nil
 			}
+			limit := clampLimit(a.Limit, 50)
+
+			// Prefer materialized work-item links: they also cover commits
+			// linked through a PR's commit list, which key extraction from
+			// this activity's own metadata would miss.
+			refs, _ := deps.DB.ListActivityWorkItems([]int64{a.ID})
+			if len(refs[a.ID]) > 0 {
+				var keys []string
+				seen := map[int64]bool{a.ID: true}
+				var related []models.Activity
+				for _, ref := range refs[a.ID] {
+					keys = append(keys, ref.Key)
+					timeline, err := deps.DB.ListActivitiesByWorkItem(ref.ID, limit+1)
+					if err != nil {
+						return nil, fmt.Errorf("work item timeline: %w", err)
+					}
+					for _, act := range timeline {
+						if !seen[act.ID] {
+							seen[act.ID] = true
+							related = append(related, act)
+						}
+					}
+				}
+				hasMore := len(related) > limit
+				if hasMore {
+					related = related[:limit]
+				}
+				result := map[string]any{
+					"keys":     keys,
+					"related":  toSummaries(deps, related),
+					"has_more": hasMore,
+				}
+				if hasMore {
+					result["hint"] = fmt.Sprintf("more related activities exist; raise limit (cap=%d)", maxToolLimit)
+				}
+				return mustJSON(result), nil
+			}
+
+			// Fallback for activities the linker hasn't covered: match by
+			// ticket keys extracted from this activity's metadata.
 			keys := extractIssueKeys(rows[0].Metadata)
 			if len(keys) == 0 {
 				return mustJSON(map[string]any{
@@ -759,7 +820,6 @@ func getRelatedActivitiesTool(deps Deps) Tool {
 					"related": []activitySummary{},
 				}), nil
 			}
-			limit := clampLimit(a.Limit, 50)
 			// Fetch one extra to detect more.
 			related, err := deps.DB.FindByIssueKeys(keys, a.ID, limit+1)
 			if err != nil {
@@ -771,7 +831,7 @@ func getRelatedActivitiesTool(deps Deps) Tool {
 			}
 			result := map[string]any{
 				"keys":     keys,
-				"related":  toSummaries(related),
+				"related":  toSummaries(deps, related),
 				"has_more": hasMore,
 			}
 			if hasMore {

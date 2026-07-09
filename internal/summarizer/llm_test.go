@@ -102,7 +102,7 @@ func TestBuildActivitiesPrompt_GitCommits(t *testing.T) {
 		activity("Add retry tests", "backend-api", "def456abc", 1, 10, 0, ts.Add(time.Hour)),
 	}
 
-	prompt := buildActivitiesPrompt(activities, nil)
+	prompt := buildActivitiesPrompt(activities, nil, nil)
 
 	if !strings.Contains(prompt, "Friday (2026-03-27)") {
 		t.Errorf("expected date header in prompt:\n%s", prompt)
@@ -138,7 +138,7 @@ func TestBuildActivitiesPrompt_SlackThread(t *testing.T) {
 	}}
 
 	// Without self UIDs — raw user IDs shown.
-	prompt := buildActivitiesPrompt(activities, nil)
+	prompt := buildActivitiesPrompt(activities, nil, nil)
 	if !strings.Contains(prompt, "[Slack thread] #backend (2 messages)") {
 		t.Errorf("expected thread header in prompt:\n%s", prompt)
 	}
@@ -148,7 +148,7 @@ func TestBuildActivitiesPrompt_SlackThread(t *testing.T) {
 
 	// With self UIDs — "You" label applied.
 	selfUIDs := map[string]bool{"U001": true}
-	prompt = buildActivitiesPrompt(activities, selfUIDs)
+	prompt = buildActivitiesPrompt(activities, selfUIDs, nil)
 	if !strings.Contains(prompt, "You: Should we use blue-green?") {
 		t.Errorf("expected 'You' label for self message:\n%s", prompt)
 	}
@@ -169,7 +169,7 @@ func TestBuildActivitiesPrompt_SlackWithoutSummary(t *testing.T) {
 		Timestamp: ts,
 	}}
 
-	prompt := buildActivitiesPrompt(activities, nil)
+	prompt := buildActivitiesPrompt(activities, nil, nil)
 
 	if !strings.Contains(prompt, "[Slack message] #general: Message in #general") {
 		t.Errorf("expected raw message in prompt:\n%s", prompt)
@@ -185,7 +185,7 @@ func TestBuildActivitiesPrompt_MultipleDays(t *testing.T) {
 		activity("Day 2 work", "repo", "bbb", 2, 10, 3, day2),
 	}
 
-	prompt := buildActivitiesPrompt(activities, nil)
+	prompt := buildActivitiesPrompt(activities, nil, nil)
 
 	if !strings.Contains(prompt, "Friday (2026-03-27)") {
 		t.Errorf("expected day 1 header:\n%s", prompt)
@@ -245,7 +245,7 @@ func TestBuildActivitiesPrompt_CalendarMeeting(t *testing.T) {
 		Timestamp: ts,
 	}}
 
-	prompt := buildActivitiesPrompt(activities, nil)
+	prompt := buildActivitiesPrompt(activities, nil, nil)
 
 	if !strings.Contains(prompt, "[Calendar meeting] Sprint Planning") {
 		t.Errorf("expected calendar meeting in prompt:\n%s", prompt)
@@ -286,7 +286,7 @@ func TestBuildActivitiesPrompt_MixedSources(t *testing.T) {
 		},
 	}
 
-	prompt := buildActivitiesPrompt(activities, nil)
+	prompt := buildActivitiesPrompt(activities, nil, nil)
 
 	if !strings.Contains(prompt, "[Git commit]") {
 		t.Error("should contain git commit")
@@ -471,7 +471,7 @@ func TestBuildActivitiesPrompt_IncludesLinks(t *testing.T) {
 		{Source: models.SourceJira, Type: models.TypeTicket, Title: "PROJ-42 Auth bug", Metadata: string(jiraMeta), Timestamp: ts},
 	}
 
-	prompt := buildActivitiesPrompt(activities, nil)
+	prompt := buildActivitiesPrompt(activities, nil, nil)
 
 	if !strings.Contains(prompt, "[link](https://github.com/org/repo/pull/42)") {
 		t.Errorf("expected GitHub link in prompt:\n%s", prompt)

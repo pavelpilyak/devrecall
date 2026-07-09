@@ -170,6 +170,11 @@ type LLMConfig struct {
 	Provider string `json:"provider"` // "ollama", "openai", "anthropic"
 	Model    string `json:"model"`
 	BaseURL  string `json:"base_url,omitempty"`
+
+	// EnrichPerSync caps how many activities the post-sync LLM enrichment
+	// pass digests per run, so large backfills drain across syncs instead
+	// of blocking one. 0 = default (300); -1 disables enrichment.
+	EnrichPerSync int `json:"enrich_per_sync,omitempty"`
 }
 
 // EmbeddingConfig controls the vector embedding provider.

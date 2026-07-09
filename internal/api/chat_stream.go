@@ -5,27 +5,33 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/pavelpilyak/devrecall/internal/agent"
 	agenttools "github.com/pavelpilyak/devrecall/internal/agent/tools"
 	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
 	"github.com/pavelpilyak/devrecall/internal/embedding"
 	"github.com/pavelpilyak/devrecall/internal/llm"
+	"github.com/pavelpilyak/devrecall/internal/workitem"
 )
 
 const chatStreamSystemPrompt = `You are DevRecall, a developer work-memory assistant. You answer questions about the user's work history by calling the read-only tools provided to you.
 
 Tools available:
 - current_time: get the user's current local time. Call this before any date-relative query so you can convert "yesterday"/"last week"/etc. to absolute dates.
-- list_activities / count_activities: enumerate or count activities with filters (start, end, source, type, identity_id, group_by).
-- search_activities: FTS5 keyword search over titles and content.
+- list_activities / count_activities: enumerate or count activities with filters (start, end, source, type, identity_id, tag, group_by).
+- search_activities: FTS5 keyword search over titles and content (optional tag filter).
 - semantic_search_activities: vector search by meaning (only when keyword search fails).
 - get_activity: fetch the full body of a single activity by id.
+- get_work_item / list_work_items: work items group a ticket with its commits, PRs, and discussions. get_work_item returns one item's full cross-source timeline; list_work_items answers "what was I working on".
 - list_summaries / get_summary: read pre-computed standup/weekly/monthly/quarterly summaries.
 - list_identities / resolve_person: look up people the user has worked with.
 
 Rules:
 - Always call current_time before making date-based queries; do not assume what "today" is.
+- For questions about one ticket or piece of work ("everything about PROJ-123", "status of the auth fix"), prefer get_work_item — it returns the linked ticket + commits + PRs in one call.
+- For "what was I working on <period>", prefer list_work_items over raw activity listing.
+- Activity rows may carry a digest (one-line factual summary) and tags — use them before fetching full bodies.
 - Prefer count_activities + list_activities over dumping all rows. Only fetch full bodies you need with get_activity.
 - Answer based ONLY on tool results. If the tools return nothing, say so plainly — never invent commits, PRs, or people.
 - Be concise: cite dates, repo names, ticket IDs, and people that appear in the tool output.
@@ -140,13 +146,31 @@ func (s *Server) runChatFreshness(r *http.Request, w http.ResponseWriter, flushe
 	if checker == nil || len(syncers) == 0 {
 		return
 	}
+	added := 0
 	for ev := range checker.Run(r.Context(), syncers, force) {
+		if ev.Status == freshness.StatusSynced {
+			added += ev.Added
+		}
 		payload, err := json.Marshal(ev)
 		if err != nil {
 			continue
 		}
 		fmt.Fprintf(w, "event: freshness\ndata: %s\n\n", payload)
 		flusher.Flush()
+	}
+	s.linkAfterFreshness(added)
+}
+
+// linkAfterFreshness re-materializes work items when a freshness sync
+// brought in new activities, so agent tools see up-to-date links. Only
+// the deterministic linking stage runs here — LLM enrichment latency is
+// unacceptable mid-chat; the next full sync catches up.
+func (s *Server) linkAfterFreshness(added int) {
+	if added == 0 {
+		return
+	}
+	if _, err := workitem.Materialize(s.db); err != nil {
+		fmt.Fprintf(os.Stderr, "Work-item linking warning: %v\n", err)
 	}
 }
 
@@ -159,7 +183,15 @@ func (s *Server) runChatFreshnessBuffered(ctx context.Context, force bool) []fre
 	if checker == nil || len(syncers) == 0 {
 		return nil
 	}
-	return freshness.Collect(checker.Run(ctx, syncers, force))
+	events := freshness.Collect(checker.Run(ctx, syncers, force))
+	added := 0
+	for _, ev := range events {
+		if ev.Status == freshness.StatusSynced {
+			added += ev.Added
+		}
+	}
+	s.linkAfterFreshness(added)
+	return events
 }
 
 // chatFreshness returns the freshness checker + syncers used by the
