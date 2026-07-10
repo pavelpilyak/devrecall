@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, type StandupResponse } from "../lib/api";
   import { save, load } from "../lib/persist";
-  import { today } from "../lib/stores";
+  import { today, checkLLMHealth } from "../lib/stores";
   import PanelHeader from "../components/ui/PanelHeader.svelte";
   import Btn from "../components/ui/Btn.svelte";
   import Icon from "../components/ui/Icon.svelte";
@@ -53,6 +53,9 @@
       report = null;
     } finally {
       loading = false;
+      // A generation may have silently fallen back to a template if the LLM
+      // is down — re-probe so the sidebar badge reflects it immediately.
+      checkLLMHealth();
     }
   }
 

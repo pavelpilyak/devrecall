@@ -16,7 +16,7 @@
     llm?: {
       name: string;
       detail: string;
-      status?: "ok" | "warn" | "error";
+      status?: "ok" | "warn" | "error" | "syncing";
       onClick?: () => void;
       title?: string;
     };

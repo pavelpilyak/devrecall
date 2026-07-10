@@ -10,6 +10,9 @@
     syncTooltip = "",
     syncing = false,
     onSync,
+    hasErrors = false,
+    errorTooltip = "",
+    onErrorsClick,
     onCmdK,
   } = $props<{
     syncStatus?: SyncStatus;
@@ -19,6 +22,11 @@
     syncTooltip?: string;
     syncing?: boolean;
     onSync?: () => void;
+    /** One or more sources failed their last sync — show the alert affordance. */
+    hasErrors?: boolean;
+    /** Multi-line breakdown of which sources failed, for the alert tooltip. */
+    errorTooltip?: string;
+    onErrorsClick?: () => void;
     onCmdK?: () => void;
   }>();
 
@@ -55,6 +63,18 @@
     {#if syncAgo}<span class="sync-ago">{syncAgo}</span>{/if}
   </button>
 
+  {#if hasErrors}
+    <button
+      type="button"
+      class="err-btn"
+      title={errorTooltip || "A source failed to sync — click for details"}
+      aria-label="Sync errors — open Settings"
+      onclick={() => onErrorsClick?.()}
+    >
+      <Icon name="alert-triangle" size={13} />
+    </button>
+  {/if}
+
   <button type="button" class="cmdk" onclick={() => onCmdK?.()}>
     <Icon name="search" size={12} />
     <span>Search or run</span>
@@ -88,10 +108,12 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
+    height: 28px;
+    box-sizing: border-box;
     background: var(--ink-3);
     border: 1px solid var(--border);
     border-radius: 999px;
-    padding: 4px 10px 4px 10px;
+    padding: 0 10px;
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-2);
@@ -112,6 +134,21 @@
   .sync-btn.is-syncing :global(svg:first-of-type) {
     animation: dr-spin 900ms linear infinite;
   }
+  .err-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    box-sizing: border-box;
+    background: rgba(255, 107, 107, 0.12);
+    border: 1px solid rgba(255, 107, 107, 0.3);
+    border-radius: 999px;
+    padding: 0 8px;
+    color: var(--danger);
+    cursor: pointer;
+    transition: background var(--dur-1) var(--ease-std);
+  }
+  .err-btn:hover { background: rgba(255, 107, 107, 0.2); }
   @keyframes dr-spin {
     to { transform: rotate(360deg); }
   }
@@ -119,10 +156,12 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
+    height: 28px;
+    box-sizing: border-box;
     background: var(--ink-3);
     border: 1px solid var(--border);
     border-radius: var(--r-2);
-    padding: 4px 8px;
+    padding: 0 8px;
     color: var(--fg-3);
     font-family: var(--font-sans);
     font-size: 12px;

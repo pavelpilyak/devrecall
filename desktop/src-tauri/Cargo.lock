@@ -567,7 +567,7 @@ dependencies = [
 
 [[package]]
 name = "devrecall-desktop"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "reqwest 0.12.28",
  "serde",

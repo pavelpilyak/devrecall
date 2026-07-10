@@ -91,6 +91,7 @@ fn main() {
             api_url,
             reveal_file,
             open_path,
+            tray::set_tray_error,
         ])
         .setup(|app| {
             // Build tray menu.

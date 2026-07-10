@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, type WeeklyResponse } from "../lib/api";
   import { save, load } from "../lib/persist";
-  import { today } from "../lib/stores";
+  import { today, checkLLMHealth } from "../lib/stores";
   import PanelHeader from "../components/ui/PanelHeader.svelte";
   import Btn from "../components/ui/Btn.svelte";
   import Icon from "../components/ui/Icon.svelte";
@@ -33,6 +33,8 @@
       report = null;
     } finally {
       loading = false;
+      // Re-probe: a template fallback means the LLM is unreachable.
+      checkLLMHealth();
     }
   }
 

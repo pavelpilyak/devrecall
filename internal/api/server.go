@@ -199,6 +199,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/llm/config", s.handleLLMConfig)
 	mux.HandleFunc("POST /api/llm/key", s.handleLLMKey)
 	mux.HandleFunc("POST /api/llm/test", s.handleLLMTest)
+	mux.HandleFunc("GET /api/llm/health", s.handleLLMHealth)
 	mux.HandleFunc("POST /api/log", s.handleLog)
 	mux.HandleFunc("GET /api/brag", s.handleBrag)
 	mux.HandleFunc("GET /api/perf-review", s.handlePerfReview)
@@ -219,6 +220,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Enabled   bool    `json:"enabled"`
 		SyncedAt  *string `json:"synced_at,omitempty"`
 		Count     int     `json:"count"`
+		LastError string  `json:"last_error,omitempty"`
 	}
 
 	sources := []struct {
@@ -246,6 +248,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		if state, err := s.db.GetSyncState(src.name); err == nil && state != nil {
 			t := state.SyncedAt.Format(time.RFC3339)
 			ss.SyncedAt = &t
+			ss.LastError = state.LastError
 		}
 		result = append(result, ss)
 	}

@@ -3,9 +3,10 @@
     title?: any;
     titleText?: string;
     meta?: string;
+    error?: string;
     right?: any;
   }
-  let { title, titleText, meta, right }: Props = $props();
+  let { title, titleText, meta, error, right }: Props = $props();
 </script>
 
 <div class="row">
@@ -14,6 +15,7 @@
       {#if title}{@render title()}{:else}{titleText}{/if}
     </div>
     {#if meta}<div class="meta">{meta}</div>{/if}
+    {#if error}<div class="meta err">{error}</div>{/if}
   </div>
   {#if right}<div class="right">{@render right()}</div>{/if}
 </div>
@@ -42,5 +44,6 @@
     margin-top: 2px;
     word-break: break-all;
   }
+  .meta.err { color: var(--danger); }
   .right { flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
 </style>

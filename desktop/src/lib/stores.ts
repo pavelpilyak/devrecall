@@ -13,6 +13,45 @@ export const lastSyncAt = writable(0);
 /** Server startup error (e.g. broken config.json). */
 export const serverError = writable("");
 
+/**
+ * Live reachability of the configured LLM. Driven by polling GET
+ * /api/llm/health, so the sidebar reflects whether the LLM actually responds
+ * — not merely whether a provider is configured. "checking" is the transient
+ * in-flight state; "unknown" is the pre-first-check default.
+ */
+export type LLMHealth = {
+  // "unsupported" = the running server predates the /api/llm/health route
+  // (an older devrecall CLI), so live probing isn't possible.
+  state: "unknown" | "checking" | "ok" | "error" | "unsupported";
+  provider?: string;
+  error?: string;
+};
+export const llmHealth = writable<LLMHealth>({ state: "unknown" });
+
+/** Probe the LLM and update the llmHealth store. Safe to call frequently. */
+export async function checkLLMHealth() {
+  // Only surface "checking" on the very first probe; later background polls
+  // update the result in place so the badge doesn't flicker every cycle.
+  llmHealth.update((h) => (h.state === "unknown" ? { ...h, state: "checking" } : h));
+  try {
+    const r = await api.llmHealth();
+    if (r.unsupported) {
+      llmHealth.set({ state: "unsupported" });
+      return;
+    }
+    llmHealth.set(
+      r.ok
+        ? { state: "ok", provider: r.provider }
+        : { state: "error", provider: r.provider, error: r.error }
+    );
+  } catch {
+    // The endpoint always returns 200, so a throw means the API server
+    // itself is unreachable — that's the connection banner's job, not an LLM
+    // fault. Reset to "unknown" so we don't flash a misleading LLM error.
+    llmHealth.set({ state: "unknown" });
+  }
+}
+
 function todayISOString(): string {
   return new Date().toISOString().slice(0, 10);
 }

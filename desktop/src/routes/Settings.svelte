@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type SourceStatus } from "../lib/api";
-  import { apiStatus, checkConnection, lastSyncAt, nowTick } from "../lib/stores";
+  import { apiStatus, checkConnection, nowTick, checkLLMHealth } from "../lib/stores";
   import PanelHeader from "../components/ui/PanelHeader.svelte";
   import SettingsSection from "../components/ui/SettingsSection.svelte";
   import SettingsRow from "../components/ui/SettingsRow.svelte";
@@ -13,10 +13,8 @@
 
   let sources = $state<SourceStatus[]>([]);
   let loading = $state(true);
-  let syncing = $state(false);
   let error = $state("");
-
-  let lastSyncTime = $state<string | null>(null);
+  let appVersion = $state("");
 
   type Provider = "ollama" | "openai" | "anthropic";
   let llmProvider = $state<Provider>("ollama");
@@ -79,6 +77,7 @@
       });
       llmMsg = "Saved";
       await checkConnection();
+      checkLLMHealth();
     } catch (e) {
       llmError = e instanceof Error ? e.message : "Save failed";
     } finally {
@@ -95,6 +94,7 @@
       await api.llmKey(llmProvider, llmKey.trim());
       llmKey = "";
       llmMsg = "API key saved";
+      checkLLMHealth();
     } catch (e) {
       llmError = e instanceof Error ? e.message : "Failed to save key";
     } finally {
@@ -136,30 +136,10 @@
     try {
       const resp = await api.status();
       sources = resp.sources;
-      const syncTimes = resp.sources
-        .filter((s) => s.synced_at)
-        .map((s) => new Date(s.synced_at!).getTime());
-      if (syncTimes.length > 0) {
-        lastSyncTime = new Date(Math.max(...syncTimes)).toISOString();
-      }
     } catch (e) {
       error = e instanceof Error ? e.message : "Failed to load status";
     } finally {
       loading = false;
-    }
-  }
-
-  async function triggerSync() {
-    syncing = true;
-    try {
-      await api.sync();
-      lastSyncTime = new Date().toISOString();
-      await loadStatus();
-      lastSyncAt.set(Date.now());
-    } catch (e) {
-      error = e instanceof Error ? e.message : "Sync failed";
-    } finally {
-      syncing = false;
     }
   }
 
@@ -175,8 +155,18 @@
     return `${Math.floor(hours / 24)}d ago`;
   }
 
+  async function loadVersion() {
+    try {
+      const { getVersion } = await import("@tauri-apps/api/app");
+      appVersion = await getVersion();
+    } catch {
+      // Non-Tauri context (e.g. browser dev) — leave version blank.
+    }
+  }
+
   onMount(() => {
     loadStatus();
+    loadVersion();
   });
 </script>
 
@@ -185,24 +175,6 @@
 
   <div class="scroll">
     <div class="container">
-      <SettingsSection title="Sync" desc="Pull fresh activity from every connected source.">
-        {#snippet children()}
-          <SettingsRow
-            titleText="Sync now"
-            meta={lastSyncTime ? `last sync · ${formatSyncTime(lastSyncTime, $nowTick)}` : "never synced"}
-          >
-            {#snippet right()}
-              <Btn size="sm" variant="primary" disabled={syncing} onclick={triggerSync}>
-                {#snippet children()}
-                  <Icon name={syncing ? "loader" : "refresh-cw"} size={12} />
-                  <span>{syncing ? "Syncing…" : "Sync"}</span>
-                {/snippet}
-              </Btn>
-            {/snippet}
-          </SettingsRow>
-        {/snippet}
-      </SettingsSection>
-
       <SettingsSection title="Sources" desc="OAuth tokens live on disk at ~/.devrecall/tokens/ (0600).">
         {#snippet children()}
           {#if loading}
@@ -213,13 +185,17 @@
             {#each sources as src (src.name)}
               <SettingsRow
                 meta={src.enabled ? `${formatSyncTime(src.synced_at, $nowTick)} · ${src.count} activities` : "not connected"}
+                error={src.enabled && src.last_error ? `last sync failed — ${src.last_error}` : undefined}
               >
                 {#snippet title()}
                   <SourceDot source={src.name} />
                   <span style="text-transform: capitalize">{src.name}</span>
                 {/snippet}
                 {#snippet right()}
-                  {#if src.enabled}
+                  {#if src.enabled && src.last_error}
+                    <SyncDot status="error" />
+                    <span class="err-label">sync failed</span>
+                  {:else if src.enabled}
                     <SyncDot status="ok" />
                     <span class="ok-label">connected</span>
                   {:else}
@@ -307,7 +283,10 @@
 
       <SettingsSection title="About">
         {#snippet children()}
-          <SettingsRow titleText="DevRecall Desktop" meta="v0.1.17 · run `brew upgrade devrecall` to update" />
+          <SettingsRow
+            titleText="DevRecall Desktop"
+            meta={`${appVersion ? `v${appVersion} · ` : ""}run \`brew upgrade devrecall\` to update`}
+          />
           <SettingsRow titleText="Relay" meta="cf-worker · OAuth callbacks only · never user data">
             {#snippet right()}
               <Chip variant="accent">
@@ -347,6 +326,11 @@
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-3);
+  }
+  .err-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--danger);
   }
 
   .select, .text {

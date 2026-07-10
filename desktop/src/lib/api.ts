@@ -22,6 +22,8 @@ export interface SourceStatus {
   enabled: boolean;
   synced_at?: string;
   count: number;
+  /** Last sync error for this source, empty/absent when the last sync succeeded. */
+  last_error?: string;
 }
 
 export interface LLMInfo {
@@ -324,4 +326,25 @@ export const api = {
 
   llmTest: (overrides?: { provider: string; model: string; base_url?: string }) =>
     post<{ message: string; provider: string; sample: string }>("/api/llm/test", overrides),
+
+  llmHealth: async (): Promise<{
+    ok: boolean;
+    provider: string;
+    model: string;
+    error: string;
+    unsupported?: boolean;
+  }> => {
+    const base = await baseUrl();
+    const resp = await fetch(`${base}/api/llm/health`);
+    // A 404 means the running server predates the health route (older CLI).
+    // Signal that explicitly so the UI can degrade instead of spinning.
+    if (resp.status === 404) {
+      return { ok: false, provider: "", model: "", error: "", unsupported: true };
+    }
+    if (!resp.ok) {
+      const e = await resp.json().catch(() => ({ error: resp.statusText }));
+      throw new Error(e.error || resp.statusText);
+    }
+    return resp.json();
+  },
 };

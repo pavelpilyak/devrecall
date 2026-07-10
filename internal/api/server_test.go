@@ -96,6 +96,99 @@ func TestHandleStatus(t *testing.T) {
 	if gitSrc["enabled"] != true {
 		t.Errorf("expected git enabled true")
 	}
+	// No error recorded yet — last_error should be omitted.
+	if _, present := gitSrc["last_error"]; present {
+		t.Errorf("expected no last_error when sync succeeded, got %v", gitSrc["last_error"])
+	}
+}
+
+func TestHandleLLMHealth_NotConfigured(t *testing.T) {
+	srv, _ := setupTestServer(t) // default config has no LLM provider
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, newRequest("GET", "/api/llm/health", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (health is always 200), got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["ok"] != false {
+		t.Errorf("expected ok=false with no provider, got %v", resp["ok"])
+	}
+	if resp["error"] == "" {
+		t.Errorf("expected a reason when not configured")
+	}
+}
+
+func TestHandleLLMHealth_OllamaUnreachable(t *testing.T) {
+	db, err := storage.OpenPath(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	// Point Ollama at a closed port so the probe fails fast and deterministically.
+	cfg := &config.Config{LLM: config.LLMConfig{Provider: "ollama", BaseURL: "http://127.0.0.1:1"}}
+	srv := NewServer(0, db, cfg, &mockTokenStore{})
+	srv.dataDir = t.TempDir()
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, newRequest("GET", "/api/llm/health", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["ok"] != false {
+		t.Errorf("expected ok=false when Ollama is unreachable, got %v", resp["ok"])
+	}
+	if resp["provider"] != "ollama" {
+		t.Errorf("expected provider ollama echoed back, got %v", resp["provider"])
+	}
+}
+
+func TestHandleStatus_SurfacesSyncError(t *testing.T) {
+	srv, db := setupTestServer(t)
+	if err := db.SetSyncError("jira", "401 unauthorized"); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, newRequest("GET", "/api/status", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	var jira map[string]any
+	for _, s := range resp["sources"].([]any) {
+		m := s.(map[string]any)
+		if m["name"] == "jira" {
+			jira = m
+			break
+		}
+	}
+	if jira == nil {
+		t.Fatal("jira source not present in status response")
+	}
+	if jira["last_error"] != "401 unauthorized" {
+		t.Errorf("expected jira last_error to surface, got %v", jira["last_error"])
+	}
 }
 
 func TestHandleActivities(t *testing.T) {

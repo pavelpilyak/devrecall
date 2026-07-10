@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type SyncStatus } from "./lib/api";
-  import { connected, checkConnection, serverError, lastSyncAt, apiStatus, nowTick } from "./lib/stores";
+  import { connected, checkConnection, serverError, lastSyncAt, apiStatus, nowTick, llmHealth, checkLLMHealth } from "./lib/stores";
   import Titlebar from "./components/Titlebar.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import CommandPalette from "./components/CommandPalette.svelte";
@@ -189,17 +189,65 @@
     return { status: "ok" as const, label: "Sync" };
   });
 
+  // Per-source sync errors from two sources, unioned so the badge is honest
+  // regardless of server version:
+  //  - the live sync stream (syncProgress) — works on any server, reflects
+  //    the most recent in-app sync;
+  //  - the status endpoint's last_error — persists across restarts and covers
+  //    background/daemon syncs, but only on newer devrecall servers.
+  const sourceErrors = $derived.by(() => {
+    const byName = new Map<string, string>();
+    for (const [src, p] of Object.entries(syncProgress)) {
+      if (p.status === "error") byName.set(src, p.error ?? "sync failed");
+    }
+    for (const s of $apiStatus?.sources ?? []) {
+      if (s.enabled && s.last_error) byName.set(s.name, s.last_error);
+    }
+    return Array.from(byName, ([name, error]) => ({ name, error }));
+  });
+  const hasErrors = $derived(sourceErrors.length > 0);
+  const errorTooltip = $derived.by(() => {
+    if (sourceErrors.length === 0) return "";
+    const lines = sourceErrors.map((e) => `⚠ ${sourceLabel(e.name)} — ${e.error}`);
+    return `${sourceErrors.length} source${sourceErrors.length > 1 ? "s" : ""} failed to sync\n${lines.join("\n")}\n\nClick to view in Settings`;
+  });
+
+  // Tracks the system light/dark preference so the tray glyph can be colored
+  // to match the menu bar (see the tray $effect). Kept in sync by a
+  // matchMedia listener in onMount.
+  let prefersDark = $state(
+    typeof window !== "undefined" && window.matchMedia
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : true
+  );
+
+  // Mirror the error state onto the macOS tray icon (red badge). Re-runs on
+  // every hasErrors OR theme transition (the badge is non-template, so the
+  // glyph color has to follow the appearance). No-ops silently outside Tauri.
+  $effect(() => {
+    const errored = hasErrors;
+    const dark = prefersDark;
+    (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("set_tray_error", { hasError: errored, dark });
+      } catch {
+        // Not running inside Tauri, or command unavailable.
+      }
+    })();
+  });
+
   const llmInfo = $derived.by(() => {
     const llm = $apiStatus?.llm;
+    const health = $llmHealth;
     const onClick = () => setRoute("settings");
-    const title = "Open Settings to configure";
     if (!llm || !llm.provider) {
       return {
         name: "LLM not configured",
         detail: "open Settings to set it up",
         status: "warn" as const,
         onClick,
-        title,
+        title: "Open Settings to configure",
       };
     }
     const labels: Record<string, string> = {
@@ -207,18 +255,55 @@
       openai: "OpenAI · BYOK",
       anthropic: "Anthropic · BYOK",
     };
-    return {
-      name: labels[llm.provider] ?? llm.provider,
-      detail: llm.model || "(default model)",
-      status: "ok" as const,
-      onClick,
-      title,
-    };
+    const name = labels[llm.provider] ?? llm.provider;
+    const model = llm.model || "(default model)";
+
+    // Reflect live reachability, not just "a provider is configured".
+    switch (health.state) {
+      case "error": {
+        const reason = health.error || "unreachable — responses fall back to a template";
+        return {
+          name,
+          detail: reason.length > 42 ? `${reason.slice(0, 41)}…` : reason,
+          status: "error" as const,
+          onClick,
+          title: `${name} isn't responding:\n${reason}\n\nClick to open Settings`,
+        };
+      }
+      case "ok":
+        return { name, detail: model, status: "ok" as const, onClick, title: `${name} · reachable` };
+      case "unsupported":
+        // Old server without the health route — can't probe, so show the
+        // provider plainly rather than a stuck spinner or a false error.
+        return {
+          name,
+          detail: model,
+          status: "ok" as const,
+          onClick,
+          title: `${name} · live status needs a newer devrecall server (run: brew upgrade devrecall)`,
+        };
+      default: // unknown / checking
+        return { name, detail: "checking…", status: "syncing" as const, onClick, title: "Checking LLM connection…" };
+    }
   });
 
   onMount(() => {
     checkConnection();
     const interval = setInterval(checkConnection, 30_000);
+
+    // Probe LLM reachability on load, then periodically. The probe is cheap
+    // (Ollama: a no-inference /api/tags check; BYOK: a 1-token ping), so a
+    // few-minute cadence keeps the sidebar badge honest without noticeable
+    // cost. Report routes also re-check right after a generation so a
+    // template fallback flips the badge red immediately.
+    checkLLMHealth();
+    const llmInterval = setInterval(checkLLMHealth, 180_000);
+
+    // Keep prefersDark in sync so the tray glyph recolors when the system
+    // appearance changes while the app is open.
+    const darkMq = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const onThemeChange = (e: MediaQueryListEvent) => (prefersDark = e.matches);
+    darkMq?.addEventListener?.("change", onThemeChange);
 
     let unlistenServerErr: (() => void) | undefined;
     (async () => {
@@ -343,6 +428,8 @@
 
     return () => {
       clearInterval(interval);
+      clearInterval(llmInterval);
+      darkMq?.removeEventListener?.("change", onThemeChange);
       window.removeEventListener("keydown", onKeydown);
       document.removeEventListener("click", onLinkClick);
       unlisten?.();
@@ -359,6 +446,9 @@
     syncTooltip={syncTooltip}
     syncing={syncing}
     onSync={triggerSync}
+    hasErrors={hasErrors}
+    errorTooltip={errorTooltip}
+    onErrorsClick={() => setRoute("settings")}
     onCmdK={() => (paletteOpen = true)}
   />
 
