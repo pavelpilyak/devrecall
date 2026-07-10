@@ -51,22 +51,6 @@ Requires Go 1.22+ with CGO enabled (for SQLite FTS5).
 
 Full install + setup walkthrough at **[docs.devrecall.dev/install](https://docs.devrecall.dev/install/)**.
 
-## Architecture
-
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────────┐
-│  Collectors │ →   │  SQLite     │ →   │  Summarizer /   │
-│  (OAuth +   │     │  + FTS5 +   │     │  RAG (vector    │
-│   APIs)     │     │  embeddings │     │  + FTS + LLM)   │
-└─────────────┘     └─────────────┘     └─────────────────┘
-      ↑                   ↑                      ↓
-  ~/.devrecall/     ~/.devrecall/           standup,
-    tokens/          devrecall.db          brag, chat,
-                                           perf review
-```
-
-Module overview: [`CLAUDE.md`](CLAUDE.md). Architecture deep-dive: [docs.devrecall.dev/architecture](https://docs.devrecall.dev/architecture/).
-
 ## Development
 
 ```bash
