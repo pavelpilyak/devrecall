@@ -14,9 +14,22 @@ can spawn it as a stdio subprocess and gain memory of everything you've
 shipped. `/devrecall:recall what auth bug did I fix in February` returns
 cited commits, PRs, and tickets inline.
 
-<p align="center">
-  <img src=".github/assets/chat.jpg" alt="DevRecall desktop app — chat over your local work history" width="820">
-</p>
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <a href=".github/assets/chat.jpg"><img src=".github/assets/chat.jpg" alt="DevRecall desktop app — chat over your local work history"></a><br>
+      <sub>Desktop app — the same memory, native UI</sub>
+    </td>
+    <td align="center" width="33%">
+      <a href=".github/assets/standup.gif"><img src=".github/assets/standup.gif" alt="devrecall standup — syncs your sources and writes the standup for you"></a><br>
+      <sub><code>devrecall standup</code> — the day's report, written for you</sub>
+    </td>
+    <td align="center" width="33%">
+      <a href=".github/assets/recall.gif"><img src=".github/assets/recall.gif" alt="devrecall chat — agentic recall over your work history, with cited commits and PRs"></a><br>
+      <sub><code>devrecall chat</code> — recall with cited commits &amp; PRs</sub>
+    </td>
+  </tr>
+</table>
 
 📚 **[docs.devrecall.dev](https://docs.devrecall.dev)** — install, configure, integrations, CLI reference.
 
