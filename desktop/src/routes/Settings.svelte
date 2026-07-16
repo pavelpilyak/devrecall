@@ -11,9 +11,11 @@
   import SyncDot from "../components/ui/SyncDot.svelte";
   import SourceDot from "../components/ui/SourceDot.svelte";
 
-  let sources = $state<SourceStatus[]>([]);
-  let loading = $state(true);
-  let error = $state("");
+  // Source rows derive from the shared apiStatus store (App keeps it fresh via a
+  // 30s poll and after every sync), so they update live — including when a token
+  // expires or the user hits Sync — without needing this route to remount.
+  const sources = $derived<SourceStatus[]>($apiStatus?.sources ?? []);
+  const loading = $derived($apiStatus === null);
   let appVersion = $state("");
 
   type Provider = "ollama" | "openai" | "anthropic";
@@ -130,19 +132,6 @@
     }
   }
 
-  async function loadStatus() {
-    loading = true;
-    error = "";
-    try {
-      const resp = await api.status();
-      sources = resp.sources;
-    } catch (e) {
-      error = e instanceof Error ? e.message : "Failed to load status";
-    } finally {
-      loading = false;
-    }
-  }
-
   function formatSyncTime(syncedAt: string | undefined, now: number): string {
     if (!syncedAt) return "never synced";
     const d = new Date(syncedAt);
@@ -165,7 +154,9 @@
   }
 
   onMount(() => {
-    loadStatus();
+    // Freshen the shared status immediately on first open; ongoing updates come
+    // from App's 30s poll and post-sync refresh via the derived `sources`.
+    checkConnection();
     loadVersion();
   });
 </script>
@@ -179,8 +170,6 @@
         {#snippet children()}
           {#if loading}
             <div class="state">Loading sources…</div>
-          {:else if error}
-            <div class="error-inline">{error}</div>
           {:else}
             {#each sources as src (src.name)}
               <SettingsRow

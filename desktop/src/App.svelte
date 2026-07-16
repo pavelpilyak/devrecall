@@ -189,22 +189,18 @@
     return { status: "ok" as const, label: "Sync" };
   });
 
-  // Per-source sync errors from two sources, unioned so the badge is honest
-  // regardless of server version:
-  //  - the live sync stream (syncProgress) — works on any server, reflects
-  //    the most recent in-app sync;
-  //  - the status endpoint's last_error — persists across restarts and covers
-  //    background/daemon syncs, but only on newer devrecall servers.
-  const sourceErrors = $derived.by(() => {
-    const byName = new Map<string, string>();
-    for (const [src, p] of Object.entries(syncProgress)) {
-      if (p.status === "error") byName.set(src, p.error ?? "sync failed");
-    }
-    for (const s of $apiStatus?.sources ?? []) {
-      if (s.enabled && s.last_error) byName.set(s.name, s.last_error);
-    }
-    return Array.from(byName, ([name, error]) => ({ name, error }));
-  });
+  // The persistent error badge is driven by the status endpoint's last_error,
+  // which is authoritative: it's refreshed after every sync (checkConnection
+  // runs post-stream) and also reflects background/freshness syncs the in-app
+  // stream never saw. A source that has since recovered clears itself, and —
+  // because Settings reads the same field — the badge and Settings can't
+  // disagree. Live per-source stream results (syncProgress) still surface in
+  // the Sync button's own tooltip; they're transient, not a persisted error.
+  const sourceErrors = $derived.by(() =>
+    ($apiStatus?.sources ?? [])
+      .filter((s) => s.enabled && s.last_error)
+      .map((s) => ({ name: s.name, error: s.last_error as string })),
+  );
   const hasErrors = $derived(sourceErrors.length > 0);
   const errorTooltip = $derived.by(() => {
     if (sourceErrors.length === 0) return "";

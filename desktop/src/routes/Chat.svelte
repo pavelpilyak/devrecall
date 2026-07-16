@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { api, type ChatStreamEvent } from "../lib/api";
   import { save, load } from "../lib/persist";
   import Markdown from "../components/Markdown.svelte";
@@ -149,6 +150,10 @@
       if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
     }, 50);
   }
+
+  onMount(() => {
+    if (chatHistory.length > 0) scrollToBottom();
+  });
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
