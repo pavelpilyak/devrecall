@@ -9,10 +9,13 @@
   import Btn from "../components/ui/Btn.svelte";
   import Icon from "../components/ui/Icon.svelte";
 
+  let { onOpenChat }: { onOpenChat?: () => void } = $props();
+
   let activities = $state<Activity[]>([]);
   let loading = $state(false);
   let error = $state("");
   let totalCount = $state(0);
+  let searchQuery = $state("");
 
   let sourceFilter = $state<string>("all");
   let afterDate = $state(defaultAfter());
@@ -92,11 +95,29 @@
     }, 1200);
   }
 
+  // In-view filter over the loaded window. Splits the query into whitespace-
+  // separated terms and requires all of them (AND) to appear in the activity's
+  // *visible* text only — the title and the type · repo meta line — so every
+  // match is self-evident in the row. We deliberately don't search the hidden
+  // content body or raw metadata JSON: those carry things the user can't see
+  // (commit trailers like "Co-Authored-By", author_email, sha), which make a
+  // query like "auth" match rows for no visible reason. Whole-index / body /
+  // semantic search lives on the dedicated Search route and in Chat.
+  const filtered = $derived.by<Activity[]>(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return activities;
+    const terms = q.split(/\s+/);
+    return activities.filter((a) => {
+      const hay = `${a.title} ${metaLine(a)}`.toLowerCase();
+      return terms.every((t) => hay.includes(t));
+    });
+  });
+
   type Group = { day: string; items: Activity[] };
 
   const groups = $derived.by<Group[]>(() => {
     const buckets = new Map<string, Activity[]>();
-    for (const a of activities) {
+    for (const a of filtered) {
       const day = new Date(a.timestamp).toISOString().slice(0, 10);
       const arr = buckets.get(day) ?? [];
       arr.push(a);
@@ -197,7 +218,14 @@
 </script>
 
 <div class="route-body">
-  <PanelHeader title="Timeline" meta={totalCount > 0 ? `${totalCount} events` : undefined}>
+  <PanelHeader
+    title="Timeline"
+    meta={searchQuery.trim()
+      ? `${filtered.length} of ${activities.length} shown`
+      : totalCount > 0
+        ? `${totalCount} events`
+        : undefined}
+  >
     {#snippet actions()}
       <DateTimeField bind:value={afterDate} mode="date" onchange={loadActivities} />
       <span class="arrow">→</span>
@@ -226,6 +254,23 @@
     {/each}
   </div>
 
+  <div class="search-bar">
+    <Icon name="search" size={13} />
+    <input
+      type="text"
+      bind:value={searchQuery}
+      placeholder="Filter these events…"
+      spellcheck="false"
+      autocapitalize="off"
+      autocorrect="off"
+    />
+    {#if searchQuery}
+      <button class="clear" onclick={() => (searchQuery = "")} title="Clear filter" aria-label="Clear filter">
+        <Icon name="x" size={12} />
+      </button>
+    {/if}
+  </div>
+
   <div class="scroll">
     {#if loading}
       <div class="state">Loading activities…</div>
@@ -233,6 +278,20 @@
       <div class="error-box">{error}</div>
     {:else if activities.length === 0}
       <div class="state">No activities found for this period.</div>
+    {:else if filtered.length === 0}
+      <div class="state empty-search">
+        <div class="empty-title">No events match “{searchQuery.trim()}” in this range.</div>
+        <div class="empty-sub">
+          This only filters the events loaded above. Widen the date range, or let
+          the AI search your whole history and reason about it.
+        </div>
+        <Btn size="sm" variant="primary" onclick={() => onOpenChat?.()}>
+          {#snippet children()}
+            <Icon name="message-square" size={12} />
+            <span>Ask in Chat</span>
+          {/snippet}
+        </Btn>
+      </div>
     {:else}
       {#each groups as g (g.day)}
         <div class="day-head">
@@ -387,11 +446,61 @@
     white-space: nowrap;
   }
 
+  .search-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--ink-1);
+    color: var(--fg-3);
+  }
+  .search-bar input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--fg-1);
+    font-family: var(--font-sans);
+    font-size: 13px;
+  }
+  .search-bar input::placeholder { color: var(--fg-4); }
+  .clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border: none;
+    background: transparent;
+    color: var(--fg-4);
+    cursor: pointer;
+    border-radius: var(--r-1);
+  }
+  .clear:hover { color: var(--fg-1); background: var(--ink-2); }
+
   .state {
     padding: 60px 20px;
     text-align: center;
     font-size: 13px;
     color: var(--fg-3);
+  }
+  .empty-search {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    max-width: 420px;
+    margin: 0 auto;
+  }
+  .empty-search .empty-title {
+    font-size: 14px;
+    color: var(--fg-1);
+  }
+  .empty-search .empty-sub {
+    font-size: 12px;
+    color: var(--fg-3);
+    line-height: 1.55;
+    margin-bottom: 4px;
   }
   .error-box {
     margin: 16px 20px;

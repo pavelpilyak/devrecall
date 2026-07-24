@@ -477,7 +477,7 @@
         <div class="route" class:hidden={activeTab !== "chat"}><Chat /></div>
         <div class="route" class:hidden={activeTab !== "standup"}><Standup /></div>
         <div class="route" class:hidden={activeTab !== "weekly"}><Weekly /></div>
-        <div class="route" class:hidden={activeTab !== "timeline"}><Timeline /></div>
+        <div class="route" class:hidden={activeTab !== "timeline"}><Timeline onOpenChat={() => setRoute("chat")} /></div>
         <div class="route" class:hidden={activeTab !== "review"}><Review /></div>
         <div class="route" class:hidden={activeTab !== "search"}><Search /></div>
         <div class="route" class:hidden={activeTab !== "log"}><Log bind:this={logView} /></div>
