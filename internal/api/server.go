@@ -45,6 +45,7 @@ type Server struct {
 
 	tokenStore auth.TokenStore
 	dataDir    string // override for ~/.devrecall (used in tests)
+	version    string // running binary version, for the update check ("" = dev)
 
 	// agentLoopFactory builds the agent loop used by the chat-stream handler.
 	// Tests inject a fake provider through this hook; in production it's
@@ -75,6 +76,12 @@ func NewServer(port int, db *storage.DB, cfg *config.Config, tokenStore auth.Tok
 	}
 	s.cfg.Store(cfg)
 	return s
+}
+
+// SetVersion records the running binary version so GET /api/update can compare
+// it against the latest GitHub release. Left "" (dev) if never set.
+func (s *Server) SetVersion(v string) {
+	s.version = v
 }
 
 // Cfg returns the current config snapshot. Callers must treat it as
@@ -200,6 +207,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/llm/key", s.handleLLMKey)
 	mux.HandleFunc("POST /api/llm/test", s.handleLLMTest)
 	mux.HandleFunc("GET /api/llm/health", s.handleLLMHealth)
+	mux.HandleFunc("GET /api/update", s.handleUpdate)
 	mux.HandleFunc("POST /api/log", s.handleLog)
 	mux.HandleFunc("GET /api/brag", s.handleBrag)
 	mux.HandleFunc("GET /api/perf-review", s.handlePerfReview)

@@ -3057,6 +3057,7 @@ func runServe(port int) error {
 	}
 
 	srv := api.NewServer(port, db, cfg, tokenStore)
+	srv.SetVersion(version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type SourceStatus } from "../lib/api";
-  import { apiStatus, checkConnection, nowTick, checkLLMHealth } from "../lib/stores";
+  import { apiStatus, checkConnection, nowTick, checkLLMHealth, updateInfo, checkUpdate } from "../lib/stores";
   import PanelHeader from "../components/ui/PanelHeader.svelte";
   import SettingsSection from "../components/ui/SettingsSection.svelte";
   import SettingsRow from "../components/ui/SettingsRow.svelte";
@@ -153,11 +153,65 @@
     }
   }
 
+  // --- Update flow ---
+  // We only notify + show the upgrade command; we don't run brew for the user.
+  // On managed/org Macs `brew upgrade --cask` needs a password and admin
+  // approval, so a headless one-click would just hang or fail for exactly the
+  // people who'd hit it. Copy-the-command is the honest, reliable path.
+  let aboutEl = $state<HTMLElement | undefined>();
+  let copied = $state(false);
+
+  const versionMeta = $derived.by(() => {
+    const v = appVersion ? `v${appVersion}` : "";
+    switch ($updateInfo.state) {
+      case "available":
+        return `${v} · update available: ${$updateInfo.latest}`;
+      case "up-to-date":
+        return `${v} · up to date`;
+      case "unsupported":
+        return `${v} · run \`brew upgrade\` to update`;
+      default:
+        return v || "checking for updates…";
+    }
+  });
+
+  // Called from the header "Update" pill (via bind:this) so opening Settings
+  // from there lands on the update box instead of the top of the page.
+  export function scrollToUpdate() {
+    requestAnimationFrame(() =>
+      aboutEl?.scrollIntoView({ behavior: "smooth", block: "center" }),
+    );
+  }
+
+  async function copyCommand() {
+    const cmd = $updateInfo.upgradeCommand;
+    if (!cmd) return;
+    try {
+      await navigator.clipboard.writeText(cmd);
+      copied = true;
+      setTimeout(() => (copied = false), 1500);
+    } catch {
+      // Clipboard unavailable — no-op.
+    }
+  }
+
+  async function openReleaseNotes() {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("open_path", {
+        path: "https://github.com/pavelpilyak/devrecall/releases/latest",
+      });
+    } catch {
+      // Non-Tauri context — no-op.
+    }
+  }
+
   onMount(() => {
     // Freshen the shared status immediately on first open; ongoing updates come
     // from App's 30s poll and post-sync refresh via the derived `sources`.
     checkConnection();
     loadVersion();
+    checkUpdate();
   });
 </script>
 
@@ -270,12 +324,35 @@
         {/snippet}
       </SettingsSection>
 
+      <div bind:this={aboutEl}>
       <SettingsSection title="About">
         {#snippet children()}
-          <SettingsRow
-            titleText="DevRecall Desktop"
-            meta={`${appVersion ? `v${appVersion} · ` : ""}run \`brew upgrade devrecall\` to update`}
-          />
+          <SettingsRow titleText="DevRecall Desktop" meta={versionMeta}>
+            {#snippet right()}
+              {#if $updateInfo.state === "up-to-date"}
+                <span class="ok-label">up to date</span>
+              {/if}
+            {/snippet}
+          </SettingsRow>
+
+          {#if $updateInfo.state === "available"}
+            <div class="update-detail">
+              <div class="update-hint">
+                Version {$updateInfo.latest} is available. To update, run this in your terminal:
+              </div>
+              <div class="cmd-row">
+                <code>{$updateInfo.upgradeCommand}</code>
+                <Btn size="sm" variant="primary" onclick={copyCommand}>
+                  {#snippet children()}
+                    <Icon name={copied ? "check" : "copy"} size={12} />
+                    <span>{copied ? "Copied" : "Copy"}</span>
+                  {/snippet}
+                </Btn>
+              </div>
+              <button class="notes-link" onclick={openReleaseNotes}>What's new →</button>
+            </div>
+          {/if}
+
           <SettingsRow titleText="Relay" meta="cf-worker · OAuth callbacks only · never user data">
             {#snippet right()}
               <Chip variant="accent">
@@ -285,6 +362,7 @@
           </SettingsRow>
         {/snippet}
       </SettingsSection>
+      </div>
     </div>
   </div>
 </div>
@@ -345,6 +423,43 @@
     gap: 8px;
     padding: 12px 16px;
     border-top: 1px solid var(--hairline);
+  }
+
+  .update-detail {
+    padding: 12px 16px;
+    border-top: 1px solid var(--hairline);
+  }
+  .update-hint {
+    font-size: 12px;
+    color: var(--fg-2);
+  }
+  .cmd-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .notes-link {
+    margin-top: 8px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--mint-300);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .notes-link:hover { text-decoration: underline; }
+  .cmd-row code {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-2);
+    background: var(--ink-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-2);
+    padding: 4px 8px;
+    overflow-x: auto;
+    white-space: nowrap;
   }
 
 </style>

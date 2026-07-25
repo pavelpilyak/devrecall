@@ -52,6 +52,43 @@ export async function checkLLMHealth() {
   }
 }
 
+/**
+ * Update availability, driven by GET /api/update (a throttled, cached wrapper
+ * over the CLI's passive GitHub-release check). "unsupported" = the running
+ * server predates the route (older CLI).
+ */
+export type UpdateInfo = {
+  state: "unknown" | "up-to-date" | "available" | "unsupported";
+  current?: string;
+  latest?: string;
+  notes?: string;
+  installMethod?: "cask" | "brew" | "standalone" | "unknown";
+  upgradeCommand?: string;
+};
+export const updateInfo = writable<UpdateInfo>({ state: "unknown" });
+
+/** Check for a newer release and update the updateInfo store. */
+export async function checkUpdate() {
+  try {
+    const r = await api.update();
+    if (r.unsupported) {
+      updateInfo.set({ state: "unsupported" });
+      return;
+    }
+    updateInfo.set({
+      state: r.update_available ? "available" : "up-to-date",
+      current: r.current,
+      latest: r.latest,
+      notes: r.notes,
+      installMethod: r.install_method,
+      upgradeCommand: r.upgrade_command,
+    });
+  } catch {
+    // API server unreachable — leave it to the connection banner.
+    updateInfo.set({ state: "unknown" });
+  }
+}
+
 function todayISOString(): string {
   return new Date().toISOString().slice(0, 10);
 }

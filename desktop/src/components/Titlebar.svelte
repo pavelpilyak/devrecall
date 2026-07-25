@@ -13,6 +13,9 @@
     hasErrors = false,
     errorTooltip = "",
     onErrorsClick,
+    updateAvailable = false,
+    updateVersion = "",
+    onUpdateClick,
     onCmdK,
   } = $props<{
     syncStatus?: SyncStatus;
@@ -27,6 +30,10 @@
     /** Multi-line breakdown of which sources failed, for the alert tooltip. */
     errorTooltip?: string;
     onErrorsClick?: () => void;
+    /** A newer release is available — show the update affordance. */
+    updateAvailable?: boolean;
+    updateVersion?: string;
+    onUpdateClick?: () => void;
     onCmdK?: () => void;
   }>();
 
@@ -72,6 +79,19 @@
       onclick={() => onErrorsClick?.()}
     >
       <Icon name="alert-triangle" size={13} />
+    </button>
+  {/if}
+
+  {#if updateAvailable}
+    <button
+      type="button"
+      class="update-btn"
+      title={`DevRecall ${updateVersion} is available — click to update`}
+      aria-label={`Update available: ${updateVersion} — open Settings`}
+      onclick={() => onUpdateClick?.()}
+    >
+      <Icon name="arrow-up-circle" size={12} />
+      <span>Update</span>
     </button>
   {/if}
 
@@ -149,6 +169,23 @@
     transition: background var(--dur-1) var(--ease-std);
   }
   .err-btn:hover { background: rgba(255, 107, 107, 0.2); }
+  .update-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    box-sizing: border-box;
+    background: var(--accent-wash);
+    border: 1px solid var(--accent-line);
+    border-radius: 999px;
+    padding: 0 10px;
+    color: var(--mint-200);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+    transition: background var(--dur-1) var(--ease-std);
+  }
+  .update-btn:hover { background: var(--accent-line); color: var(--fg-1); }
   @keyframes dr-spin {
     to { transform: rotate(360deg); }
   }

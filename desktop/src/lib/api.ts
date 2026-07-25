@@ -347,4 +347,34 @@ export const api = {
     }
     return resp.json();
   },
+
+  update: async (): Promise<{
+    current: string;
+    latest: string;
+    update_available: boolean;
+    install_method: "cask" | "brew" | "standalone" | "unknown";
+    upgrade_command: string;
+    notes?: string;
+    error?: string;
+    unsupported?: boolean;
+  }> => {
+    const base = await baseUrl();
+    const resp = await fetch(`${base}/api/update`);
+    // A 404 means the running server predates the update route (older CLI).
+    if (resp.status === 404) {
+      return {
+        current: "",
+        latest: "",
+        update_available: false,
+        install_method: "unknown",
+        upgrade_command: "",
+        unsupported: true,
+      };
+    }
+    if (!resp.ok) {
+      const e = await resp.json().catch(() => ({ error: resp.statusText }));
+      throw new Error(e.error || resp.statusText);
+    }
+    return resp.json();
+  },
 };

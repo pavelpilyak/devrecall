@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type SyncStatus } from "./lib/api";
-  import { connected, checkConnection, serverError, lastSyncAt, apiStatus, nowTick, llmHealth, checkLLMHealth } from "./lib/stores";
+  import { connected, checkConnection, serverError, lastSyncAt, apiStatus, nowTick, llmHealth, checkLLMHealth, updateInfo, checkUpdate } from "./lib/stores";
   import Titlebar from "./components/Titlebar.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import CommandPalette from "./components/CommandPalette.svelte";
@@ -37,6 +37,13 @@
 
   let activeTab = $state<Tab>("chat");
   let logView = $state<{ focus: () => void } | null>(null);
+  let settingsView = $state<{ scrollToUpdate: () => void } | null>(null);
+
+  // Open Settings and scroll to the update button — used by the header pill.
+  function openUpdateSettings() {
+    setRoute("settings");
+    setTimeout(() => settingsView?.scrollToUpdate(), 60);
+  }
   let paletteOpen = $state(false);
 
   function setRoute(id: string) {
@@ -295,6 +302,12 @@
     checkLLMHealth();
     const llmInterval = setInterval(checkLLMHealth, 180_000);
 
+    // Check for a newer release on launch, then every 6h. The endpoint is
+    // server-side throttled + cached (24h) and shared with the CLI, so this is
+    // cheap and won't hammer GitHub — it just keeps the badge fresh.
+    checkUpdate();
+    const updateInterval = setInterval(checkUpdate, 6 * 60 * 60 * 1000);
+
     // Keep prefersDark in sync so the tray glyph recolors when the system
     // appearance changes while the app is open.
     const darkMq = window.matchMedia?.("(prefers-color-scheme: dark)");
@@ -425,6 +438,7 @@
     return () => {
       clearInterval(interval);
       clearInterval(llmInterval);
+      clearInterval(updateInterval);
       darkMq?.removeEventListener?.("change", onThemeChange);
       window.removeEventListener("keydown", onKeydown);
       document.removeEventListener("click", onLinkClick);
@@ -445,6 +459,9 @@
     hasErrors={hasErrors}
     errorTooltip={errorTooltip}
     onErrorsClick={() => setRoute("settings")}
+    updateAvailable={$updateInfo.state === "available"}
+    updateVersion={$updateInfo.latest}
+    onUpdateClick={openUpdateSettings}
     onCmdK={() => (paletteOpen = true)}
   />
 
@@ -481,7 +498,7 @@
         <div class="route" class:hidden={activeTab !== "review"}><Review /></div>
         <div class="route" class:hidden={activeTab !== "search"}><Search /></div>
         <div class="route" class:hidden={activeTab !== "log"}><Log bind:this={logView} /></div>
-        <div class="route" class:hidden={activeTab !== "settings"}><Settings /></div>
+        <div class="route" class:hidden={activeTab !== "settings"}><Settings bind:this={settingsView} /></div>
       </div>
     </div>
   {/if}
