@@ -3143,7 +3143,12 @@ func newUpdateCmd() *cobra.Command {
 			fmt.Printf("Checking for updates...\n")
 			rel, err := update.Check()
 			if err != nil {
-				return fmt.Errorf("checking for updates: %w", err)
+				// The GitHub API is easily rate-limited (403) on shared or
+				// corporate networks where many machines share one egress IP.
+				// Don't dead-end on a raw error — point at the reliable path.
+				fmt.Fprintf(os.Stderr, "Couldn't check GitHub for updates: %v\n", err)
+				fmt.Fprintf(os.Stderr, "To update, run:\n  %s\n", manualUpgradeHint())
+				return nil
 			}
 			if !update.IsNewer(version, rel.Version) {
 				fmt.Printf("Already up to date (%s).\n", version)
@@ -3198,6 +3203,17 @@ func newUpdateCmd() *cobra.Command {
 // runBrewUpgrade execs `brew upgrade devrecall` so a single command updates
 // both the GUI and the bundled CLI for cask users. Falls back to a printed
 // instruction if Homebrew can't be located.
+// manualUpgradeHint returns the command a user should run to update by hand
+// when the automatic GitHub check fails (rate limit / offline / proxy). Brew
+// installs (formula or cask) upgrade cleanly via brew, which uses github.com
+// rather than the rate-limited api.github.com; standalone installs re-download.
+func manualUpgradeHint() string {
+	if findBrew() != "" {
+		return "brew upgrade devrecall"
+	}
+	return "download the latest from https://github.com/pavelpilyak/devrecall/releases/latest"
+}
+
 func runBrewUpgrade() error {
 	brew := findBrew()
 	if brew == "" {

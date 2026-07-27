@@ -117,6 +117,9 @@ func CheckWithURL(url string) (*Release, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("GitHub API rate limit or access blocked (HTTP 403) — common on shared or corporate networks")
+		}
 		return nil, fmt.Errorf("release lookup returned status %d", resp.StatusCode)
 	}
 

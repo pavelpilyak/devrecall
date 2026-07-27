@@ -168,6 +168,8 @@
         return `${v} · update available: ${$updateInfo.latest}`;
       case "up-to-date":
         return `${v} · up to date`;
+      case "check-failed":
+        return `${v} · couldn't check for updates`;
       case "unsupported":
         return `${v} · run \`brew upgrade\` to update`;
       default:
@@ -335,10 +337,14 @@
             {/snippet}
           </SettingsRow>
 
-          {#if $updateInfo.state === "available"}
+          {#if $updateInfo.state === "available" || $updateInfo.state === "check-failed"}
             <div class="update-detail">
               <div class="update-hint">
-                Version {$updateInfo.latest} is available. To update, run this in your terminal:
+                {#if $updateInfo.state === "available"}
+                  Version {$updateInfo.latest} is available. To update, run this in your terminal:
+                {:else}
+                  Couldn't reach GitHub to check for updates. To update, run this in your terminal:
+                {/if}
               </div>
               <div class="cmd-row">
                 <code>{$updateInfo.upgradeCommand}</code>
@@ -349,7 +355,9 @@
                   {/snippet}
                 </Btn>
               </div>
-              <button class="notes-link" onclick={openReleaseNotes}>What's new →</button>
+              {#if $updateInfo.state === "available"}
+                <button class="notes-link" onclick={openReleaseNotes}>What's new →</button>
+              {/if}
             </div>
           {/if}
 

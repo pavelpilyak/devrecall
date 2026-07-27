@@ -58,7 +58,10 @@ export async function checkLLMHealth() {
  * server predates the route (older CLI).
  */
 export type UpdateInfo = {
-  state: "unknown" | "up-to-date" | "available" | "unsupported";
+  // "check-failed" = the server reached us but couldn't reach GitHub (typically
+  // a 403 rate limit on shared/corporate networks). We can't say whether an
+  // update exists, but we still know the manual upgrade command.
+  state: "unknown" | "up-to-date" | "available" | "unsupported" | "check-failed";
   current?: string;
   latest?: string;
   notes?: string;
@@ -73,6 +76,17 @@ export async function checkUpdate() {
     const r = await api.update();
     if (r.unsupported) {
       updateInfo.set({ state: "unsupported" });
+      return;
+    }
+    // The endpoint always 200s; a non-empty error means the GitHub lookup
+    // failed. Don't claim "up to date" — surface the manual command instead.
+    if (r.error) {
+      updateInfo.set({
+        state: "check-failed",
+        current: r.current,
+        installMethod: r.install_method,
+        upgradeCommand: r.upgrade_command,
+      });
       return;
     }
     updateInfo.set({
