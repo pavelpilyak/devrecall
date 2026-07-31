@@ -10,7 +10,6 @@ import (
 	"github.com/pavelpilyak/devrecall/internal/agent"
 	agenttools "github.com/pavelpilyak/devrecall/internal/agent/tools"
 	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
-	"github.com/pavelpilyak/devrecall/internal/embedding"
 	"github.com/pavelpilyak/devrecall/internal/llm"
 	"github.com/pavelpilyak/devrecall/internal/workitem"
 )
@@ -20,8 +19,8 @@ const chatStreamSystemPrompt = `You are DevRecall, a developer work-memory assis
 Tools available:
 - current_time: get the user's current local time. Call this before any date-relative query so you can convert "yesterday"/"last week"/etc. to absolute dates.
 - list_activities / count_activities: enumerate or count activities with filters (start, end, source, type, identity_id, tag, group_by).
-- search_activities: FTS5 keyword search over titles and content (optional tag filter).
-- semantic_search_activities: vector search by meaning (only when keyword search fails).
+- search_activities: hybrid search over titles and content — keyword (FTS5) and semantic similarity fused together (optional tag filter). This is the default search tool.
+- semantic_search_activities: pure vector search by meaning; only needed when search_activities returns nothing and the query has no reliable keywords.
 - get_activity: fetch the full body of a single activity by id.
 - get_work_item / list_work_items: work items group a ticket with its commits, PRs, and discussions. get_work_item returns one item's full cross-source timeline; list_work_items answers "what was I working on".
 - list_summaries / get_summary: read pre-computed standup/weekly/monthly/quarterly summaries.
@@ -120,16 +119,12 @@ func (s *Server) chatLoop() (*agent.Loop, error) {
 		return nil, fmt.Errorf("LLM provider %q does not support tool calling", llmProvider.Name())
 	}
 
-	embedder, err := embedding.FromConfig(cfg, s.tokenStore)
-	if err != nil {
-		// Embedder is optional — semantic_search_activities will return an
-		// error at call time if it's nil.
-		embedder = nil
-	}
-
+	// Shared cached instance: building one here per chat request would reload
+	// the ONNX model every time. Optional — the tools that need it report the
+	// failure at call time if it's nil.
 	registry := agenttools.NewRegistry(agenttools.Deps{
 		DB:       s.db,
-		Embedder: embedder,
+		Embedder: s.Embedder(),
 	})
 	return agent.NewLoop(toolProvider, registry, agent.LoopOptions{}), nil
 }

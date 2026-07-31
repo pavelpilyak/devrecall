@@ -15,22 +15,34 @@ On-device developer activity aggregator — generates AI-powered standups, perf 
 ```
 cmd/devrecall/          CLI entrypoint
 internal/
+  agent/                Chat agent loop + read-only tool catalogue (agent/tools/)
   api/                  Local HTTP API (localhost:3725) for desktop app + integrations
   auth/                 OAuth flows + token storage (keychain/file-based)
   chat/                 Interactive chat REPL with conversation memory
-  collector/            Source integrations (git, slack, calendar, jira, linear)
+  collector/            Source integrations
     collector.go        Collector interface
     git/                Git log parsing
+    github/ gitlab/ bitbucket/   PRs, reviews, issues, comments
     slack/              Slack API
     calendar/           Google Calendar API
-    jira/               Jira API
+    jira/ confluence/   Atlassian (shared token)
     linear/             Linear GraphQL API
+    ticketlink/         Ticket-key extraction from commit/PR text
+    ratelimit/          Shared HTTP rate limiting
   config/               App configuration (~/.devrecall/config.json)
+  daemon/               Background sync daemon (launchd)
   embedding/            Vector embeddings (ONNX bundled, Ollama, OpenAI)
+  enrich/               LLM enrichment of activities (tags, summaries)
   identity/             Cross-source identity resolution (email-based)
-  rag/                  Hybrid retrieval pipeline (vector + FTS5 + filters + re-ranking)
-  storage/              SQLite database layer (includes FTS5 virtual table)
+  llm/                  LLM provider abstraction (Ollama, OpenAI, Anthropic)
+  mcp/                  MCP server (stdio) exposing the agent tool catalogue
+  pipeline/             Post-sync passes: work-item linking, enrichment, embedding
+  privacy/              Redaction / privacy filters
+  storage/              SQLite layer — activities, FTS5, sqlite-vec, hybrid retrieval
+                        (hybrid.go fuses FTS5 + vector via Reciprocal Rank Fusion)
   summarizer/           LLM-powered summary generation (standup, weekly, brag, perf review)
+  update/               Self-update + release checks (GitHub) and kill-switch manifest
+  workitem/             Work-item grouping across sources (ticket-keyed)
 pkg/models/             Shared domain types (Activity, Identity, Summary)
 relay/                  Cloudflare Worker — OAuth callback relay (TypeScript)
 ```
@@ -62,6 +74,8 @@ Build tags: `fts5` enables SQLite FTS5 full-text search, `GO` enables hugot's pu
 - **Privacy-first:** All data stored on-device in SQLite. No raw user data sent to cloud.
 - **Collector interface:** Each source implements `collector.Collector` — `Name()` + `Collect(ctx)`.
 - **Identity resolution:** Email is the primary key for merging identities across Git, Slack, Calendar, Jira, Linear.
+- **Retrieval:** `storage.HybridSearch` runs FTS5 and vector KNN over the same filter and fuses them with Reciprocal Rank Fusion (k=60). Fusion is by *rank*, not score — BM25 and cosine aren't on comparable scales, so rank-based fusion avoids arbitrary normalization constants. It degrades to whichever arm is available (no embeddings yet → keyword-only). The vector arm only understands date bounds, so source/type/identity/tag are applied by the fusion layer. Used by `search_activities` (agent + MCP), `GET /api/search`, and `devrecall search`.
+- **Embedder reuse:** the ONNX embedder loads its model on first use and memoizes it *on the instance*, so anything running per-request must go through the cached `Server.Embedder()` rather than calling `embedding.FromConfig` directly — otherwise the model reloads every request. Callers guard with `db.HasEmbeddings()` to skip embedding entirely (and avoid a first-run model download) when the vector arm has nothing to match.
 - **LLM strategy:** Local Ollama for fast tasks, BYOK for quality tasks. Fallback chain: primary → secondary → local → template.
 - **Config location:** `~/.devrecall/config.json` for settings, `~/.devrecall/devrecall.db` for data.
 - **Server port:** Default 3725 ("DRCL" on phone keypad). Override via `server.port` in config.json or `--port` flag on `devrecall serve`.

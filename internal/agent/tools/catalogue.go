@@ -372,7 +372,7 @@ func searchActivitiesTool(deps Deps) Tool {
 	}`)
 	return Tool{
 		Name:        "search_activities",
-		Description: "Keyword search (FTS5) over activity titles and content. Use this for concrete terms and phrases like 'deploy decision' or 'retry strategy'. Prefer this over semantic_search_activities for keyword-shaped queries.",
+		Description: "Hybrid search over activity titles and content, combining keyword (FTS5) and semantic similarity. This is the default search tool — it handles both concrete phrases like 'retry strategy' and loosely-worded queries, so prefer it unless you specifically need pure vector similarity.",
 		Schema:      schema,
 		Execute: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 			var a searchActivitiesArgs
@@ -387,15 +387,27 @@ func searchActivitiesTool(deps Deps) Tool {
 				return nil, err
 			}
 			limit := clampLimit(a.Limit, 20)
+
+			// Embed the query so the vector arm can contribute. A missing or
+			// failing embedder isn't fatal: HybridSearch with a nil vector is
+			// exactly the old keyword-only behaviour, which is also the right
+			// answer on a fresh install before the embedding pass has run.
+			var vec []float32
+			if deps.Embedder != nil {
+				if v, err := deps.Embedder.Embed(ctx, a.Query); err == nil {
+					vec = v
+				}
+			}
+
 			// Fetch one extra to detect "more available" without a count query.
-			matches, err := deps.DB.SearchFTS(a.Query, storage.ActivityFilter{
+			matches, err := deps.DB.HybridSearch(a.Query, vec, storage.ActivityFilter{
 				Source: models.Source(a.Source),
 				Tag:    a.Tag,
 				After:  after,
 				Before: before,
 			}, limit+1)
 			if err != nil {
-				return nil, fmt.Errorf("fts search: %w", err)
+				return nil, fmt.Errorf("hybrid search: %w", err)
 			}
 			hasMore := len(matches) > limit
 			if hasMore {
@@ -441,7 +453,7 @@ func semanticSearchActivitiesTool(deps Deps) Tool {
 	}`)
 	return Tool{
 		Name:        "semantic_search_activities",
-		Description: "Vector similarity search over activities. Use only when keyword search fails — for fuzzy or paraphrased queries like 'when did I work on the thing about latency'. Returns shallow rows ranked by similarity.",
+		Description: "Pure vector similarity search over activities. search_activities already blends this with keyword matching, so reach for this only when that returns nothing useful and the query is purely conceptual with no reliable keywords. Returns shallow rows ranked by similarity.",
 		Schema:      schema,
 		Execute: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 			if deps.Embedder == nil {

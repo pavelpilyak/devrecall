@@ -1550,8 +1550,8 @@ func newSearchCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Search activities using full-text search (no LLM)",
-		Long:  "Performs FTS5 keyword search across all activities. Fast, offline, no LLM required.",
+		Short: "Search activities using hybrid keyword + semantic search (no LLM)",
+		Long:  "Searches all activities by fusing FTS5 keyword matching with vector similarity. Fast, offline, no LLM required. Falls back to keyword-only until activities have been embedded.",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := strings.Join(args, " ")
@@ -1561,6 +1561,30 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sourceFlag, "source", "", "Filter by source (git, slack, calendar, github, gitlab, bitbucket, jira, confluence, linear)")
 	cmd.Flags().IntVar(&limitFlag, "limit", 20, "Maximum number of results")
 	return cmd
+}
+
+// embedQueryForSearch builds an embedder from config and embeds a search query.
+// Errors are the caller's cue to fall back to keyword-only search rather than
+// fail the command — an unconfigured or unreachable embedding provider should
+// never make `devrecall search` unusable.
+func embedQueryForSearch(query string) ([]float32, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	dir, err := config.Dir()
+	if err != nil {
+		return nil, err
+	}
+	tokenStore, err := auth.NewTokenStore(cfg.TokenStorage, dir)
+	if err != nil {
+		return nil, err
+	}
+	embedder, err := embedding.FromConfig(cfg, tokenStore)
+	if err != nil {
+		return nil, err
+	}
+	return embedder.Embed(context.Background(), query)
 }
 
 func runSearch(query, sourceFilter string, limit int) error {
@@ -1575,7 +1599,18 @@ func runSearch(query, sourceFilter string, limit int) error {
 		filter.Source = models.Source(sourceFilter)
 	}
 
-	results, err := db.SearchFTS(query, filter, limit)
+	// Add the vector arm only when there's something for it to match. Skipping
+	// it when nothing is embedded keeps this command's "fast, offline" promise:
+	// building an embedder would otherwise trigger a first-run ONNX model
+	// download for a search that would be keyword-only anyway.
+	var vec []float32
+	if db.HasEmbeddings() {
+		if v, err := embedQueryForSearch(query); err == nil {
+			vec = v
+		}
+	}
+
+	results, err := db.HybridSearch(query, vec, filter, limit)
 	if err != nil {
 		return fmt.Errorf("search failed: %w", err)
 	}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, type SearchResult } from "../lib/api";
+  import { api, type Activity, type SearchResult } from "../lib/api";
   import PanelHeader from "../components/ui/PanelHeader.svelte";
   import Icon from "../components/ui/Icon.svelte";
   import Chip from "../components/ui/Chip.svelte";
@@ -46,6 +46,27 @@
       year: "numeric", month: "short", day: "numeric",
     });
   }
+
+  // Collectors stash the canonical link in metadata as `url` (git/GitHub/Jira/
+  // Confluence) or `permalink` (Slack). Same shape the Timeline uses.
+  function activityURL(a: Activity): string {
+    if (!a.metadata) return "";
+    try {
+      const m = JSON.parse(a.metadata);
+      if (typeof m.url === "string" && m.url) return m.url;
+      if (typeof m.permalink === "string" && m.permalink) return m.permalink;
+    } catch { /* noop */ }
+    return "";
+  }
+
+  async function openExternal(url: string) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("open_path", { path: url });
+    } catch (err) {
+      console.error("failed to open url", url, err);
+    }
+  }
 </script>
 
 <div class="route-body">
@@ -86,10 +107,20 @@
       <div class="state">No results for "{query}".</div>
     {:else}
       {#each results as { activity } (activity.id ?? activity.timestamp + activity.title)}
-        <div class="row">
+        {@const url = activityURL(activity)}
+        <div class="row" class:linked={url}>
           <SourceDot source={activity.source} />
           <div class="main">
-            <div class="title">{activity.title}</div>
+            {#if url}
+              <a
+                class="title link"
+                href={url}
+                onclick={(e) => { e.preventDefault(); openExternal(url); }}
+                title={url}
+              >{activity.title}</a>
+            {:else}
+              <div class="title">{activity.title}</div>
+            {/if}
             {#if activity.content}
               <div class="preview">{activity.content}</div>
             {/if}
@@ -174,15 +205,26 @@
     align-items: flex-start;
     padding: 12px 20px;
     border-bottom: 1px solid var(--hairline);
-    cursor: pointer;
     transition: background 80ms;
   }
-  .row:hover { background: var(--ink-2); }
+  /* Only rows that actually open something get the affordance — a hover +
+     pointer on a dead row reads as broken. */
+  .row.linked { cursor: pointer; }
+  .row.linked:hover { background: var(--ink-2); }
   .main { min-width: 0; }
   .title {
     font-size: 13px;
     color: var(--fg-1);
     font-weight: 500;
+  }
+  a.title.link {
+    display: block;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  a.title.link:hover {
+    color: var(--accent);
+    text-decoration: underline;
   }
   .preview {
     font-size: 12px;

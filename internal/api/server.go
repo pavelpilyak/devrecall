@@ -21,6 +21,7 @@ import (
 	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
 	"github.com/pavelpilyak/devrecall/internal/collector/git"
 	"github.com/pavelpilyak/devrecall/internal/config"
+	"github.com/pavelpilyak/devrecall/internal/embedding"
 	"github.com/pavelpilyak/devrecall/internal/llm"
 	"github.com/pavelpilyak/devrecall/internal/pipeline"
 	"github.com/pavelpilyak/devrecall/internal/privacy"
@@ -46,6 +47,17 @@ type Server struct {
 	tokenStore auth.TokenStore
 	dataDir    string // override for ~/.devrecall (used in tests)
 	version    string // running binary version, for the update check ("" = dev)
+
+	// Cached embedder shared by every per-request caller. See Embedder().
+	embMu    sync.Mutex
+	embedder embedding.Embedder
+	embKey   embedderKey
+	embBuilt bool
+
+	// embedderFactory overrides Embedder() when non-nil. Tests inject a
+	// deterministic embedder so search paths can be exercised without
+	// loading (or downloading) the real ONNX model.
+	embedderFactory func() embedding.Embedder
 
 	// agentLoopFactory builds the agent loop used by the chat-stream handler.
 	// Tests inject a fake provider through this hook; in production it's
@@ -586,17 +598,30 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 
-	results, err := s.db.SearchFTS(query, filter, limit)
+	// Embed the query so the vector arm can contribute. A missing embedder (or
+	// a failure to embed) is not fatal — HybridSearch with a nil vector is
+	// keyword-only, which is the correct answer before the embedding pass has
+	// run anyway.
+	var vec []float32
+	if s.db.HasEmbeddings() {
+		if emb := s.Embedder(); emb != nil {
+			if v, err := emb.Embed(r.Context(), query); err == nil {
+				vec = v
+			}
+		}
+	}
+
+	results, err := s.db.HybridSearch(query, vec, filter, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "search failed: "+err.Error())
 		return
 	}
 
 	items := make([]map[string]any, 0, len(results))
-	for _, r := range results {
+	for _, m := range results {
 		items = append(items, map[string]any{
-			"activity": r.Activity,
-			"rank":     r.Rank,
+			"activity": m.Activity,
+			"rank":     m.Score,
 		})
 	}
 

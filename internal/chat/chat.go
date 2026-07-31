@@ -28,8 +28,8 @@ const systemPrompt = `You are DevRecall, a developer work-memory assistant. You 
 Tools available:
 - current_time: get the user's current local time. Call this whenever the question contains a relative date ("yesterday", "last week", "this month") so you can convert it to absolute dates.
 - list_activities / count_activities: enumerate or count activities with filters (start, end, source, type, identity_id, tag, group_by).
-- search_activities: FTS5 keyword search over titles and content (optional tag filter).
-- semantic_search_activities: vector search by meaning (for "anything about auth refactoring").
+- search_activities: hybrid search over titles and content — keyword (FTS5) and semantic similarity fused together (optional tag filter). This is the default search tool.
+- semantic_search_activities: pure vector search by meaning; only needed when search_activities returns nothing and the query has no reliable keywords.
 - get_activity: fetch the full body of a single activity by id.
 - get_work_item / list_work_items: work items group a ticket with its commits, PRs, and discussions. get_work_item returns one item's full cross-source timeline; list_work_items answers "what was I working on".
 - list_summaries / get_summary: read pre-computed standup/weekly/monthly/quarterly summaries.
