@@ -154,8 +154,11 @@ func TestCurrentTime(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	var got struct {
-		Now      string `json:"now"`
-		Timezone string `json:"timezone"`
+		Now       string `json:"now"`
+		Timezone  string `json:"timezone"`
+		Today     string `json:"today"`
+		Yesterday string `json:"yesterday"`
+		NowUTC    string `json:"now_utc"`
 	}
 	decodeResult(t, out, &got)
 	if got.Now != "2026-04-08T12:00:00Z" {
@@ -163,6 +166,48 @@ func TestCurrentTime(t *testing.T) {
 	}
 	if got.Timezone != "UTC" {
 		t.Errorf("tz = %q", got.Timezone)
+	}
+	// Ready-made calendar dates: the model shouldn't have to parse a timestamp
+	// or do date arithmetic to build a filter.
+	if got.Today != "2026-04-08" {
+		t.Errorf("today = %q, want 2026-04-08", got.Today)
+	}
+	if got.Yesterday != "2026-04-07" {
+		t.Errorf("yesterday = %q, want 2026-04-07", got.Yesterday)
+	}
+	if got.NowUTC != "2026-04-08T12:00:00Z" {
+		t.Errorf("now_utc = %q", got.NowUTC)
+	}
+}
+
+// A user east of Greenwich in the small hours is the case that used to break:
+// the tool reported the UTC date, so "today" resolved to yesterday and every
+// date filter came back empty.
+func TestCurrentTime_ReportsLocalDateNotUTC(t *testing.T) {
+	loc := time.FixedZone("CEST", 2*60*60)
+	db, _ := newTestDB(t)
+	reg := NewRegistry(Deps{
+		DB:  db,
+		Now: fixedNow(time.Date(2026, 8, 7, 0, 30, 0, 0, loc)),
+	})
+
+	out, err := reg.Execute(context.Background(), "current_time", nil)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var got struct {
+		Today  string `json:"today"`
+		NowUTC string `json:"now_utc"`
+	}
+	decodeResult(t, out, &got)
+
+	if got.Today != "2026-08-07" {
+		t.Errorf("today = %q, want the local date 2026-08-07", got.Today)
+	}
+	// Same instant is still 2026-08-06 in UTC — proving the two genuinely differ
+	// here, so the assertion above isn't vacuous.
+	if !strings.HasPrefix(got.NowUTC, "2026-08-06") {
+		t.Errorf("now_utc = %q, want it to fall on 2026-08-06", got.NowUTC)
 	}
 }
 

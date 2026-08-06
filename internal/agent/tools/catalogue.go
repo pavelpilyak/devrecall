@@ -172,13 +172,20 @@ func parseFilterDates(start, end string) (time.Time, time.Time, error) {
 func currentTimeTool(deps Deps) Tool {
 	return Tool{
 		Name:        "current_time",
-		Description: "Return the current UTC time. Use this to anchor relative date references like 'today', 'yesterday', or 'last week' when the user does not provide an explicit date.",
+		Description: "Return the current time, in the user's local timezone and in UTC. Prefer `today` for date filters — it is the user's local calendar date, which is what 'today' means to them.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 		Execute: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-			now := deps.now().UTC()
+			now := deps.now()
+			// Report local time alongside UTC. Returning UTC alone made the tool
+			// answer with yesterday's date for users east of Greenwich during the
+			// first hours of their day, which then poisoned every date filter.
+			zone, _ := now.Zone()
 			return mustJSON(map[string]any{
-				"now":      now.Format(time.RFC3339),
-				"timezone": "UTC",
+				"now":       now.Format(time.RFC3339),
+				"timezone":  zone,
+				"today":     now.Format("2006-01-02"),
+				"yesterday": now.AddDate(0, 0, -1).Format("2006-01-02"),
+				"now_utc":   now.UTC().Format(time.RFC3339),
 			}), nil
 		},
 	}

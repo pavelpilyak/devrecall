@@ -664,7 +664,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	freshEvents := s.runChatFreshnessBuffered(r.Context(), false)
 
 	messages := make([]llm.Message, 0, 2+len(req.History))
-	messages = append(messages, llm.Message{Role: "system", Content: chatStreamSystemPrompt})
+	messages = append(messages, llm.Message{Role: "system", Content: chatSystemPrompt(time.Now())})
 	messages = append(messages, req.History...)
 	messages = append(messages, llm.Message{Role: "user", Content: req.Message})
 

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/pavelpilyak/devrecall/internal/agent"
 	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
@@ -23,10 +24,18 @@ import (
 
 const maxHistory = 10 // keep last N user+assistant message pairs
 
+// systemPromptAt builds the session system prompt with today's date anchored at
+// the top. Built per query rather than once per session so a long-running REPL
+// doesn't keep asserting yesterday's date after midnight. See
+// agent.DatePreamble for why the date is stated rather than left to a tool call.
+func systemPromptAt(now time.Time) string {
+	return systemPrompt + "\n\n" + agent.DatePreamble(now)
+}
+
 const systemPrompt = `You are DevRecall, a developer work-memory assistant. You answer questions about the user's work history by calling the read-only tools provided to you.
 
 Tools available:
-- current_time: get the user's current local time. Call this whenever the question contains a relative date ("yesterday", "last week", "this month") so you can convert it to absolute dates.
+- current_time: the current local time (plus UTC). Today's date is already given to you below, so you only need this when the question turns on time-of-day ("in the last hour", "before my 3pm meeting").
 - list_activities / count_activities: enumerate or count activities with filters (start, end, source, type, identity_id, tag, group_by).
 - search_activities: hybrid search over titles and content — keyword (FTS5) and semantic similarity fused together (optional tag filter). This is the default search tool.
 - semantic_search_activities: pure vector search by meaning; only needed when search_activities returns nothing and the query has no reliable keywords.
@@ -36,9 +45,13 @@ Tools available:
 - list_identities / resolve_person: look up people the user has worked with.
 
 Rules:
-- Always call current_time before making date-based queries; do not assume what "today" is.
+- Today's date is stated at the end of this prompt. Use it directly to resolve "today", "yesterday", "last week" and similar into absolute dates. Never infer the date or the year from the conversation, from examples, or from timestamps in earlier tool results.
+- If a date-filtered query returns nothing, re-check the year you used against the date given below before telling the user there is no activity.
 - For questions about one ticket or piece of work ("everything about PROJ-123", "status of the auth fix"), prefer get_work_item — it returns the linked ticket + commits + PRs in one call.
-- For "what was I working on <period>", prefer list_work_items over raw activity listing.
+- For "what was I working on <period>", try list_work_items first, but it only covers
+  ticket-linked work — plain commits with no ticket key never appear there. If it comes
+  back empty, fall back to list_activities for the same period before saying anything.
+  Never report "no activity" on the strength of an empty list_work_items alone.
 - Activity rows may carry a digest (one-line factual summary) and tags — use them before fetching full bodies.
 - Prefer count_activities + list_activities over dumping all rows. Only fetch the bodies you need with get_activity.
 - Answer based ONLY on tool results. If the tools return nothing, say so plainly — never invent commits, PRs, or people.
@@ -172,7 +185,7 @@ func (s *Session) handleQuery(ctx context.Context, query string) error {
 
 	// Assemble messages: system + history + current.
 	messages := make([]llm.Message, 0, 2+len(s.history))
-	messages = append(messages, llm.Message{Role: "system", Content: systemPrompt})
+	messages = append(messages, llm.Message{Role: "system", Content: systemPromptAt(time.Now())})
 	messages = append(messages, s.history...)
 	messages = append(messages, llm.Message{Role: "user", Content: query})
 
