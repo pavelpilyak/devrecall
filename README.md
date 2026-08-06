@@ -52,7 +52,16 @@ cited commits, PRs, and tickets inline.
 
 ## Install
 
-Homebrew ships with the first tagged release. Until then:
+macOS, via Homebrew:
+
+```bash
+brew install --cask pavelpilyak/devrecall/devrecall
+```
+
+Installs `DevRecall.app` and puts the `devrecall` CLI on your `PATH`.
+
+<details>
+<summary>Build from source</summary>
 
 ```bash
 git clone https://github.com/pavelpilyak/devrecall.git
@@ -61,6 +70,15 @@ make build          # → bin/devrecall
 ```
 
 Requires Go 1.22+ with CGO enabled (for SQLite FTS5).
+
+</details>
+
+Then connect a source and generate your first standup:
+
+```bash
+devrecall auth github      # or: slack, google, jira, linear, gitlab, bitbucket
+devrecall standup
+```
 
 Full install + setup walkthrough at **[docs.devrecall.dev/install](https://docs.devrecall.dev/install/)**.
 
