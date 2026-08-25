@@ -15,6 +15,18 @@ const (
 	defaultONNXModel = "sentence-transformers/all-MiniLM-L6-v2"
 	onnxDimensions   = 384
 	pipelineName     = "devrecall-embeddings"
+
+	// maxInputChars bounds each input before inference. all-MiniLM-L6-v2 has a
+	// 512-token sequence limit and the backend does not truncate — it panics
+	// during graph compilation, failing the *entire batch*, so one long commit
+	// body or agent session silently costs embeddings for every unrelated
+	// activity batched alongside it.
+	//
+	// Dense technical text runs ~2.5 chars/token, so 512 tokens is roughly 1300
+	// characters; 1000 leaves headroom for code and non-ASCII, which tokenize
+	// worse. Embeddings capture topic rather than detail, and the opening of an
+	// activity carries the topic, so truncating costs little retrieval quality.
+	maxInputChars = 1000
 )
 
 // ONNX generates embeddings using a bundled ONNX model via hugot's pure Go backend.
@@ -90,12 +102,32 @@ func (o *ONNX) EmbedBatch(ctx context.Context, texts []string) ([][]float32, err
 		return nil, err
 	}
 
-	output, err := o.pipeline.RunPipeline(texts)
+	safe := make([]string, len(texts))
+	for i, t := range texts {
+		safe[i] = truncateForModel(t)
+	}
+
+	output, err := o.pipeline.RunPipeline(safe)
 	if err != nil {
 		return nil, fmt.Errorf("onnx inference: %w", err)
 	}
 
 	return output.Embeddings, nil
+}
+
+// truncateForModel clips text to maxInputChars on a rune boundary, so a
+// multi-byte character is never cut in half.
+func truncateForModel(s string) string {
+	if len(s) <= maxInputChars {
+		return s
+	}
+	r := []rune(s)
+	// Re-check in runes: a multi-byte string can be under the limit in runes
+	// even when over it in bytes.
+	if len(r) <= maxInputChars {
+		return s
+	}
+	return string(r[:maxInputChars])
 }
 
 // Close releases the ONNX session resources.

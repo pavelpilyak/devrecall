@@ -60,6 +60,9 @@ func BuildAllSyncers(cfg *config.Config, db *storage.DB, tokenStore auth.TokenSt
 	if s := confluenceSyncer(cfg, db, tokenStore); s != nil {
 		syncers["confluence"] = s
 	}
+	if s := claudeCodeSyncer(cfg, db); s != nil {
+		syncers["claude_code"] = s
+	}
 	return syncers
 }
 

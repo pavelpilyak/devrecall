@@ -27,6 +27,7 @@ internal/
     calendar/           Google Calendar API
     jira/ confluence/   Atlassian (shared token)
     linear/             Linear GraphQL API
+    claudecode/         Claude Code sessions from local ~/.claude transcripts
     ticketlink/         Ticket-key extraction from commit/PR text
     ratelimit/          Shared HTTP rate limiting
   config/               App configuration (~/.devrecall/config.json)

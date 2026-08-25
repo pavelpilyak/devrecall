@@ -17,26 +17,27 @@ import (
 	agenttools "github.com/pavelpilyak/devrecall/internal/agent/tools"
 	"github.com/pavelpilyak/devrecall/internal/api"
 	"github.com/pavelpilyak/devrecall/internal/auth"
-	"github.com/pavelpilyak/devrecall/internal/daemon"
-	"github.com/pavelpilyak/devrecall/internal/collector/git"
+	"github.com/pavelpilyak/devrecall/internal/chat"
 	bbcollector "github.com/pavelpilyak/devrecall/internal/collector/bitbucket"
 	calcollector "github.com/pavelpilyak/devrecall/internal/collector/calendar"
+	"github.com/pavelpilyak/devrecall/internal/collector/claudecode"
+	confluencecollector "github.com/pavelpilyak/devrecall/internal/collector/confluence"
+	"github.com/pavelpilyak/devrecall/internal/collector/git"
 	ghcollector "github.com/pavelpilyak/devrecall/internal/collector/github"
 	glcollector "github.com/pavelpilyak/devrecall/internal/collector/gitlab"
-	confluencecollector "github.com/pavelpilyak/devrecall/internal/collector/confluence"
 	jiracollector "github.com/pavelpilyak/devrecall/internal/collector/jira"
 	linearcollector "github.com/pavelpilyak/devrecall/internal/collector/linear"
 	slackcollector "github.com/pavelpilyak/devrecall/internal/collector/slack"
 	"github.com/pavelpilyak/devrecall/internal/config"
-	"github.com/pavelpilyak/devrecall/internal/chat"
+	"github.com/pavelpilyak/devrecall/internal/daemon"
 	"github.com/pavelpilyak/devrecall/internal/embedding"
 	"github.com/pavelpilyak/devrecall/internal/identity"
-	"github.com/pavelpilyak/devrecall/internal/update"
 	"github.com/pavelpilyak/devrecall/internal/llm"
 	"github.com/pavelpilyak/devrecall/internal/pipeline"
 	"github.com/pavelpilyak/devrecall/internal/privacy"
 	"github.com/pavelpilyak/devrecall/internal/storage"
 	"github.com/pavelpilyak/devrecall/internal/summarizer"
+	"github.com/pavelpilyak/devrecall/internal/update"
 	"github.com/pavelpilyak/devrecall/pkg/models"
 	"github.com/spf13/cobra"
 )
@@ -645,7 +646,7 @@ func newBackfillCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backfill",
 		Short: "One-shot deep pull from one or all sources",
-		Long: `Runs the same collectors as `+"`devrecall sync`"+`, but with a wider lookback
+		Long: `Runs the same collectors as ` + "`devrecall sync`" + `, but with a wider lookback
 window — useful when you've just connected a source and want history older
 than the default 7 days.
 
@@ -654,7 +655,7 @@ Examples:
   devrecall backfill --since 1y --source confluence
 
 Source must be one of: git, slack, calendar, github, gitlab, bitbucket,
-jira, confluence, linear. Omit to backfill all enabled sources.
+jira, confluence, linear, claude_code. Omit to backfill all enabled sources.
 
 Local git always reads the full repo history regardless of --since; for
 git the flag is a no-op.`,
@@ -695,7 +696,6 @@ func wantsSource(filter, name string) bool {
 // collector's CollectSince — git ignores it and always reads full history.
 func runSync(ctx context.Context, lookback time.Duration, sourceFilter string) error {
 	since := time.Now().Add(-lookback)
-
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -751,6 +751,29 @@ func runSync(ctx context.Context, lookback time.Duration, sourceFilter string) e
 				fmt.Fprintf(os.Stderr, "Git: no new activities\n")
 				db.SetSyncState("git", "")
 			}
+		}
+	}
+
+	// Sync Claude Code sessions (local transcripts; no token, no network).
+	if cfg.ClaudeCode.Enabled && wantsSource(sourceFilter, "claude_code") {
+		fmt.Fprintf(os.Stderr, "Collecting Claude Code sessions...\n")
+		cc := claudecode.New(cfg.ClaudeCode.ProjectsDir)
+		activities, err := cc.CollectSince(ctx, since)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Claude Code sync warning: %v\n", err)
+			db.SetSyncError("claude_code", err.Error())
+		} else if len(activities) > 0 {
+			n, err := db.InsertActivities(activities)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Storing Claude Code activities: %v\n", err)
+			} else {
+				totalStored += n
+				fmt.Fprintf(os.Stderr, "Claude Code: %d sessions stored (%d new)\n", len(activities), n)
+			}
+			db.SetSyncState("claude_code", "")
+		} else {
+			fmt.Fprintf(os.Stderr, "Claude Code: no new sessions\n")
+			db.SetSyncState("claude_code", "")
 		}
 	}
 
@@ -2222,6 +2245,7 @@ func newAuthCmd() *cobra.Command {
 	cmd.AddCommand(newAuthBitbucketCmd())
 	cmd.AddCommand(newAuthJiraCmd())
 	cmd.AddCommand(newAuthConfluenceCmd())
+	cmd.AddCommand(newAuthClaudeCodeCmd())
 	cmd.AddCommand(newAuthLinearCmd())
 	cmd.AddCommand(newAuthOpenAICmd())
 	cmd.AddCommand(newAuthAnthropicCmd())
@@ -2599,6 +2623,41 @@ func newAuthJiraCmd() *cobra.Command {
 
 			fmt.Printf("\nJira connected! Account: %s @ %s\n", token.Email, baseURL)
 			fmt.Println("Token stored securely. Run 'devrecall sync' to fetch Jira activity.")
+			return nil
+		},
+	}
+}
+
+func newAuthClaudeCodeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "claude-code",
+		Short: "Enable Claude Code session collection (local, no token)",
+		Long: "Claude Code writes session transcripts to ~/.claude/projects. This command " +
+			"verifies they exist and flips the enabled flag — there is no OAuth, no API key, " +
+			"and nothing leaves your machine.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			// Report what we found rather than silently enabling a source that
+			// will collect nothing.
+			cc := claudecode.New(cfg.ClaudeCode.ProjectsDir)
+			sessions, err := cc.Collect(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("reading Claude Code sessions: %w", err)
+			}
+			if len(sessions) == 0 {
+				return fmt.Errorf("no Claude Code sessions found in ~/.claude/projects — is Claude Code installed and used on this machine?")
+			}
+
+			cfg.ClaudeCode.Enabled = true
+			if err := cfg.Save(); err != nil {
+				return fmt.Errorf("saving config: %w", err)
+			}
+			fmt.Printf("✓ Claude Code enabled — found %d session(s)\n", len(sessions))
+			fmt.Println("  Run 'devrecall sync' to index them.")
 			return nil
 		},
 	}

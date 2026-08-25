@@ -6,16 +6,17 @@ import "time"
 type Source string
 
 const (
-	SourceGit      Source = "git"
-	SourceSlack    Source = "slack"
-	SourceCalendar Source = "calendar"
-	SourceGitHub   Source = "github"
-	SourceGitLab    Source = "gitlab"
-	SourceBitbucket Source = "bitbucket"
-	SourceJira      Source = "jira"
-	SourceLinear      Source = "linear"
-	SourceConfluence  Source = "confluence"
-	SourceManual      Source = "manual"
+	SourceGit        Source = "git"
+	SourceSlack      Source = "slack"
+	SourceCalendar   Source = "calendar"
+	SourceGitHub     Source = "github"
+	SourceGitLab     Source = "gitlab"
+	SourceBitbucket  Source = "bitbucket"
+	SourceJira       Source = "jira"
+	SourceLinear     Source = "linear"
+	SourceConfluence Source = "confluence"
+	SourceManual     Source = "manual"
+	SourceClaudeCode Source = "claude_code"
 )
 
 // ActivityType categorizes what kind of work event this is.
@@ -32,6 +33,8 @@ const (
 	TypeIssue        ActivityType = "issue"
 	TypeNote         ActivityType = "note"
 	TypeDocument     ActivityType = "document"
+	// TypeSession is one coding-agent session (e.g. a Claude Code conversation).
+	TypeSession ActivityType = "session"
 )
 
 // Activity is a single work event collected from any source.

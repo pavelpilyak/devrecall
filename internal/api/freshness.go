@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/pavelpilyak/devrecall/internal/chat/freshness"
+	"github.com/pavelpilyak/devrecall/internal/collector/claudecode"
 	"github.com/pavelpilyak/devrecall/internal/collector/git"
 	"github.com/pavelpilyak/devrecall/internal/config"
 	"github.com/pavelpilyak/devrecall/internal/storage"
@@ -55,7 +56,39 @@ func BuildFreshnessSyncers(cfg *config.Config, db *storage.DB) map[string]freshn
 	if cfg.Git.Enabled {
 		syncers["git"] = gitSyncer(cfg, db)
 	}
+	if s := claudeCodeSyncer(cfg, db); s != nil {
+		syncers["claude_code"] = s
+	}
 	return syncers
+}
+
+// claudeCodeSyncer collects Claude Code sessions from local transcripts.
+// Like git it needs no token and no network, so it only checks the enable flag.
+// Returns nil when disabled so callers can skip registering it entirely.
+func claudeCodeSyncer(cfg *config.Config, db *storage.DB) freshness.Syncer {
+	if !cfg.ClaudeCode.Enabled {
+		return nil
+	}
+	return func(ctx context.Context) (int, error) {
+		collector := claudecode.New(cfg.ClaudeCode.ProjectsDir)
+		// Re-collect the recent window rather than everything: sessions are
+		// mutable (resumed days later), so a bounded re-read keeps prompt counts
+		// and titles current. InsertActivities upserts on source_id.
+		activities, err := collector.CollectSince(ctx, time.Now().Add(-syncWindow))
+		if err != nil {
+			_ = db.SetSyncError("claude_code", err.Error())
+			return 0, err
+		}
+		var inserted int
+		if len(activities) > 0 {
+			inserted, err = db.InsertActivities(activities)
+			if err != nil {
+				return 0, err
+			}
+		}
+		_ = db.SetSyncState("claude_code", "")
+		return inserted, nil
+	}
 }
 
 // gitSyncer mirrors Server.syncGit but returns the result as a

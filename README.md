@@ -4,9 +4,9 @@
 Your data never leaves your machine.
 
 DevRecall pulls from Git, Slack, Google Calendar, Jira, Linear, Confluence,
-and GitHub/GitLab/Bitbucket; stores it in a local SQLite database; and turns
-it into standups, weekly reports, brag docs, and a chat that actually knows
-what you worked on.
+GitHub/GitLab/Bitbucket, and your Claude Code sessions; stores it in a local
+SQLite database; and turns it into standups, weekly reports, brag docs, and a
+chat that actually knows what you worked on.
 
 Also ships an [MCP server](https://docs.devrecall.dev/integrations/mcp/) —
 any MCP-compatible coding tool (Claude Code, Cursor, Codex, Continue, Zed)
@@ -49,6 +49,7 @@ cited commits, PRs, and tickets inline.
 | Google Calendar   | Meetings attended, organized, declined         |
 | Jira / Linear     | Issue transitions, comments, sprint membership |
 | Confluence        | Pages, blogposts, and comments you authored    |
+| Claude Code       | Coding-agent sessions, linked to repo & branch |
 
 ## Install
 

@@ -28,14 +28,14 @@ const (
 
 // PrivacyConfig holds per-source privacy modes.
 type PrivacyConfig struct {
-	Git      PrivacyMode `json:"git,omitempty"`
-	Slack    PrivacyMode `json:"slack,omitempty"`
-	Calendar PrivacyMode `json:"calendar,omitempty"`
-	GitHub   PrivacyMode `json:"github,omitempty"`
+	Git       PrivacyMode `json:"git,omitempty"`
+	Slack     PrivacyMode `json:"slack,omitempty"`
+	Calendar  PrivacyMode `json:"calendar,omitempty"`
+	GitHub    PrivacyMode `json:"github,omitempty"`
 	GitLab    PrivacyMode `json:"gitlab,omitempty"`
 	Bitbucket PrivacyMode `json:"bitbucket,omitempty"`
 	Jira      PrivacyMode `json:"jira,omitempty"`
-	Linear   PrivacyMode `json:"linear,omitempty"`
+	Linear    PrivacyMode `json:"linear,omitempty"`
 }
 
 // ModeFor returns the privacy mode for a given source, defaulting to "full".
@@ -75,6 +75,7 @@ type Config struct {
 	Jira         JiraConfig       `json:"jira"`
 	Confluence   ConfluenceConfig `json:"confluence"`
 	Linear       LinearConfig     `json:"linear"`
+	ClaudeCode   ClaudeCodeConfig `json:"claude_code,omitempty"`
 	LLM          LLMConfig        `json:"llm"`
 	Embedding    EmbeddingConfig  `json:"embedding,omitempty"`
 	Privacy      PrivacyConfig    `json:"privacy,omitempty"`
@@ -111,12 +112,19 @@ type SyncFreshnessConfig struct {
 	Wait string `json:"wait,omitempty"`
 }
 
-
 type GitConfig struct {
 	Enabled   bool     `json:"enabled"`
 	ScanPaths []string `json:"scan_paths,omitempty"` // directories to walk for .git repos
-	Repos     []string `json:"repos"`               // explicit repo paths
+	Repos     []string `json:"repos"`                // explicit repo paths
 	Emails    []string `json:"emails"`               // author emails to match as "self"
+}
+
+// ClaudeCodeConfig controls collection of Claude Code sessions from the
+// transcripts the CLI writes locally. Local-only: no token, no network.
+type ClaudeCodeConfig struct {
+	Enabled bool `json:"enabled"`
+	// ProjectsDir overrides ~/.claude/projects. Rarely needed.
+	ProjectsDir string `json:"projects_dir,omitempty"`
 }
 
 type SlackConfig struct {
@@ -132,7 +140,7 @@ type CalendarConfig struct {
 
 type GitHubConfig struct {
 	Enabled  bool   `json:"enabled"`
-	Username string `json:"username,omitempty"` // GitHub username for API queries
+	Username string `json:"username,omitempty"`  // GitHub username for API queries
 	AuthMode string `json:"auth_mode,omitempty"` // "oauth", "pat", or "gh-cli"
 }
 
@@ -152,7 +160,7 @@ type JiraConfig struct {
 	Enabled  bool   `json:"enabled"`
 	BaseURL  string `json:"base_url,omitempty"`  // Jira instance URL (e.g., "https://mycompany.atlassian.net")
 	AuthMode string `json:"auth_mode,omitempty"` // "oauth" or "api-token"
-	Email    string `json:"email,omitempty"`      // required for api-token auth
+	Email    string `json:"email,omitempty"`     // required for api-token auth
 }
 
 type ConfluenceConfig struct {

@@ -256,6 +256,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		{"jira", cfg.Jira.Enabled},
 		{"confluence", cfg.Confluence.Enabled},
 		{"linear", cfg.Linear.Enabled},
+		{"claude_code", cfg.ClaudeCode.Enabled},
 	}
 
 	result := make([]sourceStatus, 0, len(sources))
@@ -679,10 +680,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"response":      result.Content,
-		"steps":         result.Steps,
-		"trace":         result.Trace,
-		"freshness":     freshEvents,
+		"response":  result.Content,
+		"steps":     result.Steps,
+		"trace":     result.Trace,
+		"freshness": freshEvents,
 		// sources_count kept for backwards-compat with existing clients.
 		"sources_count": len(result.Trace),
 	})
