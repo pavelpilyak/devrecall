@@ -47,6 +47,11 @@
   };
 
   const DOCS_BASE = "https://docs.devrecall.dev";
+  // Keys are source names as /api/status reports them, which are not always the
+  // docs slug — `claude_code` uses an underscore while the page is
+  // `claude-code`. Sources absent here fall back to /configure/, which is fine
+  // for gitlab and bitbucket (that page covers them) but a dead end for
+  // anything it doesn't mention, so add new sources with a page of their own.
   const INTEGRATION_DOCS: Record<string, string> = {
     git: `${DOCS_BASE}/integrations/git/`,
     github: `${DOCS_BASE}/integrations/github/`,
@@ -55,6 +60,7 @@
     jira: `${DOCS_BASE}/integrations/jira/`,
     linear: `${DOCS_BASE}/integrations/linear/`,
     confluence: `${DOCS_BASE}/integrations/confluence/`,
+    claude_code: `${DOCS_BASE}/integrations/claude-code/`,
   };
 
   async function openDocs(source: string) {
