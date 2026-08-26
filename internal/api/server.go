@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -971,17 +972,58 @@ func (s *Server) promptLoader() *summarizer.PromptLoader {
 // We previously echoed back r.Header.Get("Origin"), but Tauri 2's webview on
 // macOS sometimes doesn't send Origin for tauri://localhost → http://127.0.0.1
 // fetches, leaving the header empty and tripping the browser's CORS check.
+// corsMiddleware allows the desktop app and local tooling to call the API from a
+// browser context, and nothing else.
+//
+// This endpoint is unauthenticated and serves the user's entire work history, so
+// `Access-Control-Allow-Origin: *` was a data-exfiltration hole: any page the
+// user visited while the app was running could fetch localhost:3725 and *read*
+// the response, because the wildcard is precisely what tells the browser to hand
+// it over. Without an allowed origin the request still reaches us, but the
+// browser refuses to expose the body to the calling page.
+//
+// Non-browser clients (curl, the MCP server, scripts) send no Origin header and
+// are unaffected — CORS is a browser mechanism and never applied to them.
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		origin := r.Header.Get("Origin")
+		if origin != "" && allowedOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		}
+		// The response now varies by request origin, so caches must not reuse
+		// one origin's response for another.
+		w.Header().Add("Vary", "Origin")
+
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// allowedOrigin reports whether a browser origin may read API responses:
+// the packaged Tauri app, or anything served from loopback (the Vite dev server
+// and local integrations, which are already on the user's machine).
+//
+// A remote page cannot forge this — browsers set Origin from the page's own
+// origin, so evil.com always announces itself as evil.com.
+func allowedOrigin(origin string) bool {
+	switch origin {
+	case "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost":
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	host := u.Hostname()
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -29,10 +29,3 @@ Out of scope:
 - Third-party dependencies (report those to their maintainers)
 - Social engineering, physical attacks, or issues requiring local access to an
   unlocked machine
-
-## Safe harbor
-
-We won't pursue legal action against researchers who:
-- Report issues through the channel above rather than weaponizing them
-- Avoid privacy violations, data exfiltration, or service degradation
-- Give us reasonable time to fix the issue before drawing wider attention to it
