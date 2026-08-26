@@ -2,21 +2,20 @@
 
 ## Reporting a vulnerability
 
-If you believe you've found a security issue in DevRecall, please report it
-privately rather than opening a public issue.
-
-**Email:** security@devrecall.dev
+Open an issue: **https://github.com/pavelpilyak/devrecall/issues**
 
 Include:
 - A description of the issue and its impact
 - Steps to reproduce (a minimal proof-of-concept if possible)
 - The affected version or commit SHA
-- Your name and a way to reach you (for acknowledgement, if desired)
 
-You'll get an acknowledgement within 72 hours. We aim to ship a fix or mitigation
-within 14 days for high-severity issues, longer for lower-severity ones. We'll
-keep you informed as the fix progresses and credit you in the release notes
-unless you prefer to remain anonymous.
+If the issue is serious enough that public disclosure before a fix would put
+users at risk, say so in the first line and keep the details brief — we'll
+follow up on how to share them.
+
+DevRecall is maintained by one person, so response times vary. Issues that let
+someone read your local database or exfiltrate OAuth tokens get looked at first.
+You'll be credited in the release notes unless you'd rather not be.
 
 ## Scope
 
@@ -34,6 +33,6 @@ Out of scope:
 ## Safe harbor
 
 We won't pursue legal action against researchers who:
-- Report issues through the channel above rather than publicly
+- Report issues through the channel above rather than weaponizing them
 - Avoid privacy violations, data exfiltration, or service degradation
-- Give us reasonable time to fix the issue before public disclosure
+- Give us reasonable time to fix the issue before drawing wider attention to it
