@@ -10,8 +10,8 @@ bug fixes, and documentation.
   explicit discussion in an issue before you send a PR.
 - **Local-first by default.** New features should work without a network
   connection where possible.
-- **Tests are not optional.** New collectors, storage changes, and RAG changes
-  need tests. See `CLAUDE.md` for the testing philosophy.
+- **Tests are not optional.** New collectors, storage changes, and retrieval
+  changes need tests. See `CLAUDE.md` for the testing philosophy.
 
 ## Getting started
 
@@ -45,20 +45,24 @@ npm test
 ## Bug reports
 
 Open an issue with:
-- Your OS and DevRecall version (`devrecall version`)
+- Your OS and DevRecall version (`devrecall --version`)
 - Steps to reproduce
 - What you expected vs. what happened
-- Any relevant log output (`~/.devrecall/logs/`)
+- Any relevant log output — the background daemon writes to
+  `~/.devrecall/daemon.log`; the CLI and server log to stderr
 
 ## Security issues
 
-Don't open a public issue. See [SECURITY.md](SECURITY.md).
+Open an issue like any other report — see [SECURITY.md](SECURITY.md) for
+scope. If public disclosure before a fix would put users at risk, say so in
+the first line and keep the details brief.
 
 ## Scope of contributions
 
 We're most interested in:
-- New collectors (Confluence, Notion, additional git hosts)
-- Embedding / RAG improvements
+- New collectors — Notion, Microsoft Teams, Outlook Calendar and
+  incident tooling (PagerDuty, Sentry) are the biggest gaps
+- Embedding and retrieval improvements
 - Bug fixes and test coverage
 - Docs and examples
 
