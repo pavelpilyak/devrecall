@@ -3303,7 +3303,9 @@ func newUpdateCmd() *cobra.Command {
 // rather than the rate-limited api.github.com; standalone installs re-download.
 func manualUpgradeHint() string {
 	if findBrew() != "" {
-		return "brew upgrade devrecall"
+		// `brew update` first for the same reason runBrewUpgrade does it: the
+		// local tap clone is otherwise stale for a just-published release.
+		return "brew update && brew upgrade devrecall"
 	}
 	return "download the latest from https://github.com/pavelpilyak/devrecall/releases/latest"
 }
@@ -3313,16 +3315,34 @@ func runBrewUpgrade() error {
 	if brew == "" {
 		fmt.Println("This devrecall is bundled inside DevRecall.app (Homebrew cask).")
 		fmt.Println("Update both the GUI and the CLI with:")
-		fmt.Println("  brew upgrade devrecall")
+		fmt.Println("  brew update && brew upgrade --cask devrecall")
 		return nil
 	}
+
+	// `brew upgrade` compares against the *local* clone of the tap, which only
+	// refreshes on `brew update`. Our own check hits the GitHub API and sees a
+	// release the instant it is published, so without this the two disagree and
+	// brew reports "the latest version is already installed" for a version it
+	// hasn't heard about yet. That mismatch is guaranteed in exactly the case
+	// that matters: someone acting on a fresh update notification.
+	fmt.Println("Refreshing Homebrew...")
+	up := exec.Command(brew, "update")
+	up.Stdout = os.Stdout
+	up.Stderr = os.Stderr
+	if err := up.Run(); err != nil {
+		// Non-fatal: an outdated tap may still hold the version we want.
+		fmt.Fprintf(os.Stderr, "brew update failed (%v) — trying the upgrade anyway\n", err)
+	}
+
 	fmt.Println("Updating via Homebrew (GUI + CLI together)...")
-	c := exec.Command(brew, "upgrade", "devrecall")
+	// --cask is explicit: this path only runs for a binary inside
+	// DevRecall.app, which is always the cask, never the devrecall-cli formula.
+	c := exec.Command(brew, "upgrade", "--cask", "devrecall")
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	c.Stdin = os.Stdin
 	if err := c.Run(); err != nil {
-		return fmt.Errorf("brew upgrade devrecall: %w", err)
+		return fmt.Errorf("brew upgrade --cask devrecall: %w", err)
 	}
 	return nil
 }

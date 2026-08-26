@@ -21,13 +21,13 @@ func TestClassifyExePath(t *testing.T) {
 			name:       "cask app bundle",
 			exe:        "/Applications/DevRecall.app/Contents/MacOS/devrecall",
 			wantMethod: "cask",
-			wantCmd:    "brew upgrade --cask devrecall",
+			wantCmd:    "brew update && brew upgrade --cask devrecall",
 		},
 		{
 			name:       "homebrew formula cellar",
 			exe:        "/opt/homebrew/Cellar/devrecall/0.1.23/bin/devrecall",
 			wantMethod: "brew",
-			wantCmd:    "brew upgrade devrecall",
+			wantCmd:    "brew update && brew upgrade devrecall",
 		},
 		{
 			name:       "standalone binary",

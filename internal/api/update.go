@@ -47,15 +47,15 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 // should upgrade, returning a coarse method and the exact command to run:
 //
 //   - "cask"       → desktop app installed via `brew install --cask`; the binary
-//                    lives inside DevRecall.app, so the whole cask is upgraded.
+//     lives inside DevRecall.app, so the whole cask is upgraded.
 //   - "brew"       → CLI installed via the Homebrew formula (a Cellar symlink).
 //   - "standalone" → curl/tarball install; the binary self-updates.
 //   - "unknown"    → path couldn't be resolved; fall back to the cask command,
-//                    which is the desktop app's overwhelmingly common case.
+//     which is the desktop app's overwhelmingly common case.
 func detectUpdateMethod() (method, command string) {
 	exe, err := os.Executable()
 	if err != nil {
-		return "unknown", "brew upgrade --cask devrecall"
+		return "unknown", "brew update && brew upgrade --cask devrecall"
 	}
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
@@ -66,12 +66,18 @@ func detectUpdateMethod() (method, command string) {
 // classifyExePath maps a resolved executable path to an install method and the
 // command that upgrades it. Split out from detectUpdateMethod so the path logic
 // is testable without touching os.Executable.
+//
+// Every brew command is prefixed with `brew update`: `brew upgrade` compares
+// against the local clone of the tap, which only refreshes on update. Since we
+// detect new releases from the GitHub API the moment they publish, omitting it
+// makes brew answer "the latest version is already installed" for a version it
+// has not fetched yet.
 func classifyExePath(exe string) (method, command string) {
 	switch {
 	case strings.Contains(exe, ".app/Contents/"):
-		return "cask", "brew upgrade --cask devrecall"
+		return "cask", "brew update && brew upgrade --cask devrecall"
 	case strings.Contains(exe, "/Cellar/") || strings.Contains(exe, "/homebrew/"):
-		return "brew", "brew upgrade devrecall"
+		return "brew", "brew update && brew upgrade devrecall"
 	default:
 		return "standalone", "devrecall update"
 	}
