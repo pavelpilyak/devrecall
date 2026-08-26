@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pavelpilyak/devrecall/internal/collector/ticketlink"
 	"github.com/pavelpilyak/devrecall/pkg/models"
@@ -151,6 +152,7 @@ func parseSession(path string) (*session, error) {
 
 	s := &session{ID: strings.TrimSuffix(filepath.Base(path), ".jsonl")}
 	promptChars := 0
+	seenPR := map[string]bool{}
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), scanBuffer)
@@ -184,7 +186,10 @@ func parseSession(path string) (*session, error) {
 		case "ai-title":
 			s.AITitle = r.AITitle
 		case "pr-link":
-			if r.PRURL != "" {
+			// Claude Code re-emits pr-link on every turn after a PR is opened,
+			// so a long session yields hundreds of copies of the same URL.
+			if r.PRURL != "" && !seenPR[r.PRURL] {
+				seenPR[r.PRURL] = true
 				s.PRURLs = append(s.PRURLs, r.PRURL)
 			}
 		case "user":
@@ -391,9 +396,18 @@ func firstLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// truncate clips s to at most n bytes without splitting a rune. Slicing a Go
+// string is byte-indexed, so a naive s[:n] lands mid-codepoint whenever the cut
+// falls inside a multi-byte character — box-drawing rules and emoji in pasted
+// terminal output do this constantly — and stores invalid UTF-8.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return strings.TrimSpace(s[:n]) + "…"
+	// Walk back to the start of the rune that straddles the boundary.
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(s[:cut]) + "…"
 }

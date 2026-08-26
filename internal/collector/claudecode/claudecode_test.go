@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pavelpilyak/devrecall/pkg/models"
 )
@@ -175,6 +176,28 @@ func TestCollect_CapturesPRLinks(t *testing.T) {
 	}
 }
 
+// Claude Code re-emits pr-link on every turn once a PR exists, so a long
+// session produced hundreds of copies of the same URL in metadata.
+func TestCollect_DedupesRepeatedPRLinks(t *testing.T) {
+	lines := []string{userLine("2026-08-01T10:00:00Z", "/x/repo", "main", "open a PR")}
+	for i := 0; i < 200; i++ {
+		lines = append(lines, `{"type":"pr-link","sessionId":"dup","prUrl":"https://github.com/o/r/pull/42"}`)
+	}
+	lines = append(lines, `{"type":"pr-link","sessionId":"dup","prUrl":"https://github.com/o/r/pull/99"}`)
+
+	dir := t.TempDir()
+	writeSession(t, dir, "p", "dup", lines...)
+
+	m := metaOf(t, collect(t, dir)[0])
+	if len(m.PRURLs) != 2 {
+		t.Errorf("pr_urls has %d entries, want 2 distinct", len(m.PRURLs))
+	}
+	// Order should follow first appearance, not map iteration.
+	if m.PRURLs[0] != "https://github.com/o/r/pull/42" {
+		t.Errorf("pr_urls[0] = %q, want the first-seen URL", m.PRURLs[0])
+	}
+}
+
 func TestCollectSince_FiltersOldSessions(t *testing.T) {
 	dir := t.TempDir()
 	writeSession(t, dir, "p", "old",
@@ -250,5 +273,34 @@ func TestCollect_ContentIsHardCapped(t *testing.T) {
 	}
 	if !strings.Contains(a.Content, "short opener") {
 		t.Error("dropped the opening prompt, which is the part that describes intent")
+	}
+}
+
+// Go strings are byte-indexed, so a naive s[:n] splits any multi-byte rune
+// straddling the cut and writes invalid UTF-8 into the database. Pasted
+// terminal output (box-drawing rules, emoji) hits this constantly.
+func TestCollect_TruncationKeepsValidUTF8(t *testing.T) {
+	// Box-drawing "─" is 3 bytes, so a byte-aligned cut at 600/2000 is
+	// guaranteed to land mid-rune for some repeat count.
+	for _, filler := range []string{"─", "é", "🙂", "日本語"} {
+		t.Run(filler, func(t *testing.T) {
+			dir := t.TempDir()
+			writeSession(t, dir, "p", "uni",
+				userLine("2026-08-01T10:00:00Z", "/x/repo", "main",
+					strings.Repeat(filler, 5000)),
+				userLine("2026-08-01T10:01:00Z", "/x/repo", "main",
+					strings.Repeat(filler, 5000)),
+			)
+			a := collect(t, dir)[0]
+			if !utf8.ValidString(a.Content) {
+				t.Errorf("content is not valid UTF-8 after truncation (filler %q)", filler)
+			}
+			if !utf8.ValidString(a.Title) {
+				t.Errorf("title is not valid UTF-8 after truncation (filler %q)", filler)
+			}
+			if len(a.Content) > maxPromptChars+8 { // +8 allows the ellipsis bytes
+				t.Errorf("content is %d bytes, over the %d cap", len(a.Content), maxPromptChars)
+			}
+		})
 	}
 }
