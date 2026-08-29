@@ -68,17 +68,14 @@ Installs `DevRecall.app` and puts the `devrecall` CLI on your `PATH`.
 brew install pavelpilyak/devrecall/devrecall-cli
 ```
 
-The cask is macOS-only, so `--cask` fails on Linux with *"this cask requires
-macOS"* — use the formula above. Without Homebrew, grab the tarball directly:
+Without Homebrew, grab the tarball directly:
 
 ```bash
 curl -L https://github.com/pavelpilyak/devrecall/releases/latest/download/devrecall-linux-x86_64.tar.gz \
   | tar xz && sudo mv devrecall-linux-x86_64 /usr/local/bin/devrecall
 ```
 
-Needs glibc 2.34 or newer — Ubuntu 22.04+, Debian 12+, Fedora 35+. Ubuntu
-20.04 ships glibc 2.31 and will fail with `GLIBC_2.34 not found`; on WSL,
-`wsl --install -d Ubuntu-24.04` gets you a supported base.
+Supported on Ubuntu 22.04+ and equivalent (Debian 12+, Fedora 35+).
 
 **Windows** — no native build. Everything except the desktop app runs under
 WSL using the Linux instructions above, including the MCP server, which your
