@@ -632,13 +632,17 @@ func hasSlackThreads(activities []models.Activity) bool {
 const defaultSyncWindow = 7 * 24 * time.Hour
 
 func newSyncCmd() *cobra.Command {
-	return &cobra.Command{
+	var snapshot bool
+	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Sync activity from all configured sources",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSync(cmd.Context(), defaultSyncWindow, "")
+			return runSyncOpts(cmd.Context(), defaultSyncWindow, "", snapshot)
 		},
 	}
+	cmd.Flags().BoolVar(&snapshot, "snapshot", false,
+		"Also generate any missing quarterly summaries (costs LLM calls; see summaries.auto_snapshot)")
+	return cmd
 }
 
 func newBackfillCmd() *cobra.Command {
@@ -695,7 +699,12 @@ func wantsSource(filter, name string) bool {
 // runSync collects fresh activity from every enabled source whose name passes
 // sourceFilter (empty = all). Lookback is the window passed to each remote
 // collector's CollectSince — git ignores it and always reads full history.
+// runSync keeps the original signature for existing callers; snapshots stay off.
 func runSync(ctx context.Context, lookback time.Duration, sourceFilter string) error {
+	return runSyncOpts(ctx, lookback, sourceFilter, false)
+}
+
+func runSyncOpts(ctx context.Context, lookback time.Duration, sourceFilter string, forceSnapshot bool) error {
 	since := time.Now().Add(-lookback)
 
 	cfg, err := config.Load()
@@ -1099,9 +1108,13 @@ func runSync(ctx context.Context, lookback time.Duration, sourceFilter string) e
 		Link: true, Enrich: true, Embed: true, Log: os.Stderr,
 	})
 
-	// Quarterly auto-snapshot: check if any completed quarters lack a summary.
-	if err := runQuarterlyAutoSnapshot(ctx, db, cfg, tokenStore, dir); err != nil {
-		fmt.Fprintf(os.Stderr, "Quarterly snapshot warning: %v\n", err)
+	// Quarterly auto-snapshot is opt-in: it is a burst of LLM spend in the
+	// middle of what reads as a fetch, and `devrecall summarize` covers the
+	// same ground explicitly.
+	if forceSnapshot || cfg.Summaries.AutoSnapshot {
+		if err := runQuarterlyAutoSnapshot(ctx, db, cfg, tokenStore, dir); err != nil {
+			fmt.Fprintf(os.Stderr, "Quarterly snapshot warning: %v\n", err)
+		}
 	}
 
 	return nil

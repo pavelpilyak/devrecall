@@ -77,6 +77,7 @@ type Config struct {
 	Linear       LinearConfig     `json:"linear"`
 	ClaudeCode   ClaudeCodeConfig `json:"claude_code,omitempty"`
 	Notion       NotionConfig     `json:"notion,omitempty"`
+	Summaries    SummariesConfig  `json:"summaries,omitempty"`
 	LLM          LLMConfig        `json:"llm"`
 	Embedding    EmbeddingConfig  `json:"embedding,omitempty"`
 	Privacy      PrivacyConfig    `json:"privacy,omitempty"`
@@ -118,6 +119,19 @@ type GitConfig struct {
 	ScanPaths []string `json:"scan_paths,omitempty"` // directories to walk for .git repos
 	Repos     []string `json:"repos"`                // explicit repo paths
 	Emails    []string `json:"emails"`               // author emails to match as "self"
+}
+
+// SummariesConfig controls automatic summary generation.
+type SummariesConfig struct {
+	// AutoSnapshot generates missing quarterly summaries (and the monthly
+	// summaries they are built from) at the end of every `devrecall sync`.
+	//
+	// Off by default: it is a burst of LLM calls the user did not ask for
+	// during what looks like a fetch. A quarter needs three monthly summaries
+	// before its own can be written, so a single missing quarter costs four
+	// calls and four missing quarters cost sixteen. `devrecall summarize`
+	// does the same work on demand.
+	AutoSnapshot bool `json:"auto_snapshot,omitempty"`
 }
 
 // NotionConfig controls collection of Notion pages. Email identifies which

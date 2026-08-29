@@ -3,6 +3,7 @@ package summarizer
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -40,18 +41,26 @@ func AutoSnapshot(ctx context.Context, gen *PeriodicGenerator, now time.Time) (i
 	for _, qStart := range missing {
 		qEnd := endOfPeriod(qStart, PeriodQuarterly)
 
-		// First, ensure monthly child summaries exist for this quarter.
+		// A quarterly summary is written from monthly summaries, not from raw
+		// activities, so the quarter's months have to exist first — up to three
+		// extra LLM calls per quarter. Say so: an unexplained pause and a
+		// surprise bill is what made this feel broken.
+		fmt.Fprintf(os.Stderr, "Auto-snapshot: %s has no summary; generating its monthly summaries first...\n",
+			QuarterLabel(qStart))
 		monthlyGenerated, err := gen.GenerateMissing(ctx, PeriodMonthly, qStart, qEnd)
 		if err != nil {
-			fmt.Printf("Warning: failed to generate monthly summaries for %s: %v\n", qStart.Format("2006-01-02"), err)
+			fmt.Fprintf(os.Stderr, "Warning: failed to generate monthly summaries for %s: %v\n", qStart.Format("2006-01-02"), err)
 		}
-		_ = monthlyGenerated
+		if monthlyGenerated > 0 {
+			fmt.Fprintf(os.Stderr, "Auto-snapshot: generated %d monthly %s for %s.\n",
+				monthlyGenerated, pluralizeSummary(monthlyGenerated), QuarterLabel(qStart))
+		}
 
 		// Now generate the quarterly summary.
 		summary, err := gen.generateOne(ctx, PeriodQuarterly, qStart, qEnd)
 		if err != nil {
-			fmt.Printf("Warning: failed to generate quarterly snapshot for %s: %v\n",
-				qStart.Format("Q1 2006"), err)
+			fmt.Fprintf(os.Stderr, "Warning: failed to generate quarterly snapshot for %s: %v\n",
+				QuarterLabel(qStart), err)
 			continue
 		}
 
@@ -68,4 +77,11 @@ func AutoSnapshot(ctx context.Context, gen *PeriodicGenerator, now time.Time) (i
 func QuarterLabel(t time.Time) string {
 	q := (int(t.Month())-1)/3 + 1
 	return fmt.Sprintf("Q%d %d", q, t.Year())
+}
+
+func pluralizeSummary(n int) string {
+	if n == 1 {
+		return "summary"
+	}
+	return "summaries"
 }
