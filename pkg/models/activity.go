@@ -17,6 +17,7 @@ const (
 	SourceConfluence Source = "confluence"
 	SourceManual     Source = "manual"
 	SourceClaudeCode Source = "claude_code"
+	SourceNotion     Source = "notion"
 )
 
 // ActivityType categorizes what kind of work event this is.

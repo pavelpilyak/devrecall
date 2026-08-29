@@ -76,6 +76,7 @@ type Config struct {
 	Confluence   ConfluenceConfig `json:"confluence"`
 	Linear       LinearConfig     `json:"linear"`
 	ClaudeCode   ClaudeCodeConfig `json:"claude_code,omitempty"`
+	Notion       NotionConfig     `json:"notion,omitempty"`
 	LLM          LLMConfig        `json:"llm"`
 	Embedding    EmbeddingConfig  `json:"embedding,omitempty"`
 	Privacy      PrivacyConfig    `json:"privacy,omitempty"`
@@ -117,6 +118,15 @@ type GitConfig struct {
 	ScanPaths []string `json:"scan_paths,omitempty"` // directories to walk for .git repos
 	Repos     []string `json:"repos"`                // explicit repo paths
 	Emails    []string `json:"emails"`               // author emails to match as "self"
+}
+
+// NotionConfig controls collection of Notion pages. Email identifies which
+// workspace member is "you"; UserID is the Notion id it resolved to, which the
+// collector needs because Notion's search API can't filter by author.
+type NotionConfig struct {
+	Enabled bool   `json:"enabled"`
+	Email   string `json:"email,omitempty"`
+	UserID  string `json:"user_id,omitempty"`
 }
 
 // ClaudeCodeConfig controls collection of Claude Code sessions from the

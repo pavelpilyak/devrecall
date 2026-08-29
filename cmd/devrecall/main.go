@@ -27,6 +27,7 @@ import (
 	glcollector "github.com/pavelpilyak/devrecall/internal/collector/gitlab"
 	jiracollector "github.com/pavelpilyak/devrecall/internal/collector/jira"
 	linearcollector "github.com/pavelpilyak/devrecall/internal/collector/linear"
+	notioncollector "github.com/pavelpilyak/devrecall/internal/collector/notion"
 	slackcollector "github.com/pavelpilyak/devrecall/internal/collector/slack"
 	"github.com/pavelpilyak/devrecall/internal/config"
 	"github.com/pavelpilyak/devrecall/internal/daemon"
@@ -655,7 +656,7 @@ Examples:
   devrecall backfill --since 1y --source confluence
 
 Source must be one of: git, slack, calendar, github, gitlab, bitbucket,
-jira, confluence, linear, claude_code. Omit to backfill all enabled sources.
+jira, confluence, linear, claude_code, notion. Omit to backfill all enabled sources.
 
 Local git always reads the full repo history regardless of --since; for
 git the flag is a no-op.`,
@@ -1014,6 +1015,38 @@ func runSync(ctx context.Context, lookback time.Duration, sourceFilter string) e
 			db.SetSyncState("linear", "")
 		} else {
 			fmt.Fprintf(os.Stderr, "Linear: token not found (run 'devrecall auth linear')\n")
+		}
+	}
+
+	// Sync Notion.
+	if cfg.Notion.Enabled && cfg.Notion.UserID != "" && wantsSource(sourceFilter, "notion") {
+		tokenKey := cfg.Notion.Email
+		if tokenKey == "" {
+			tokenKey = cfg.Notion.UserID
+		}
+		var nToken auth.NotionToken
+		if err := tokenStore.Load("notion", tokenKey, &nToken); err != nil {
+			fmt.Fprintf(os.Stderr, "Notion: token not found (run 'devrecall auth notion')\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Collecting Notion pages...\n")
+			nc := notioncollector.New(nToken.AccessToken, cfg.Notion.UserID)
+			activities, err := nc.CollectSince(ctx, since)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Notion sync warning: %v\n", err)
+				db.SetSyncError("notion", err.Error())
+			} else if len(activities) > 0 {
+				n, err := db.InsertActivities(activities)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Storing Notion activities: %v\n", err)
+				} else {
+					totalStored += n
+					fmt.Fprintf(os.Stderr, "Notion: %d activities stored (%d new)\n", len(activities), n)
+				}
+				db.SetSyncState("notion", "")
+			} else {
+				fmt.Fprintf(os.Stderr, "Notion: no new pages\n")
+				db.SetSyncState("notion", "")
+			}
 		}
 	}
 
@@ -2246,6 +2279,7 @@ func newAuthCmd() *cobra.Command {
 	cmd.AddCommand(newAuthJiraCmd())
 	cmd.AddCommand(newAuthConfluenceCmd())
 	cmd.AddCommand(newAuthClaudeCodeCmd())
+	cmd.AddCommand(newAuthNotionCmd())
 	cmd.AddCommand(newAuthLinearCmd())
 	cmd.AddCommand(newAuthOpenAICmd())
 	cmd.AddCommand(newAuthAnthropicCmd())
@@ -2625,6 +2659,139 @@ func newAuthJiraCmd() *cobra.Command {
 			fmt.Println("Token stored securely. Run 'devrecall sync' to fetch Jira activity.")
 			return nil
 		},
+	}
+}
+
+func newAuthNotionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "notion",
+		Short: "Connect your Notion workspace via an access token",
+		Long: "Create a connection at https://app.notion.com/developers/connections (New connection), " +
+			"choosing \"access token\" as the authentication method. Confirm the \"Read content\" and " +
+			"\"Read user information including email addresses\" capabilities are enabled, then grant " +
+			"the connection access to the pages or databases you want indexed under its Content " +
+			"access tab. Notion only exposes pages a connection has explicitly been given.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			scanner := bufio.NewScanner(os.Stdin)
+			fmt.Print("Enter your Notion internal integration secret (ntn_...): ")
+			if !scanner.Scan() {
+				return fmt.Errorf("no input received")
+			}
+			secret := strings.TrimSpace(scanner.Text())
+			if secret == "" {
+				return fmt.Errorf("token cannot be empty")
+			}
+
+			fmt.Println("Validating token...")
+			acfg := auth.DefaultNotionConfig()
+			token, err := auth.ValidateNotionToken(cmd.Context(), secret, acfg)
+			if err != nil {
+				return err
+			}
+			if token.WorkspaceName != "" {
+				fmt.Printf("Connected to workspace %q\n", token.WorkspaceName)
+			}
+
+			// The token identifies a workspace bot, not a person, so we have to
+			// resolve which member is you before the collector can tell your
+			// pages from everyone else's.
+			people, err := auth.ListNotionPeople(cmd.Context(), secret, acfg)
+			if err != nil {
+				return fmt.Errorf("listing workspace members: %w", err)
+			}
+			if len(people) == 0 {
+				return fmt.Errorf("no workspace members visible — enable the integration's \"Read user information including email addresses\" capability and try again")
+			}
+
+			me, err := pickNotionPerson(scanner, people, cfg.Notion.Email)
+			if err != nil {
+				return err
+			}
+			token.UserID, token.UserName, token.Email = me.ID, me.Name, me.Email
+
+			dir, err := config.Dir()
+			if err != nil {
+				return err
+			}
+			store, err := auth.NewTokenStore(cfg.TokenStorage, dir)
+			if err != nil {
+				return err
+			}
+			tokenKey := me.Email
+			if tokenKey == "" {
+				tokenKey = me.ID
+			}
+			if err := store.Save("notion", tokenKey, token); err != nil {
+				return fmt.Errorf("saving token: %w", err)
+			}
+
+			cfg.Notion.Enabled = true
+			cfg.Notion.Email = me.Email
+			cfg.Notion.UserID = me.ID
+			if err := cfg.Save(); err != nil {
+				return fmt.Errorf("saving config: %w", err)
+			}
+
+			fmt.Printf("✓ Notion connected as %s\n", displayName(me))
+			fmt.Println("  Run 'devrecall sync' to index pages shared with the integration.")
+			return nil
+		},
+	}
+}
+
+// pickNotionPerson resolves which workspace member is the user. It matches a
+// known email without prompting, and otherwise asks — a workspace can have
+// hundreds of members and guessing the wrong one silently indexes nothing.
+func pickNotionPerson(scanner *bufio.Scanner, people []auth.NotionPerson, knownEmail string) (auth.NotionPerson, error) {
+	if knownEmail != "" {
+		for _, p := range people {
+			if strings.EqualFold(p.Email, knownEmail) {
+				return p, nil
+			}
+		}
+	}
+	if len(people) == 1 {
+		return people[0], nil
+	}
+
+	fmt.Println("\nWhich member are you?")
+	for i, p := range people {
+		fmt.Printf("  %d) %s\n", i+1, displayName(p))
+	}
+	fmt.Print("Number (or type your email): ")
+	if !scanner.Scan() {
+		return auth.NotionPerson{}, fmt.Errorf("no selection received")
+	}
+	choice := strings.TrimSpace(scanner.Text())
+	if n, err := strconv.Atoi(choice); err == nil {
+		if n < 1 || n > len(people) {
+			return auth.NotionPerson{}, fmt.Errorf("choice %d is out of range", n)
+		}
+		return people[n-1], nil
+	}
+	for _, p := range people {
+		if strings.EqualFold(p.Email, choice) {
+			return p, nil
+		}
+	}
+	return auth.NotionPerson{}, fmt.Errorf("no workspace member matches %q", choice)
+}
+
+func displayName(p auth.NotionPerson) string {
+	switch {
+	case p.Name != "" && p.Email != "":
+		return fmt.Sprintf("%s <%s>", p.Name, p.Email)
+	case p.Name != "":
+		return p.Name
+	case p.Email != "":
+		return p.Email
+	default:
+		return p.ID
 	}
 }
 

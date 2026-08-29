@@ -14,6 +14,7 @@ import (
 	glcollector "github.com/pavelpilyak/devrecall/internal/collector/gitlab"
 	jiracollector "github.com/pavelpilyak/devrecall/internal/collector/jira"
 	linearcollector "github.com/pavelpilyak/devrecall/internal/collector/linear"
+	notioncollector "github.com/pavelpilyak/devrecall/internal/collector/notion"
 	slackcollector "github.com/pavelpilyak/devrecall/internal/collector/slack"
 	"github.com/pavelpilyak/devrecall/internal/config"
 	"github.com/pavelpilyak/devrecall/internal/identity"
@@ -59,6 +60,9 @@ func BuildAllSyncers(cfg *config.Config, db *storage.DB, tokenStore auth.TokenSt
 	}
 	if s := confluenceSyncer(cfg, db, tokenStore); s != nil {
 		syncers["confluence"] = s
+	}
+	if s := notionSyncer(cfg, db, tokenStore); s != nil {
+		syncers["notion"] = s
 	}
 	if s := claudeCodeSyncer(cfg, db); s != nil {
 		syncers["claude_code"] = s
@@ -220,6 +224,26 @@ func linearSyncer(cfg *config.Config, db *storage.DB, tokenStore auth.TokenStore
 		lc := linearcollector.New(token.AccessToken)
 		return runRemoteSync(ctx, db, "linear", func(ctx context.Context) ([]models.Activity, error) {
 			return lc.CollectSince(ctx, time.Now().Add(-syncWindow))
+		})
+	}
+}
+
+func notionSyncer(cfg *config.Config, db *storage.DB, tokenStore auth.TokenStore) freshness.Syncer {
+	if !cfg.Notion.Enabled || cfg.Notion.UserID == "" {
+		return nil
+	}
+	return func(ctx context.Context) (int, error) {
+		tokenKey := cfg.Notion.Email
+		if tokenKey == "" {
+			tokenKey = cfg.Notion.UserID
+		}
+		var token auth.NotionToken
+		if err := tokenStore.Load("notion", tokenKey, &token); err != nil {
+			return 0, fmt.Errorf("token not found (run 'devrecall auth notion')")
+		}
+		nc := notioncollector.New(token.AccessToken, cfg.Notion.UserID)
+		return runRemoteSync(ctx, db, "notion", func(ctx context.Context) ([]models.Activity, error) {
+			return nc.CollectSince(ctx, time.Now().Add(-syncWindow))
 		})
 	}
 }

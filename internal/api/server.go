@@ -258,6 +258,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		{"confluence", cfg.Confluence.Enabled},
 		{"linear", cfg.Linear.Enabled},
 		{"claude_code", cfg.ClaudeCode.Enabled},
+		{"notion", cfg.Notion.Enabled},
 	}
 
 	result := make([]sourceStatus, 0, len(sources))
